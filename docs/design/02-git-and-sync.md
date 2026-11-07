@@ -116,3 +116,9 @@ directory above need a temporary home. Both move there in milestone 3.
 - **Lock.** Mutating commands take an exclusive lock on
   `.zwanenzang/lock` for the whole tracker, which is also the answer chosen
   for the lock-scope question above.
+- **Missing actor id.** A tracker directory without `.zwanenzang/actor`
+  (a copy made without it) gets a fresh actor id on its first write.
+  Read-only commands never create one.
+- **Waiting for the lock.** A mutating command blocks until the lock is
+  free rather than failing; contention is between a human and a few agents
+  on one machine and writes take milliseconds.

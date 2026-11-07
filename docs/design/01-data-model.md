@@ -206,3 +206,58 @@ none changes a decision above.
 - **Documents.** The first version of a document has `base: null`. The CLI's
   `doc set` requires the caller to state the base it read, including
   `null`, so an agent cannot overwrite without naming a version.
+- **Operation data.** `title`, `status`: `{to}`. `kind`: `{to}` where
+  `null` clears the kind. `parent`: `{to}` where `null` clears the parent.
+  `relate`, `unrelate`: `{to}`. `tag`, `untag`: `{tag}`. `number`:
+  `{number}`, at least 1. `archive`, `tombstone`: `{}`. `actor`: `{name}`,
+  the writing actor's own display name; a later declaration renames it.
+  Nullable fields (`kind.to`, `parent.to`, `doc.base`) must be present, so a
+  writer always states what it means. Unknown fields in `data` and in the
+  envelope are ignored at replay, so the format can grow.
+- **Create.** A `create` event's entity must be its own id
+  (`create-id-mismatch` otherwise), which is what "identity is the ULID of
+  its create event" means in the log.
+- **Name formats.** Statuses, kinds, document names and repository aliases:
+  one or more of `A-Z a-z 0-9 _ -`, at most 64 characters. The number
+  prefix: an uppercase letter and up to nine uppercase letters or digits.
+  Actor names: a single non-empty line of at most 128 bytes. Branch names
+  and merge request URLs: a single non-empty line. Numbers display
+  zero-padded to four digits, `ZZ-0042`.
+- **Repository aliases** are declared in `zwanenzang.toml` as
+  `[repos.<alias>]` tables with a `url` key, so further keys can be added.
+- **Relations** are undirected: `relate` adds the pair to both tickets.
+  `relate` needs a live target; `unrelate` only needs the target to exist,
+  so a relation to a ticket tombstoned later can still be removed. Views
+  leave tombstoned tickets out of `related` and `children`; state keeps
+  them.
+- **Blobs must exist.** A `doc` or `comment` naming a blob that is not in
+  `blobs/` is rejected (`missing-blob`). A live write stores its blob only
+  after the event is accepted, and before the event line is appended, so no
+  accepted event ever names a missing blob.
+- **Stale document base at replay.** The Documents section is followed: the
+  version is kept in history marked lost and does not become current; lint
+  reports it. The mention of a stale document parent among skipped events
+  under "Ordering and replay" and "Validation rules" is read as "does not
+  become current", not as removal from history. A base that is not a
+  version of that document at all counts as stale. On a live write a stale
+  base is the error `stale-doc-base`.
+- **Concurrent field reports.** For each accepted `title`, `status`,
+  `kind` or `parent` event, every earlier change to the same field of the
+  same ticket by another actor that its writer had not seen is reported, if
+  the values differ. Two actors choosing the same value is not a conflict.
+- **Numbers.** "Unique and greater than any existing number": a number
+  equal to an existing one is `number-not-unique`, a smaller one
+  `number-not-greater`; a ticket that already has a number cannot get
+  another (`already-numbered`).
+- **What counts as seen.** Every line whose envelope parses counts for the
+  hybrid clock and as the next event's parent, even when replay skips it
+  (an unknown operation from a newer build, say). Empty lines are ignored.
+  A line found in a log other than its actor's is `actor-mismatch`.
+- **Live writes are all or nothing per command.** A command such as
+  `create --parent P --tag X` writes several events; if any is refused,
+  none is written. The actor's `actor` declaration is written only together
+  with at least one real change, never alone. A document version whose text
+  equals the current version is a no-op.
+- **Interrupted appends.** If a log does not end in a newline (an
+  interrupted write), the next append starts with one, so lines never run
+  together; the partial line is reported as malformed.
