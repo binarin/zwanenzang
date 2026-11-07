@@ -214,3 +214,83 @@ fn init_refuses_a_directory_inside_another_repository() {
     err(&sub, &["init", "--prefix", "QQ"], "inside-repository");
     assert!(!sub.join("zwanenzang.toml").exists());
 }
+
+#[test]
+fn batch_commits_once_syncs_once_and_returns_published_state() {
+    let net = Net::new();
+    let a = net.path("a");
+    let b = net.clone_as("b");
+    let before = git(&a, &["rev-parse", "HEAD"]);
+    // Count actual fetches via a repository-local git trace; numbering is
+    // allowed its own commit, but each change must not run its own sync.
+    let trace = a.join("batch-trace");
+    let out = run_in_env(&a, &["apply"], &json!({"changes":[
+        {"op":"create","data":{"title":"Synthetic batch parent"}},
+        {"op":"create","data":{"title":"Synthetic batch child"}},
+        {"op":"parent","ticket":{"created":1},"data":{"to":{"created":0}}},
+        {"op":"doc","ticket":{"created":1},"data":{"name":"description","text":"Synthetic body","base":null}}
+    ]}).to_string(), &[("GIT_TRACE2_EVENT", trace.to_str().unwrap())]);
+    assert_eq!(out.code, 0, "{} {}", out.json, out.stderr);
+    let out = out.json;
+    assert_eq!(out["sync"]["pushed"], true, "{out}");
+    assert_eq!(out["sync"]["numbered"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        git(
+            &a,
+            &["rev-list", "--count", &format!("{}..HEAD", before.trim())]
+        )
+        .trim(),
+        "2"
+    );
+    let trace = read(&a, "batch-trace");
+    let fetches = trace
+        .lines()
+        .filter(|line| {
+            let v: Value = serde_json::from_str(line).unwrap();
+            v["event"] == "start"
+                && v["argv"]
+                    .as_array()
+                    .is_some_and(|args| args.iter().any(|a| a == "fetch"))
+        })
+        .count();
+    assert_eq!(fetches, 1, "one fetch for the whole batch");
+    ok(&b, &["sync"]);
+    assert_eq!(tickets(&a), tickets(&b));
+    for t in out["tickets"].as_array().unwrap() {
+        assert_eq!(*t, ok(&b, &["show", t["id"].as_str().unwrap()]));
+    }
+    assert_eq!(run_in(&b, &["lint"], "").code, 0);
+}
+
+#[test]
+fn offline_batch_succeeds_locally_and_publishes_on_later_sync() {
+    let net = Net::new();
+    let a = net.path("a");
+    net.offline(&a, true);
+    let before = git(&a, &["rev-parse", "HEAD"]);
+    let out = ok_stdin(
+        &a,
+        &["apply"],
+        &json!({"changes":[
+            {"op":"create","data":{"title":"Synthetic offline ticket"}},
+            {"op":"tag","ticket":{"created":0},"data":{"tag":"sample"}}
+        ]})
+        .to_string(),
+    );
+    assert_eq!(out["written"], true);
+    assert_eq!(out["sync"]["error"]["code"], "fetch-failed");
+    assert_eq!(out["tickets"][0]["number"], Value::Null);
+    assert_eq!(
+        git(
+            &a,
+            &["rev-list", "--count", &format!("{}..HEAD", before.trim())]
+        )
+        .trim(),
+        "1"
+    );
+    net.offline(&a, false);
+    ok(&a, &["sync"]);
+    let b = net.clone_as("b");
+    assert_eq!(tickets(&a), tickets(&b));
+    assert_eq!(numbers(&b), [1]);
+}

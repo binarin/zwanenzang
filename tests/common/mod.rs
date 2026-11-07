@@ -74,6 +74,12 @@ pub struct Out {
 
 /// Runs the binary against `dir` with `args`, feeding `stdin`.
 pub fn run_in(dir: &Path, args: &[&str], stdin: &str) -> Out {
+    run_in_env(dir, args, stdin, &[])
+}
+
+/// Runs with per-child environment overrides, avoiding process-global state
+/// in parallel tests. The same disposable-repository checks still apply.
+pub fn run_in_env(dir: &Path, args: &[&str], stdin: &str, env: &[(&str, &str)]) -> Out {
     assert_opens_disposable(dir);
     let mut child = Command::new(env!("CARGO_BIN_EXE_zwanenzang"))
         .arg("-C")
@@ -81,6 +87,7 @@ pub fn run_in(dir: &Path, args: &[&str], stdin: &str) -> Out {
         .args(["--actor-name", "tester"])
         .args(args)
         .current_dir(dir)
+        .envs(env.iter().copied())
         // The binary's git commands see no user or system configuration,
         // so a developer's hooks, signing or url rewrites play no part.
         .env("GIT_CONFIG_NOSYSTEM", "1")

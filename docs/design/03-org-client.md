@@ -233,8 +233,40 @@ reinsert an absent ticket after merged older history. Malformed tokens are
 errors. Clients must retain the token
 verbatim rather than parse it or use `last_event` in its place.
 
-This settles the cursor choice left by milestone 2's `query`. Batched apply
-is the next slice; this change only supplies the read half.
+This settles the cursor choice left by milestone 2's `query`.
+
+### Batched apply contract (milestone 3)
+
+`apply` accepts one JSON request with an ordered `changes` list. Each change
+is one ticket operation, using ordinary ticket references or
+`{"created": N}` to name the ticket created by earlier change N (zero-based
+input index). A scope push creates new headings first, then sends their
+parent/relations, tags and prose using those references. This compiles to the
+existing write core's `Plan`, `Target::Nth` and deferred `refs`; no second
+identity mechanism or event format is introduced.
+
+All changes validate against preceding changes under one clone lock before
+any blob or event is written. A rejection refuses the entire scope push.
+Documents carry text and an explicit compare-and-set base, including null
+for a first version; there is no force/Org-wins bypass. On a stale base the
+client reads again, preserves the human edit, and resubmits against the
+current version according to the conflict rules above. Submit only one new
+version per document per batch.
+
+The result maps every input position to its ticket id, written flag and
+event id (null for a no-op), and separately maps create positions to new
+ticket ids. Distinct targeted tickets have full post-sync state, so the
+client can save assigned numbers. A batch makes one mutation commit and
+one sync cycle; numbering may commit separately. An empty or all-no-op
+batch does neither. Offline results retain local success and report sync
+failure. Validation is atomic locally; disk failures and concurrently merged
+remote events have the same semantics as ordinary writes. A subsequent
+`read` supplies cursors and any indirect or concurrent changes; clients must
+not infer cursors from apply event ids. Exact shapes and error semantics are
+in [cli-json](../cli-json.md).
+
+Human checkout fast-forwarding and the Emacs implementation remain later
+work; these contracts supply the CLI halves they need.
 
 ## Open questions
 
