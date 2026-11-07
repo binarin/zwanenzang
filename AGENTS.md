@@ -26,19 +26,24 @@ design decisions.
   These branch names exist to share the nix cache across all repositories;
   do not pin anything else and do not add inputs that are not already in
   that set.
-- Never depend on `swan-lake-common`. It will consume this flake for the
-  Emacs client, so a dependency the other way is circular.
-- The flake exports the `zwanenzang` package, a dev shell, and `nix flake
-  check` running the test suite. Build with `rustPlatform` from the pinned
-  nixpkgs; no rust overlay inputs.
+- Never depend on `swan-lake-common`. It consumes this flake's overlay for
+  the CLI and the Emacs client, so a dependency the other way is circular.
+- The flake exports the `zwanenzang` package, the `zwanenzang-el` Emacs
+  package, `overlays.default` (adds `pkgs.zwanenzang` and
+  `epkgs.zwanenzang` to every `emacsPackagesFor` set), a dev shell, and
+  `nix flake check` running both test suites. Build the CLI with
+  `rustPlatform` from the pinned nixpkgs; no rust overlay inputs.
+  `zwanenzang-el` is built with `nixpkgs-unstable`'s `emacs`, because the
+  client needs Emacs 31 and stable nixpkgs has 30.
 
 ## Scope guard
 
 Tracking only. If a change would add process rules, stages, approvals,
 scheduling or reminders, it does not belong here; the design overview lists
-non-goals. The Emacs client is developed in `swan-lake-common`, not here;
-this repository only provides the CLI it calls and documents the JSON
-contract.
+non-goals. The Emacs client is developed here, as the `zwanenzang` package
+in `emacs/` (Emacs 31+, built-in libraries only); `swan-lake-common` only
+installs it through the overlay and points it at org files. The CLI's JSON
+contract stays documented, since agents and scripts use it too.
 
 ## Fixtures and references
 
@@ -76,6 +81,12 @@ helper that opens, writes to or pushes from a repository checks both markers
 first and refuses otherwise. The CLI itself keeps no test mode and no
 environment variable that bypasses the check; a test that needs a repository
 creates one that satisfies the markers.
+
+The Emacs client has two ERT layers in `emacs/test/`, both run by `nix
+flake check` under `emacs --batch`: pure parse and render tests that need no
+CLI, and integration tests that drive this flake's CLI. The elisp
+integration helper enforces the same two markers before it opens, writes to
+or pushes from a repository; the client itself has no bypass either.
 
 Fixture-based tests import the synthetic fixture in the frozen tracker's
 format into such a repository and assert on what replay produces. The real

@@ -25,7 +25,7 @@ That heading is the scope root. Everything beneath it syncs with that tracker.
 ## Ticket headings
 
 A ticket is a heading inside a scope that carries the client's own identity
-property, for example `:ZZ_ID:` holding the ticket ULID. The org `:ID:`
+property, `:ZWANENZANG_ID:`, holding the ticket ULID. The org `:ID:`
 property is not used for tracker identity and org-id is never consulted;
 headings are located by scanning the scope. This is deliberate: org-id tooling
 and subtree copies touch `:ID:` freely, and the predecessor saw duplicated and
@@ -266,8 +266,95 @@ not infer cursors from apply event ids. Exact shapes and error semantics are
 in [cli-json](../cli-json.md).
 
 Human checkout fast-forwarding is implemented in the CLI's sync phase (see
-[git and sync](02-git-and-sync.md)). The Emacs implementation remains later
-work; these contracts supply the CLI halves it needs.
+[git and sync](02-git-and-sync.md)). The Emacs implementation lives in `emacs/`
+and follows the decisions below; these contracts supply the CLI halves it
+needs.
+
+## Emacs client decisions (milestone 3)
+
+Decided 2026-11-07 for the first Emacs implementation.
+
+### Package and distribution
+
+- The client is developed in this repository as the Emacs package
+  `zwanenzang` in `emacs/`: one `zwanenzang.el` to start, symbol prefix
+  `zwanenzang-`, tests in `emacs/test/`. It requires Emacs 31.1 and uses
+  built-in libraries only (org, native JSON, `secure-hash`).
+- The flake's `overlays.default` adds `pkgs.zwanenzang` (the CLI) and
+  extends `emacsPackagesFor` so every Emacs package set has
+  `epkgs.zwanenzang`. `packages.zwanenzang-el` is built against
+  `nixpkgs-unstable`'s `emacs`, since stable nixpkgs has Emacs 30;
+  the CLI stays on stable nixpkgs. `swan-lake-common` consumes the
+  overlay; this repository never depends on it.
+- `zwanenzang-program` names the CLI. The Nix build substitutes the store
+  path of this flake's CLI as its default; outside Nix the default is
+  `zwanenzang` on `PATH`.
+
+### Activation and calls
+
+- Explicit interactive commands only: no minor mode, hooks or timers.
+- CLI calls are synchronous: `call-process` for local scopes now,
+  `process-file` over tramp in milestone 5.
+- First commands: `zwanenzang-pull`, `zwanenzang-push` and
+  `zwanenzang-sync` act on the scope at point (sync is CLI `sync`, pull,
+  push, pull); `zwanenzang-sync-all` syncs every scope in
+  `zwanenzang-org-files`, which defaults to `org-agenda-files`;
+  `zwanenzang-adopt-foreign`, `zwanenzang-resolve-duplicate` and
+  `zwanenzang-open`.
+- Deferred to milestone 5: per-heading operations, doctor across files,
+  the archive hook, tramp.
+
+### Properties
+
+Every property the client owns starts with `ZWANENZANG`.
+
+- Scope root: `ZWANENZANG` (the location), `ZWANENZANG_KEYWORDS`,
+  `ZWANENZANG_HIDE_DOCS`, `ZWANENZANG_CURSOR` (scope cursor) and
+  `ZWANENZANG_TRACKER`, the tracker id recorded on first pull. A later
+  read that returns another id blocks the scope.
+- Inbox: the child heading of the root with `ZWANENZANG_INBOX: t`, created
+  as "Inbox" under the root the first time a pull needs it.
+- Ticket heading: `ZWANENZANG_ID` (ULID), `ZWANENZANG_NUMBER` (display
+  form), `ZWANENZANG_CURSOR`, `ZWANENZANG_SYNC`, `ZWANENZANG_DESC_VERSION`
+  and `ZWANENZANG_DESC_HASH`. `ZWANENZANG_SYNC` is a compact snapshot of
+  the last synced fields, for example
+  `status=draft title=<hash> tags=<hash> parent=<id>`. It stores the
+  tracker status, so a draft shown as TODO stays draft.
+- Named document: a subheading with `ZWANENZANG_DOC: <name>`,
+  `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`.
+
+### Prose, comments and conflicts
+
+- The description is the body before the first subheading, excluding
+  drawers and planning lines.
+- Comments go in a `:ZWANENZANG_COMMENTS:` drawer, newest last, each
+  `[timestamp] actor:` followed by the text. The drawer is rewritten from
+  tracker state and never read back.
+- Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The
+  conflict tag is `zz_conflict`; it is never pushed as a tracker tag.
+- Each hidden document is one link line using a `zwanenzang:` Org link
+  type, which opens the document read-only through the CLI.
+
+### Errors and reports
+
+- A command failure (a JSON error object, or a usage error with exit
+  status 2) is a `user-error` with the code and message; the buffer is
+  left untouched.
+- Publication errors (`fetch-failed`, `push-rejected`, ...) and checkout
+  skips are not failures: the client echoes a one-line summary and appends
+  a readable report to the `*zwanenzang*` buffer.
+
+### Bootstrap and tests
+
+- The human's org file is bootstrapped by ordinary create-on-push, by
+  hand; nothing private is committed.
+- Two ERT layers run under `nix flake check` with `emacs --batch`: pure
+  parse and render tests without the CLI, and integration tests that drive
+  this flake's CLI against disposable trackers. The elisp integration
+  helper checks the same markers as the Rust helpers (a path under the
+  system temporary directory, a directory name ending in `-test-repo`)
+  before it opens, writes to or pushes from a repository. The client has
+  no bypass.
 
 ## Open questions
 

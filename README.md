@@ -19,4 +19,5 @@ to the projects that use it, not here.
 Design notes live in [docs/design](docs/design/00-overview.md). This project's
 own tracker is a separate private repository, `zwanenzang-tracker`.
 
-Implementation language: Rust. Distribution: nix flake.
+Implementation language: Rust for the CLI, Emacs Lisp for the Org client
+in [emacs](emacs/). Distribution: nix flake.

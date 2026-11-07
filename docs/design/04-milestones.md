@@ -12,9 +12,10 @@ org file on the desktop until milestone 3 makes it a synced scope.
   until zwanenzang can take it over. It is not a fixture yet.
 - Rust, distributed as a nix flake. Nix is available on every machine,
   including client laptops.
-- The Emacs client is developed in `swan-lake-common` under the existing
-  emacs module. Tracker locations are org properties, so nothing sensitive
-  enters that repository.
+- The Emacs client is developed in this repository, as the `zwanenzang`
+  Emacs package in `emacs/`. `swan-lake-common` consumes it through this
+  flake's overlay. Tracker locations are org properties in the human's own
+  files, so nothing sensitive enters either repository.
 - `zwanenzang` on the forge mirrors to GitHub; `zwanenzang-tracker` is
   private and holds this project's own events.
 
