@@ -15,23 +15,29 @@ fn init_writes_layout() {
         fs::read_to_string(root.join(".gitattributes")).unwrap(),
         "events/*.jsonl merge=union\n"
     );
-    assert_eq!(
-        fs::read_to_string(root.join(".gitignore")).unwrap(),
-        "/.zwanenzang/\n"
-    );
+    assert!(!root.join(".gitignore").exists());
+    assert!(root.join(".git").is_dir());
     assert!(root.join("events").is_dir());
     assert!(root.join("blobs").is_dir());
     let cfg = Config::parse(&fs::read_to_string(root.join(CONFIG_FILE)).unwrap()).unwrap();
     assert_eq!(cfg, t.config);
     assert_eq!(cfg.prefix, "ZZ");
     assert_eq!(cfg.statuses[0], "draft");
-    let actor = fs::read_to_string(root.join(".zwanenzang/actor")).unwrap();
+    let actor = git_out(root, &["config", "--local", "zwanenzang.actor"]);
     assert_eq!(
-        actor.trim(),
-        t.actor_id(false, &mut FixedClock::new(0))
+        actor,
+        t.actor_id_opt(&mut FixedClock::new(0))
+            .unwrap()
             .unwrap()
             .to_canonical()
     );
+    // The configuration is committed, and nothing else.
+    assert_eq!(git_out(root, &["log", "--format=%s"]), "init");
+    assert_eq!(
+        git_out(root, &["ls-files"]),
+        format!(".gitattributes\n{CONFIG_FILE}")
+    );
+    assert_eq!(git_out(root, &["status", "--porcelain"]), "");
     // No events are written by init.
     assert!(log_snapshot(&t).is_empty());
 }
@@ -40,7 +46,7 @@ fn init_writes_layout() {
 fn init_twice_refused() {
     let dir = disposable_dir();
     new_tracker(&dir);
-    let err = Tracker::init(dir.path(), "x", "ZZ", &mut init_clock()).unwrap_err();
+    let err = Tracker::init(dir.path(), "x", "ZZ", None, &mut init_clock()).unwrap_err();
     assert!(matches!(err, Error::AlreadyInitialized(_)), "{err}");
 }
 
@@ -51,7 +57,7 @@ fn init_inside_a_tracker_refused() {
     let sub = dir.path().join("sub");
     fs::create_dir(&sub).unwrap();
     for target in [sub.clone(), t.events_dir(), sub.join("not/yet/there")] {
-        let err = Tracker::init(&target, "x", "QQ", &mut init_clock()).unwrap_err();
+        let err = Tracker::init(&target, "x", "QQ", None, &mut init_clock()).unwrap_err();
         match err {
             Error::AlreadyInitialized(found) => assert_eq!(found, t.root, "{target:?}"),
             e => panic!("{target:?}: {e}"),
@@ -80,7 +86,7 @@ fn init_keeps_existing_gitattributes() {
     );
     assert_eq!(
         fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
-        "target/\n/.zwanenzang/\n"
+        "target/\n"
     );
     // Rewritten through a temporary file renamed into place: the mode is
     // kept and no temporary file is left behind.
@@ -96,9 +102,9 @@ fn init_keeps_existing_gitattributes() {
     assert_eq!(
         names,
         [
+            ".git",
             ".gitattributes",
             ".gitignore",
-            ".zwanenzang",
             "blobs",
             "events",
             CONFIG_FILE
@@ -218,7 +224,7 @@ fn lock_is_exclusive() {
     let guard = t.lock().unwrap();
     let f = fs::OpenOptions::new()
         .write(true)
-        .open(dir.path().join(".zwanenzang/lock"))
+        .open(dir.path().join(".git/zwanenzang.lock"))
         .unwrap();
     assert!(f.try_lock().is_err());
     drop(guard);

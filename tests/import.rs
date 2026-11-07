@@ -148,7 +148,8 @@ fn imports_every_frontmatter_shape() {
     // Title, description, branches, merge requests, kept fields.
     let one = show("AIWF-0001");
     assert_eq!(one["title"], "Build the sample widget tool");
-    assert_eq!(one["number"], Value::Null);
+    // The sync after the import numbers imported tickets in import order.
+    assert_eq!(one["number"], 1);
     assert_eq!(one["short_id"].as_str().unwrap().len(), 10);
     assert_eq!(
         one["branches"],
@@ -259,12 +260,28 @@ fn imports_every_frontmatter_shape() {
     );
     assert!(!p.join("docs/process-only.md").exists());
 
-    // One new actor wrote everything and declared itself.
+    // One new actor wrote the import and declared itself; the clone's own
+    // actor numbered the tickets afterwards.
     let actor = report["actor"].as_str().unwrap();
-    let own = read(p, ".zwanenzang/actor");
-    assert_ne!(own.trim(), actor);
+    let own = actor_of(p);
+    assert_ne!(own, actor);
+    let mut want_logs = vec![format!("{actor}.jsonl"), format!("{own}.jsonl")];
+    want_logs.sort();
     let log_names: Vec<String> = logs(p).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(log_names, [format!("{actor}.jsonl")]);
+    assert_eq!(log_names, want_logs);
+    let numbered = report["sync"]["numbered"].as_array().unwrap();
+    assert_eq!(numbered.len(), 8);
+    assert_eq!(numbered[0]["id"], id("AIWF-0001"));
+    assert_eq!(numbered[7]["display"], "ZZ-0008");
+    // The import is one commit holding the copied files, the numbers another.
+    assert_eq!(
+        git(p, &["log", "--format=%s"]),
+        "publish 8 numbers\nimport from the ai-workflow tracker\ninit\n"
+    );
+    assert!(git(p, &["ls-files", "docs"]).contains("docs/shared.md"));
+    // The repository aliases this test declared by hand stay the human's
+    // to commit.
+    assert_eq!(git(p, &["status", "--porcelain"]), " M zwanenzang.toml\n");
     let first: Value = serde_json::from_str(
         read(p, &format!("events/{actor}.jsonl"))
             .lines()
@@ -278,7 +295,11 @@ fn imports_every_frontmatter_shape() {
     // Replay accepts every event and lint finds nothing.
     let lint = run_in(p, &["lint"], "");
     assert_eq!(lint.code, 0, "{}", lint.json);
-    assert_eq!(lint.json["events"], report["events"]);
+    // The import's events, the clone actor's declaration and its numbers.
+    assert_eq!(
+        lint.json["events"].as_u64().unwrap(),
+        report["events"].as_u64().unwrap() + 1 + 8
+    );
     let list = ok(p, &["list"]);
     assert_eq!(list["tickets"].as_array().unwrap().len(), 8);
 }

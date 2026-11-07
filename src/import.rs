@@ -69,6 +69,9 @@ pub struct Options {
     /// Repository alias renames, source alias to tracker alias.
     pub repo_aliases: BTreeMap<String, String>,
     pub dry_run: bool,
+    /// Display name for this clone's actor, should the sync after the
+    /// import number tickets.
+    pub publisher_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -824,6 +827,8 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
         actor_name: Some(ACTOR_NAME),
         new_actor: true,
         dry_run: opts.dry_run,
+        publisher_name: opts.publisher_name.as_deref(),
+        message: Some("import from the ai-workflow tracker"),
     };
     let written = tracker.write_with(
         &mut stepping,
@@ -1118,12 +1123,14 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
         },
         |_| {
             let p = planned.borrow();
+            let mut copied = Vec::new();
             for (rel, (_, existing)) in &p.docs {
                 if !existing {
                     copy_doc(&source.root.join(rel), &tracker.root.join(rel))?;
+                    copied.push(PathBuf::from(rel));
                 }
             }
-            Ok(())
+            Ok(copied)
         },
     )?;
 
@@ -1193,6 +1200,7 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
         "docs": docs,
         "dropped_docs": dropped_docs,
         "warnings": p.warnings,
+        "sync": written.sync,
     }))
 }
 

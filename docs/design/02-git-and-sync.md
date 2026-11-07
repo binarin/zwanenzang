@@ -96,29 +96,74 @@ sidebar navigation turns out to matter.
 
 ## Open questions
 
-- Lock scope: the whole clone, as drafted, or per actor log. Whole clone is
-  simpler and contention is low.
 - Whether `sync` should also fast-forward a human convenience checkout of the
   tracker. Current leaning: no such checkout exists; humans read the rendered
   branch or org.
-- Retry bound and backoff for push rejection.
 
-### Interim choices for the local-only slice of milestone 2
+### Choices made while implementing milestone 3
 
-Milestone 2 has no git integration, so two things that live in the git
-directory above need a temporary home. Both move there in milestone 3.
-
-- **Actor id.** Stored in `.zwanenzang/actor` inside the tracker directory.
-  `init` writes `.gitignore` with `/.zwanenzang/` so it never enters history.
-  It is per clone, as the design requires; nothing goes in the home
-  directory. The first write by an actor also emits its `actor` event, with
-  the display name from `--actor-name` or `$USER`.
-- **Lock.** Mutating commands take an exclusive lock on
-  `.zwanenzang/lock` for the whole tracker, which is also the answer chosen
-  for the lock-scope question above.
-- **Missing actor id.** A tracker directory without `.zwanenzang/actor`
-  (a copy made without it) gets a fresh actor id on its first write.
-  Read-only commands never create one.
-- **Waiting for the lock.** A mutating command blocks until the lock is
-  free rather than failing; contention is between a human and a few agents
-  on one machine and writes take milliseconds.
+- **A tracker is the top of its own work tree.** `init` makes the
+  directory a repository when it is in none, uses it when it is already
+  the top of one (a fresh clone of an empty remote, say), and refuses a
+  directory inside another work tree (`inside-repository`). It commits
+  `zwanenzang.toml` and `.gitattributes` and syncs, so an empty remote
+  receives the tracker at once. Mutating commands refuse a tracker that is
+  not the top of a work tree (`not-a-repository`); read-only commands do
+  not need git at all.
+- **Concurrent inits.** The repository is created in a temporary directory
+  and its `.git` renamed into place, since several `git init`s in one
+  directory fail on each other; exactly one rename succeeds.
+- **Actor id** in the clone's local git configuration, `zwanenzang.actor`,
+  created on the clone's first write. A fresh `git clone` therefore starts
+  as a new actor, which is what per-clone actors mean. The first write
+  also emits the `actor` event, named from `--actor-name` or `$USER`.
+- **Lock.** One exclusive lock for the whole clone, `zwanenzang.lock` in
+  the git directory, held across the write, the commit and the whole sync.
+  This answers the lock-scope question: contention is a human and a few
+  agents, and a per-log lock would not cover the shared git operations.
+  A mutating command waits for the lock rather than failing.
+- **What a commit holds.** Exactly the files the command wrote: `events/`,
+  `blobs/`, and the supporting files an import copied. Other changes in
+  the work tree, staged or not, are left alone; edits to `docs/` and to
+  `zwanenzang.toml` are the human's to commit. A sync first commits any
+  log lines an interrupted command appended but did not commit.
+- **Commit identity and message.** Author and committer are the actor:
+  its display name and `<actor id>@zwanenzang.invalid`, so a clone needs
+  no git identity of its own and history shows who wrote what. Commits
+  skip hooks and signing, since an agent cannot answer a passphrase prompt
+  and the clone is the tool's. The message names the main operation and
+  ticket, `status ZZ-0042`; a ticket committed before it has a number
+  appears under its short id.
+- **Upstream.** Sync uses the current branch's configured upstream
+  (`branch.<name>.remote` and `.merge`). A branch without one, or a
+  detached head, means the clone is the whole tracker.
+- **Sync** runs after every commit and as the `sync` command: fetch the
+  upstream branch; rebase onto it (`--autostash`, so the human's
+  uncommitted edits survive); number; push `HEAD` to the upstream branch,
+  never forced. The remote not having the branch yet is not an error; the
+  push creates it.
+- **Numbering at publish.** After the fetch and rebase, every live ticket
+  without a number gets the next one, in id order, from the highest number
+  in use plus one, written by this clone's actor and committed as
+  `publish ...`. The publishing clone numbers other actors' tickets too,
+  such as an import's. Without an upstream this happens at once after
+  every write.
+- **A push that does not land takes its numbers back.** If the push is
+  rejected or fails, the publish commit is undone (`git reset --keep`, so
+  nothing unrelated is touched); the numbers were never seen, and the next
+  attempt assigns them again after a fresh fetch. A rejection is a plain
+  non-fast-forward, or a remote reporting that another push moved the
+  branch first (`incorrect old value`, `cannot lock ref`).
+- **Retry bound.** Five attempts, with a random pause before each retry of
+  up to 50 ms doubled per attempt. Giving up is `push-rejected`.
+- **Offline is not an error for a write.** When fetch fails, the rebase
+  conflicts (only `docs/` can) or the push fails, the command still
+  succeeds: its events are committed locally and the next write or `sync`
+  pushes them. The result reports what happened (`fetch-failed`,
+  `rebase-conflict`, `push-failed`, `push-rejected`). A conflicting rebase
+  is aborted, leaving the branch as it was, and is the human's to resolve.
+  The `sync` command itself exits 1 in these cases.
+- **Credentials.** git never prompts on a terminal
+  (`GIT_TERMINAL_PROMPT=0`); a remote that needs an interactive login
+  counts as unreachable. The caller's `GIT_DIR`, `GIT_WORK_TREE` and
+  `GIT_INDEX_FILE` are ignored, so the tool always acts on its own clone.

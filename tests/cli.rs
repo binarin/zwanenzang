@@ -21,8 +21,10 @@ fn init_writes_tracker_files() {
         read(d.path(), ".gitattributes"),
         "events/*.jsonl merge=union\n"
     );
-    assert_eq!(read(d.path(), ".gitignore"), "/.zwanenzang/\n");
-    assert_eq!(read(d.path(), ".zwanenzang/actor").trim(), out["actor"]);
+    assert!(!d.path().join(".gitignore").exists());
+    assert_eq!(actor_of(d.path()), out["actor"]);
+    assert_eq!(git(d.path(), &["log", "--format=%s"]), "init\n");
+    assert_eq!(out["sync"]["upstream"], Value::Null);
     let toml = read(d.path(), "zwanenzang.toml");
     assert!(toml.contains(&format!(
         "id = \"{}\"",
@@ -66,7 +68,7 @@ fn concurrent_inits_one_wins_and_reports_what_is_on_disk() {
             )),
             "reported tracker id is the one on disk: {toml}"
         );
-        assert_eq!(read(p, ".zwanenzang/actor").trim(), won["actor"]);
+        assert_eq!(actor_of(p), won["actor"]);
     }
 }
 
@@ -128,8 +130,8 @@ fn create_show_and_list() {
     let t1 = id(&out);
     assert_eq!(out["ticket"]["id"], out["event"]["entity"]);
     assert_eq!(out["ticket"]["status"], "draft");
-    assert_eq!(out["ticket"]["number"], Value::Null);
-    assert_eq!(out["ticket"]["display"], out["ticket"]["short_id"]);
+    assert_eq!(out["ticket"]["number"], 1);
+    assert_eq!(out["ticket"]["display"], "ZZ-0001");
     assert_eq!(out["ticket"]["tags"], json!(["alpha", "beta"]));
 
     let out2 = ok(
@@ -159,7 +161,8 @@ fn create_show_and_list() {
     assert_eq!(show["created"]["id"], t1.as_str());
     assert_eq!(show["documents"], json!({}));
     assert_eq!(show["comments"], json!([]));
-    assert_eq!(show["last_event"], out["events"][3]["id"]);
+    // Numbering is the ticket's latest event.
+    assert_eq!(show["last_event"], out["sync"]["numbered"][0]["event"]);
     for key in [
         "id",
         "short_id",
@@ -271,7 +274,7 @@ fn errors_are_json_and_write_nothing() {
     );
     err(p, &["create", "x", "--tag", "bad tag"], "invalid-tag");
     err(p, &["status", "ZZZZZZ", "doing"], "unknown-ticket");
-    err(p, &["status", "ZZ-0001", "doing"], "unknown-ticket");
+    err(p, &["status", "ZZ-0002", "doing"], "unknown-ticket");
     err(p, &["doc", "get", &a, "description"], "unknown-document");
     assert_eq!(logs(p), before);
     // Usage errors stay clap's: stderr and exit status 2.
@@ -524,7 +527,7 @@ fn lint_clean_then_reporting_issues() {
     let lint = run_in(p, &["lint"], "");
     assert_eq!(lint.code, 0, "{}", lint.json);
     assert_eq!(lint.json["ok"], true);
-    assert_eq!(lint.json["events"], 3);
+    assert_eq!(lint.json["events"], 4, "with the number");
 
     // Another actor that had seen only the create sets a different status,
     // with an id after ours: a concurrent change. It also never named itself,
@@ -625,7 +628,7 @@ fn a_line_with_the_last_possible_id_does_not_block_writes() {
     let created = ok(p, &["create", "A"]);
     let a = id(&created);
     let parent = created["event"]["id"].as_str().unwrap().to_string();
-    let actor = read(p, ".zwanenzang/actor").trim().to_string();
+    let actor = actor_of(p);
     let toml = read(p, "zwanenzang.toml");
     let root = toml
         .lines()
@@ -676,31 +679,55 @@ fn a_line_with_the_last_possible_id_does_not_block_writes() {
 
 #[test]
 fn numbers_resolve_and_display() {
+    // Without an upstream the clone is the whole tracker: every write is
+    // published at once, and new tickets are numbered in id order.
     let d = tracker();
     let p = d.path();
-    let a = id(&ok(p, &["create", "A"]));
-    let actor = read(p, ".zwanenzang/actor").trim().to_string();
-    // No CLI command writes numbers in this slice; publish will.
-    let last = ok(p, &["show", &a])["last_event"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let n_id = "0GZZZZZZZZZZZZZZZZZZZZZZZZ";
-    append_raw(
-        p,
-        &actor,
-        &[line(
-            n_id,
-            &actor,
-            &last,
-            &a,
-            "number",
-            json!({"number": 42}),
-        )],
+    let first = ok(p, &["create", "A"]);
+    let a = id(&first);
+    assert_eq!(first["ticket"]["number"], 1);
+    assert_eq!(first["ticket"]["display"], "ZZ-0001");
+    let n_event = first["sync"]["numbered"][0]["event"].clone();
+    assert_eq!(
+        first["sync"],
+        json!({"upstream": null, "pushed": false, "error": null,
+               "numbered": [{"id": a, "number": 1, "display": "ZZ-0001", "event": n_event}]})
     );
-    let shown = ok(p, &["show", "ZZ-0042"]);
-    assert_eq!(shown["id"], a.as_str());
-    assert_eq!(shown["number"], 42);
-    assert_eq!(shown["display"], "ZZ-0042");
-    assert_eq!(ok(p, &["show", "zz-42"])["id"], a.as_str());
+    assert_eq!(first["ticket"]["last_event"], n_event);
+    // The number events are not the command's own.
+    assert!(
+        first["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["op"] != "number")
+    );
+    let b = id(&ok(p, &["create", "B"]));
+    let shown = ok(p, &["show", "ZZ-0002"]);
+    assert_eq!(shown["id"], b.as_str());
+    assert_eq!(shown["number"], 2);
+    assert_eq!(ok(p, &["show", "zz-1"])["id"], a.as_str());
+    // A write that numbers nothing new says so.
+    assert_eq!(
+        ok(p, &["status", &a, "doing"])["sync"]["numbered"],
+        json!([])
+    );
+    // Each command is one commit, numbering another.
+    // A ticket is committed before it has a number, under its short id.
+    let short = |t: &str| {
+        ok(p, &["show", t])["short_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(
+        git(p, &["log", "--format=%s"]),
+        format!(
+            "status ZZ-0001\npublish ZZ-0002\ncreate {}\n\
+             publish ZZ-0001\ncreate {} (+1 events)\ninit\n",
+            short(&b),
+            short(&a)
+        )
+    );
+    assert_eq!(git(p, &["status", "--porcelain"]), "");
 }

@@ -1,16 +1,19 @@
 //! Live writes: replay everything under the lock, build each new event with
-//! the hybrid clock, validate it with the same [`apply`] replay uses, and
-//! append only what is accepted and changes derived state.
+//! the hybrid clock, validate it with the same [`apply`] replay uses, append
+//! only what is accepted and changes derived state, commit it, and sync.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use crate::clock::{Clock, format_ts, leaps_too_far, next_id};
 use crate::error::{Error, Result};
 use crate::event::{ActorData, Event, Op};
+use crate::git::Repo;
 use crate::names::valid_actor_name;
 use crate::replay::{Replay, replay};
 use crate::state::{RejectCode, Rejection, apply};
-use crate::store::{Tracker, blob_name};
+use crate::store::{Tracker, blob_name, lock_repo};
+use crate::sync::SyncReport;
 use crate::ulid::Ulid;
 
 /// The entity a planned event names.
@@ -50,6 +53,11 @@ pub struct WriteOptions<'a> {
     pub new_actor: bool,
     /// Validate and build every event, but write nothing.
     pub dry_run: bool,
+    /// Display name for this clone's actor when the sync after a
+    /// `new_actor` write numbers tickets; `actor_name` serves otherwise.
+    pub publisher_name: Option<&'a str>,
+    /// The commit message, instead of one naming the main event.
+    pub message: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -59,8 +67,10 @@ pub struct Written {
     /// Ids of the written events that came from the plan, in plan order;
     /// planned operations that changed nothing are absent.
     pub planned: Vec<Ulid>,
-    /// State after the write.
+    /// State after the write and the sync.
     pub replay: Replay,
+    /// What the sync after the write did; `None` when nothing was written.
+    pub sync: Option<SyncReport>,
 }
 
 impl Written {
@@ -106,21 +116,62 @@ impl Tracker {
             actor_name,
             ..WriteOptions::default()
         };
-        self.write_with(clock, opts, plan, |_| Ok(()))
+        self.write_with(clock, opts, plan, |_| Ok(Vec::new()))
     }
 
     /// [`Tracker::write`] with options. `before_append` runs under the lock
     /// once every event has been accepted, before any blob or line is
-    /// written; if it fails, nothing is written. It is not called on a dry
-    /// run, nor when there is nothing to write.
+    /// written; if it fails, nothing is written. It returns the further
+    /// files it wrote, relative to the root, to commit with the events. It
+    /// is not called on a dry run, nor when there is nothing to write.
     pub fn write_with(
         &self,
         clock: &mut dyn Clock,
         opts: WriteOptions<'_>,
         plan: impl FnOnce(&Replay) -> Result<Plan>,
-        before_append: impl FnOnce(&[Event]) -> Result<()>,
+        before_append: impl FnOnce(&[Event]) -> Result<Vec<PathBuf>>,
     ) -> Result<Written> {
-        let _lock = self.lock()?;
+        let repo = self.repo()?;
+        let _lock = lock_repo(&repo)?;
+        let (mut w, files) = self.write_locked(&repo, clock, opts, plan, before_append)?;
+        if !w.written() || opts.dry_run {
+            return Ok(w);
+        }
+        let actor = w.events[0].actor;
+        let message = match opts.message {
+            Some(m) => m.to_string(),
+            None => commit_message(self, &w),
+        };
+        let name = w
+            .replay
+            .state
+            .actors
+            .get(&actor)
+            .and_then(|a| a.name.clone());
+        let mut paths = vec![PathBuf::from("events"), PathBuf::from("blobs")];
+        paths.extend(files);
+        repo.commit(&paths, &message, &crate::sync::identity(actor, name))?;
+        let publisher = if opts.new_actor {
+            opts.publisher_name
+        } else {
+            opts.actor_name
+        };
+        let report = self.sync_locked(&repo, clock, publisher)?;
+        w.replay = self.load()?;
+        w.sync = Some(report);
+        Ok(w)
+    }
+
+    /// Builds, validates and appends under a lock the caller holds; no
+    /// commit.
+    pub(crate) fn write_locked(
+        &self,
+        repo: &Repo,
+        clock: &mut dyn Clock,
+        opts: WriteOptions<'_>,
+        plan: impl FnOnce(&Replay) -> Result<Plan>,
+        before_append: impl FnOnce(&[Event]) -> Result<Vec<PathBuf>>,
+    ) -> Result<(Written, Vec<PathBuf>)> {
         let mut rp = self.load()?;
         let actor = if opts.new_actor {
             if opts.actor_name.is_none() {
@@ -130,12 +181,12 @@ impl Tracker {
             next_id(clock, None)
         } else if opts.dry_run {
             // A dry run must not create this clone's actor id either.
-            match self.actor_id_opt(false, clock)? {
+            match self.actor_in(repo, false, clock)? {
                 Some(a) => a,
                 None => next_id(clock, None),
             }
         } else {
-            self.actor_id(true, clock)?
+            self.actor_in(repo, true, clock)?.expect("created")
         };
         let plan = plan(&rp)?;
 
@@ -243,23 +294,27 @@ impl Tracker {
         }
         if planned.is_empty() {
             // Nothing but a possible actor declaration: write nothing.
-            return Ok(Written {
+            let w = Written {
                 events: Vec::new(),
                 planned,
                 replay: rp,
-            });
+                sync: None,
+            };
+            return Ok((w, Vec::new()));
         }
         if opts.dry_run {
             rp.state = state;
             rp.events.extend(events.iter().cloned());
             rp.highest_seen = highest;
-            return Ok(Written {
+            let w = Written {
                 events,
                 planned,
                 replay: rp,
-            });
+                sync: None,
+            };
+            return Ok((w, Vec::new()));
         }
-        before_append(&events)?;
+        let files = before_append(&events)?;
 
         // Blobs first, so a crash never leaves an event naming a missing blob.
         let used: BTreeSet<&str> = events
@@ -282,10 +337,28 @@ impl Tracker {
         rp.state = state;
         rp.events.extend(events.iter().cloned());
         rp.highest_seen = highest;
-        Ok(Written {
+        let w = Written {
             events,
             planned,
             replay: rp,
-        })
+            sync: None,
+        };
+        Ok((w, files))
+    }
+}
+
+/// `<op> <ticket>` for the main event, with a count of the others.
+fn commit_message(tracker: &Tracker, w: &Written) -> String {
+    let view = crate::view::View::new(tracker, &w.replay);
+    let Some(ev) = w.primary() else {
+        return format!("{} events", w.events.len());
+    };
+    let what = match w.replay.state.tickets.get(&ev.entity) {
+        Some(t) => view.display(t),
+        None => "tracker".to_string(),
+    };
+    match w.events.len() {
+        1 => format!("{} {what}", ev.op.name()),
+        n => format!("{} {what} (+{} events)", ev.op.name(), n - 1),
     }
 }

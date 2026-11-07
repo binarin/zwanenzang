@@ -47,7 +47,7 @@ pub fn init_clock() -> FixedClock {
 
 pub fn new_tracker(dir: &tempfile::TempDir) -> Tracker {
     assert_disposable(dir.path());
-    Tracker::init(dir.path(), "test", "ZZ", &mut init_clock()).expect("init")
+    Tracker::init(dir.path(), "test", "ZZ", None, &mut init_clock()).expect("init")
 }
 
 /// Appends raw lines to the log named `log`, which is normally an actor id.
@@ -173,4 +173,24 @@ pub fn skipped_codes(rp: &Replay) -> Vec<&'static str> {
 
 pub fn json(v: impl serde::Serialize) -> Value {
     serde_json::to_value(v).unwrap()
+}
+
+/// Runs a read-only git command in the disposable repository `dir` and
+/// returns its trimmed stdout.
+pub fn git_out(dir: &Path, args: &[&str]) -> String {
+    assert_disposable(dir);
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
