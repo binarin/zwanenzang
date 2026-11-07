@@ -189,6 +189,26 @@ fn unknown_data_fields_are_tolerated() {
 }
 
 #[test]
+fn config_with_only_unknown_fields_is_accepted() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let raw = format!(
+        r#"{{"id":"{}","actor":"{}","parent":"{}","ts":"x","entity":"{}","op":"config","data":{{"rename_status":{{"draft":"idea"}}}}}}"#,
+        u(20),
+        ACTOR_A,
+        u(BASE_LAST),
+        t.config.id
+    );
+    append_raw(&t, &ACTOR_A.to_canonical(), &[raw]);
+    let rp = load(&t);
+    assert!(rp.skipped.is_empty(), "{:?}", rp.skipped);
+    assert_eq!(rp.events.len(), 7);
+    assert_eq!(rp.state.statuses, t.config.statuses);
+    let (_, issues) = lint(&t.config, &rp);
+    assert!(!issues);
+}
+
+#[test]
 fn malformed_and_invalid_lines_skipped() {
     let dir = disposable_dir();
     let t = based(&dir);
@@ -301,7 +321,6 @@ pub fn invalid_ticket_ops(root: Ulid) -> Vec<(Ulid, Op, &'static str)> {
             }),
             "invalid-name",
         ),
-        (root, Op::Config(ConfigData::default()), "invalid-data"),
         (
             t1,
             Op::Comment(CommentData {

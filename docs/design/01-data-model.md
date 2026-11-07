@@ -173,7 +173,9 @@ none changes a decision above.
   configuration file's vocabulary plus every name added by earlier `config`
   events (`{add_statuses?, add_kinds?}`). Vocabularies are expected only to
   grow; removing a name from the file makes old events that use it fail
-  replay validation, which lint reports.
+  replay validation, which lint reports. A `config` event that adds nothing
+  this build knows (for instance one carrying only fields a newer build
+  added) is accepted as a no-op, not skipped.
 - **Tag format.** Org-compatible: one or more of `A-Z a-z 0-9 _ @ # %`, at
   most 64 characters.
 - **Titles.** Non-empty after trimming, a single line, at most 512 bytes.

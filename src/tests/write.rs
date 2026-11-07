@@ -247,6 +247,7 @@ fn no_op_writes_are_not_written() {
                 name: "tester".into(),
             }),
         ),
+        (t.config.id, Op::Config(crate::event::ConfigData::default())),
     ];
     for (entity, op) in no_ops {
         let w = write_one(&t, &mut c, entity, op.clone()).unwrap();

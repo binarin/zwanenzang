@@ -511,9 +511,8 @@ fn apply_tracker_op(state: &mut State, ev: &Event) -> Result<bool, Rejection> {
             Ok(changed)
         }
         Op::Config(d) => {
-            if d.add_statuses.is_empty() && d.add_kinds.is_empty() {
-                return reject(RejectCode::InvalidData, "config event changes nothing");
-            }
+            // A config event may carry only fields a newer build knows; it
+            // is then a no-op here, not invalid.
             for n in d.add_statuses.iter().chain(&d.add_kinds) {
                 if !valid_name(n) {
                     return reject(RejectCode::InvalidName, format!("invalid name {n:?}"));
