@@ -45,6 +45,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Read a scope, document text and events after per-ticket cursors.
+    /// Takes one JSON request on stdin; does not fetch or write.
+    Read,
     /// Create a tracker in the tracker directory (created if missing).
     Init {
         /// Number prefix, e.g. ZZ.
@@ -379,6 +382,11 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
         actor_name: cli.actor_name,
     };
     match cli.command {
+        Command::Read => {
+            let request = serde_json::from_str(&read_text(None, stdin)?)
+                .map_err(|e| Error::InvalidArgument(format!("read request: {e}")))?;
+            Ok((crate::read::read(&ctx.tracker, request)?, 0))
+        }
         Command::Init { .. } => unreachable!("handled above"),
         Command::Create {
             title,

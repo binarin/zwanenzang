@@ -45,6 +45,8 @@ open questions that block milestone 2 are answered; the rest stay listed.
   events after cursors in one call; apply a list of changes in one call.
   Milestone 2's `query` covers the ticket half; the per-ticket event
   cursors are new here.
+  The read half is implemented as `read` (JSON on stdin, opaque scope and
+  per-ticket cursors, document text); batched apply remains to be built.
 - Emacs client against a local desktop clone: scope roots, pull, push,
   create, sync state in properties, Org wins, conflict tag, foreign and
   duplicate id handling, archive as absence.

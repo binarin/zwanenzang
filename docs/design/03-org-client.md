@@ -50,8 +50,7 @@ Mapping between heading and ticket:
 Following org-caldav, but at finer granularity. Each ticket heading stores in
 properties:
 
-- the event cursor: the id of the last event for this ticket the client has
-  applied
+- the opaque event cursor returned by the batched read for this ticket
 - a hash of the description text as last synced
 - per named document: its synced version id and a hash of its text
 
@@ -145,6 +144,43 @@ sync properties, scope roots pointing at the same tracker).
 
 The elisp stays thin. The CLI exposes batched JSON operations so one tramp
 round trip serves a whole scope.
+
+### Batched read contract (milestone 3)
+
+`read` takes one JSON object on stdin: `cursors` maps the tickets already
+present in the scope to their last read cursors (or null for a first read),
+and `since` is the last scope cursor (or null). It reads locally, without a
+lock, fetch or write. A client runs `sync` first when it wants remote changes.
+All returned state and cursors come from one replay.
+
+Known tickets are returned even when archived or tombstoned, so the client
+can handle their removal. Absent tickets are discovered only when live and
+affected by events since `since`; null discovers all live tickets. Each
+result holds the full ticket, current document text, accepted events after
+its cursor, and the next cursor. A scope read also returns tracker identity
+and the replayed vocabularies, so a client can validate its keyword map.
+The exact JSON is in [cli-json](../cli-json.md).
+
+Per-ticket history includes events that affect its visible state from the
+other side: relations on either end, a child's parent change on both the
+old and new parent, and a child's or related ticket's tombstone that shrinks
+the visible child/relation list. `last_event` keeps its original meaning
+(events whose entity is the ticket); it is not a sync cursor.
+
+Cursors are opaque strings, not bare ULIDs. An event can arrive through git
+later while sorting before an event already read. Each cursor therefore
+fingerprints the accepted history through its position. If that prefix no
+longer matches (or the cursor belongs to another ticket/tracker), `read`
+returns the whole relevant history and `reset: true`. The client compares
+the full state against its saved sync state, preserving local edits as on
+any pull; replayed events must not be appended as duplicate comments.
+A scope reset conservatively rediscovers every live absent ticket. This can
+reinsert an absent ticket after merged older history. Malformed tokens are
+errors. Clients must retain the token
+verbatim rather than parse it or use `last_event` in its place.
+
+This settles the cursor choice left by milestone 2's `query`. Batched apply
+is the next slice; this change only supplies the read half.
 
 ## Open questions
 
