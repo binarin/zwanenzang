@@ -70,7 +70,9 @@ open questions that block milestone 2 are answered; the rest stay listed.
 
 - Import swan-lake's tracker branch; freeze it; point its projects at the new
   tracker. The ai-workflow import fixture becomes the real zwanenzang
-  history at the same time.
+  history at the same time, imported with the reviewed exclude list kept
+  in the private `zwanenzang-tracker` (it names private tickets, so it
+  never enters this repository).
 
 ## Deliberately absent
 
