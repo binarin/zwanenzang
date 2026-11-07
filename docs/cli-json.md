@@ -63,6 +63,7 @@ them; any change to them fails with `tombstoned`.
 | `doc get T NAME` | nothing | document object |
 | `show T` | nothing | ticket object |
 | `list [--status S]... [--tag X]... [--kind K]... [--all]` | nothing | `{"tickets": [summary, ...]}` |
+| `query [T]... [--status S]... [--tag X]... [--kind K]... [--parent T\|none] [--under T] [--repo R]... [--title TEXT] [--all] [--summary]` | nothing | `{"tickets": [ticket, ...]}` |
 | `lint` | nothing | lint report |
 | `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
 
@@ -76,8 +77,23 @@ is given. Repeated `--status` and `--kind` match any of the values; repeated
 `--tag` requires all of them. Tickets are ordered by id, which is creation
 order.
 
-Read-only commands (`show`, `list`, `doc get`, `lint`) take no lock and
-write nothing.
+`query` returns full ticket objects, as `show` does, for every ticket that
+matches all of the filters given; `--summary` returns summaries instead.
+Ticket arguments limit the result to those tickets and, unlike the other
+filters, include them even when archived or tombstoned; otherwise those are
+left out unless `--all` is given. `--status`, `--kind` and `--repo` match any
+of their values and `--tag` requires all, as in `list`. `--parent T` keeps
+direct children of `T`, `--parent none` tickets without a parent, `--under
+T` descendants of `T` at any depth (not `T` itself). `--repo` matches a
+branch or merge request in that repository alias, and `--title` a substring
+of the title, ignoring case. Tickets are ordered by id. An unknown or
+ambiguous ticket reference anywhere fails the whole query.
+
+`query` reads derived state only. Reading events after a cursor, which the
+org client's pull needs, is part of milestone 3's batched read.
+
+Read-only commands (`show`, `list`, `query`, `doc get`, `lint`) take no lock
+and write nothing.
 
 `import ai-workflow` reads the frozen ai-workflow tracker at `SOURCE` (a
 checkout holding `tickets/` and `docs/`, or its `tickets/` directory) and
@@ -227,7 +243,7 @@ Operation data:
 - `comments.*.text` is always the comment's text, read from its blob when it
   has one; `blob` is `null` for inline comments.
 
-A summary (in `list`) has the fields `id`, `short_id`, `number`, `display`,
+A summary (in `list`, and in `query --summary`) has the fields `id`, `short_id`, `number`, `display`,
 `title`, `status`, `kind`, `parent`, `tags`, `archived`, `tombstoned` and
 `last_event`.
 

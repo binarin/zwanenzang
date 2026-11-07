@@ -1,6 +1,7 @@
 //! The command line: argument definitions and dispatch. Every command prints
 //! one JSON value on stdout.
 
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -15,7 +16,7 @@ use crate::event::{
 };
 use crate::lint::lint;
 use crate::replay::Replay;
-use crate::state::{RejectCode, Rejection};
+use crate::state::{RejectCode, Rejection, Ticket};
 use crate::store::{Tracker, blob_name, find_root};
 use crate::ulid::Ulid;
 use crate::view::View;
@@ -146,6 +147,41 @@ pub enum Command {
         /// Include archived and tombstoned tickets.
         #[arg(long)]
         all: bool,
+    },
+    /// Full ticket objects matching every given filter.
+    Query {
+        /// Only these tickets (references; any of them). Named tickets are
+        /// returned even when archived or tombstoned.
+        tickets: Vec<String>,
+        /// Only these statuses (repeatable; any of them).
+        #[arg(long)]
+        status: Vec<String>,
+        /// Only tickets with these tags (repeatable; all of them).
+        #[arg(long)]
+        tag: Vec<String>,
+        /// Only these kinds (repeatable; any of them).
+        #[arg(long)]
+        kind: Vec<String>,
+        /// Only direct children of this ticket, or top-level tickets with
+        /// `none`.
+        #[arg(long, value_name = "TICKET|none")]
+        parent: Option<String>,
+        /// Only descendants of this ticket, at any depth.
+        #[arg(long, value_name = "TICKET")]
+        under: Option<String>,
+        /// Only tickets with a branch or merge request in this repository
+        /// alias (repeatable; any of them).
+        #[arg(long)]
+        repo: Vec<String>,
+        /// Only titles containing this text, ignoring case.
+        #[arg(long)]
+        title: Option<String>,
+        /// Include archived and tombstoned tickets.
+        #[arg(long)]
+        all: bool,
+        /// Return summaries, as `list` does, instead of full objects.
+        #[arg(long)]
+        summary: bool,
     },
     /// Report skipped events, concurrent changes, lost document edits,
     /// dangling repository aliases and unnamed actors. Exits 1 on issues.
@@ -557,6 +593,75 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 .filter(|t| tag.iter().all(|g| t.tags.contains(g)))
                 .filter(|t| kind.is_empty() || t.kind.as_ref().is_some_and(|k| kind.contains(k)))
                 .map(|t| view.summary(t))
+                .collect();
+            Ok((json!({ "tickets": items }), 0))
+        }
+        Command::Query {
+            tickets,
+            status,
+            tag,
+            kind,
+            parent,
+            under,
+            repo,
+            title,
+            all,
+            summary,
+        } => {
+            let rp = ctx.tracker.load()?;
+            let view = View::new(&ctx.tracker, &rp);
+            let named: BTreeSet<Ulid> = tickets
+                .iter()
+                .map(|r| view.resolve(r))
+                .collect::<Result<_>>()?;
+            let parent = match parent.as_deref() {
+                None => None,
+                Some(p) if p.eq_ignore_ascii_case("none") => Some(None),
+                Some(p) => Some(Some(view.resolve(p)?)),
+            };
+            let under = under.map(|u| view.resolve(&u)).transpose()?;
+            let below = |t: &Ticket, root: Ulid| {
+                // The parent chain has no cycles; the bound only guards a
+                // state this build did not produce.
+                let mut cur = t.parent;
+                for _ in 0..rp.state.tickets.len() {
+                    match cur {
+                        Some(p) if p == root => return true,
+                        Some(p) => cur = rp.state.tickets.get(&p).and_then(|t| t.parent),
+                        None => return false,
+                    }
+                }
+                false
+            };
+            let title = title.map(|t| t.to_lowercase());
+            let items: Vec<Value> = rp
+                .state
+                .tickets
+                .values()
+                .filter(|t| named.is_empty() || named.contains(&t.id))
+                .filter(|t| all || !named.is_empty() || !(t.archived || t.tombstoned))
+                .filter(|t| status.is_empty() || status.contains(&t.status))
+                .filter(|t| tag.iter().all(|g| t.tags.contains(g)))
+                .filter(|t| kind.is_empty() || t.kind.as_ref().is_some_and(|k| kind.contains(k)))
+                .filter(|t| parent.is_none_or(|p| t.parent == p))
+                .filter(|t| under.is_none_or(|u| below(t, u)))
+                .filter(|t| {
+                    repo.is_empty()
+                        || t.branches.iter().any(|(r, _)| repo.contains(r))
+                        || t.mrs.iter().any(|(r, _)| repo.contains(r))
+                })
+                .filter(|t| {
+                    title
+                        .as_ref()
+                        .is_none_or(|q| t.title.to_lowercase().contains(q))
+                })
+                .map(|t| {
+                    if summary {
+                        view.summary(t)
+                    } else {
+                        view.ticket(t)
+                    }
+                })
                 .collect();
             Ok((json!({ "tickets": items }), 0))
         }
