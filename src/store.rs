@@ -78,11 +78,19 @@ fn enclosing_tracker(dir: &Path) -> Option<PathBuf> {
     find_root(probe).ok()
 }
 
-/// Appends `line` to a text file unless the file already has it.
+/// Adds `line` to a text file unless the file already has it.
+///
+/// The new content is written to a temporary file, synced and renamed into
+/// place, then the directory is synced: a crash leaves either the old file
+/// or the complete new one, and the file is durable before anything written
+/// after it.
 fn ensure_line(path: &Path, line: &str) -> Result<()> {
-    let existing = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+    let (existing, permissions) = match fs::read_to_string(path) {
+        Ok(s) => {
+            let perms = fs::metadata(path).map_err(Error::io(path))?.permissions();
+            (s, Some(perms))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), None),
         Err(e) => return Err(Error::io(path)(e)),
     };
     if existing.lines().any(|l| l.trim() == line) {
@@ -94,7 +102,27 @@ fn ensure_line(path: &Path, line: &str) -> Result<()> {
     }
     text.push_str(line);
     text.push('\n');
-    fs::write(path, text).map_err(Error::io(path))
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(
+        ".{file_name}.zwanenzang-tmp-{}",
+        std::process::id()
+    ));
+    let mut f = File::create(&tmp).map_err(Error::io(&tmp))?;
+    f.write_all(text.as_bytes()).map_err(Error::io(&tmp))?;
+    if let Some(perms) = permissions {
+        f.set_permissions(perms).map_err(Error::io(&tmp))?;
+    }
+    f.sync_all().map_err(Error::io(&tmp))?;
+    drop(f);
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(Error::io(path)(e));
+    }
+    sync_dir(dir)
 }
 
 /// Syncs a directory, so entries created or renamed in it survive a crash.

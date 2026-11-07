@@ -68,11 +68,41 @@ fn init_inside_a_tracker_refused() {
 fn init_keeps_existing_gitattributes() {
     let dir = disposable_dir();
     assert_disposable(dir.path());
-    fs::write(dir.path().join(".gitattributes"), "*.png binary").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let attrs = dir.path().join(".gitattributes");
+    fs::write(&attrs, "*.png binary").unwrap();
+    fs::set_permissions(&attrs, fs::Permissions::from_mode(0o640)).unwrap();
+    fs::write(dir.path().join(".gitignore"), "target/\n").unwrap();
     new_tracker(&dir);
     assert_eq!(
-        fs::read_to_string(dir.path().join(".gitattributes")).unwrap(),
+        fs::read_to_string(&attrs).unwrap(),
         "*.png binary\nevents/*.jsonl merge=union\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "target/\n/.zwanenzang/\n"
+    );
+    // Rewritten through a temporary file renamed into place: the mode is
+    // kept and no temporary file is left behind.
+    assert_eq!(
+        fs::metadata(&attrs).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    let mut names: Vec<String> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            ".gitattributes",
+            ".gitignore",
+            ".zwanenzang",
+            "blobs",
+            "events",
+            CONFIG_FILE
+        ]
     );
 }
 
