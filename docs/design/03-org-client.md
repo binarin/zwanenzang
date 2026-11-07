@@ -265,8 +265,9 @@ remote events have the same semantics as ordinary writes. A subsequent
 not infer cursors from apply event ids. Exact shapes and error semantics are
 in [cli-json](../cli-json.md).
 
-Human checkout fast-forwarding and the Emacs implementation remain later
-work; these contracts supply the CLI halves they need.
+Human checkout fast-forwarding is implemented in the CLI's sync phase (see
+[git and sync](02-git-and-sync.md)). The Emacs implementation remains later
+work; these contracts supply the CLI halves it needs.
 
 ## Open questions
 

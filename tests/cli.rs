@@ -691,6 +691,7 @@ fn numbers_resolve_and_display() {
     assert_eq!(
         first["sync"],
         json!({"upstream": null, "pushed": false, "error": null,
+               "checkouts": {"target": git(p, &["rev-parse", "HEAD"]).trim(), "error": null, "results": []},
                "numbered": [{"id": a, "number": 1, "display": "ZZ-0001", "event": n_event}]})
     );
     assert_eq!(first["ticket"]["last_event"], n_event);
