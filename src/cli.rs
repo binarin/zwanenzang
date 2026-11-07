@@ -45,6 +45,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Apply one JSON batch from stdin, commit once and sync once.
+    Apply,
     /// Read a scope, document text and events after per-ticket cursors.
     /// Takes one JSON request on stdin; does not fetch or write.
     Read,
@@ -382,6 +384,14 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
         actor_name: cli.actor_name,
     };
     match cli.command {
+        Command::Apply => {
+            let request = serde_json::from_str(&read_text(None, stdin)?)
+                .map_err(|e| Error::InvalidArgument(format!("apply request: {e}")))?;
+            Ok((
+                crate::batch::apply(&ctx.tracker, ctx.clock, ctx.actor_name.as_deref(), request)?,
+                0,
+            ))
+        }
         Command::Read => {
             let request = serde_json::from_str(&read_text(None, stdin)?)
                 .map_err(|e| Error::InvalidArgument(format!("read request: {e}")))?;

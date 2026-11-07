@@ -188,3 +188,16 @@ None at present.
   (`GIT_TERMINAL_PROMPT=0`); a remote that needs an interactive login
   counts as unreachable. The caller's `GIT_DIR`, `GIT_WORK_TREE` and
   `GIT_INDEX_FILE` are ignored, so the tool always acts on its own clone.
+
+### Batched mutation boundary
+
+A client `apply` holds the same exclusive clone lock across one complete
+plan validation, one mutation commit, and one sync cycle. It does not fetch
+between changes. The mutation commit is named `apply client batch`; the
+existing publisher may add a numbering commit or retry publication. Empty
+and all-no-op batches skip both commit and sync. Rejected validation writes
+no blobs or events and performs no sync; actor-id and lock bookkeeping may
+still occur. This does not extend atomicity to filesystem/git failures or
+remote changes learned during the subsequent sync. In particular document
+compare-and-set is against local replay; a concurrent edit learned during
+sync uses the existing lost-document replay semantics.

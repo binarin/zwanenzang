@@ -67,6 +67,8 @@ pub struct Written {
     /// Ids of the written events that came from the plan, in plan order;
     /// planned operations that changed nothing are absent.
     pub planned: Vec<Ulid>,
+    /// One event id per plan operation; `None` for a no-op.
+    pub outcomes: Vec<Option<Ulid>>,
     /// State after the write and the sync.
     pub replay: Replay,
     /// What the sync after the write did; `None` when nothing was written.
@@ -190,6 +192,7 @@ impl Tracker {
         };
         let plan = plan(&rp)?;
 
+        let mut outcomes = vec![None; plan.ops.len()];
         let mut state = rp.state.clone();
         let pending: BTreeSet<String> = plan.blobs.iter().map(|t| blob_name(t)).collect();
         state.blobs.extend(pending.iter().cloned());
@@ -287,8 +290,9 @@ impl Tracker {
             }
             state = trial;
             highest = Some(id);
-            if index.is_some() {
+            if let Some(i) = index {
                 planned.push(id);
+                outcomes[i] = Some(id);
             }
             events.push(ev);
         }
@@ -297,6 +301,7 @@ impl Tracker {
             let w = Written {
                 events: Vec::new(),
                 planned,
+                outcomes,
                 replay: rp,
                 sync: None,
             };
@@ -309,6 +314,7 @@ impl Tracker {
             let w = Written {
                 events,
                 planned,
+                outcomes,
                 replay: rp,
                 sync: None,
             };
@@ -340,6 +346,7 @@ impl Tracker {
         let w = Written {
             events,
             planned,
+            outcomes,
             replay: rp,
             sync: None,
         };

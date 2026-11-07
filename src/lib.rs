@@ -9,6 +9,7 @@
 //! - [`replay`], [`write`]: reading everything back, and appending.
 //! - [`view`], [`lint`], [`cli`]: JSON output and the command line.
 
+pub mod batch;
 pub mod cli;
 pub mod clock;
 pub mod config;

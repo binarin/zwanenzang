@@ -288,6 +288,16 @@ none changes a decision above.
   none is written. The actor's `actor` declaration is written only together
   with at least one real change, never alone. A document version whose text
   equals the current version is a no-op.
+- **Batched client writes (milestone 3).** `apply` compiles a JSON list to
+  one ordinary live-write plan; each change is one existing operation.
+  References to earlier create change indices use the plan's existing
+  deferred targets, not new on-disk ids. Validation sees preceding changes,
+  and rejects the entire batch before writing any blob or log line.
+  Documents take text plus a required base; stale bases fail even for
+  identical text, while identical text with a current base is a no-op.
+  Per-operation outcomes retain input positions including no-ops. The
+  [CLI contract](../cli-json.md) specifies the accepted operations, reference
+  syntax, mapping back to created tickets, and failure boundaries.
 - **Interrupted appends.** If a log does not end in a newline (an
   interrupted write), the next append starts with one, so lines never run
   together; the partial line is reported as malformed.

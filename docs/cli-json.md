@@ -2,8 +2,8 @@
 
 What a client (the Emacs client, an agent, a script) can rely on when it
 runs `zwanenzang`. Every write is committed to the tracker's git repository
-and synced with its upstream; batched operations are not there yet. The
-format grows by adding fields; a client must ignore fields it does not know.
+and synced with its upstream. Clients can read or apply a whole scope in one
+JSON request. The format grows by adding fields; a client must ignore fields it does not know.
 
 ## Invocation
 
@@ -70,6 +70,7 @@ them; any change to them fails with `tombstoned`.
 | `query [T]... [--status S]... [--tag X]... [--kind K]... [--parent T\|none] [--under T] [--repo R]... [--title TEXT] [--all] [--summary]` | nothing | `{"tickets": [ticket, ...]}` |
 | `sync` | `number`, commits | `{"sync": sync object}` |
 | `read` | nothing; request from stdin | scope read object (below) |
+| `apply` | list of changes from stdin, one mutation commit and one sync | batch apply object (below) |
 | `lint` | nothing | lint report |
 | `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
 
@@ -128,6 +129,103 @@ of it is written or none of it; `--dry-run` validates everything and
 writes nothing. Running it again imports only tickets not imported yet.
 How tickets map to events is listed in the
 [data model](design/01-data-model.md) under the milestone 2 choices.
+
+### Batch apply
+
+`apply` takes exactly one JSON object on stdin. `changes` is required and
+may be empty. Each change has `op`, `data` (an object), and, except for
+`create`, a non-null `ticket`:
+
+```json
+{"changes": [
+  {"op": "create", "data": {"title": "Example parent", "status": "todo"}},
+  {"op": "create", "data": {"title": "Example child"}},
+  {"op": "parent", "ticket": {"created": 1}, "data": {"to": {"created": 0}}},
+  {"op": "doc", "ticket": {"created": 1},
+   "data": {"name": "description", "text": "Example body", "base": null}},
+  {"op": "tag", "ticket": "ZZ-0042", "data": {"tag": "example"}}
+]}
+```
+
+A reference is either an ordinary ticket reference string, or
+`{"created": N}` where N is the zero-based **change index** of an earlier
+`create` in this request. The same syntax works for `ticket` and for
+`parent.to`, `relate.to`, and `unrelate.to`. Forward references, references
+to non-create changes and negative/non-integer indices are invalid. Order
+all creates before changes that connect them when pushing a scope. Ordinary
+references resolve against the state at the start of the batch under the
+write lock, before any fetch; use created references for new tickets.
+
+Supported operations and their complete input data fields:
+
+| op | data |
+|---|---|
+| `create` | `{title, status?, kind?}`; default status is the first replayed vocabulary entry; kind defaults to null; ticket absent or null |
+| `title`, `status` | `{to: string}` |
+| `kind` | `{to: string or null}`; required, null clears |
+| `parent` | `{to: reference or null}`; required, null clears |
+| `relate`, `unrelate` | `{to: reference}` |
+| `tag`, `untag` | `{tag: string}` |
+| `branch` | `{repo: string, name: string}` |
+| `mr` | `{repo: string, url: string}` |
+| `archive`, `tombstone` | `{}` |
+| `comment` | `{text: string, link?: string or null}` |
+| `doc` | `{name: string, text: string, base: full version ULID or null}` |
+
+Document text is UTF-8 JSON text, including empty text. `base` is mandatory:
+null asserts that the document does not exist; otherwise it must be the
+current version id returned by a read. A stale base rejects the entire
+batch with `stale-doc-base`, even if the submitted text is identical.
+With a current base, identical text is a no-op and retains the old version.
+Do not submit two changed versions of the same document in one batch: the
+second would need the not-yet-known version id produced by the first.
+Comments follow the ordinary CLI's whitespace and inline/blob rules. Clients
+send text, never blob hashes. `number`, `actor`, and `config` are unavailable
+in batches.
+
+The whole batch is validated in input order through the ordinary live-write
+core, against the effects of earlier changes. Reference resolution and
+request shape checks precede that validation. A failure writes no events,
+blobs or commit and performs no sync. Existing actor-id/lock bookkeeping may
+still occur. There are no partial results. Invalid JSON, missing/unknown
+request, change or data fields, bad field types, unsupported operations and
+invalid created references use `invalid-argument`. Existing ticket resolution
+and validation errors retain their usual codes. Error messages are for
+humans; callers must not parse them to locate a change.
+
+A successful nonempty mutation writes one commit (`apply client batch`),
+then runs one sync cycle under the same lock; publication may add its own
+numbering commit and retry as usual. Remote failure still returns success
+with local events committed and the failure in `sync`. This is validation
+atomicity, not a rollback guarantee for disk/git failures or remote races.
+A concurrent remote document edit can still become a lost edit at replay;
+clients inspect the next `read` and handle conflicts as on ordinary sync.
+
+```json
+{"written": true,
+ "results": [{"ticket": "<ULID>", "written": true, "event": "<event ULID>"},
+             {"ticket": "<ULID>", "written": false, "event": null}],
+ "created": {"0": "<created ticket ULID>"},
+ "tickets": [{"id": "<ULID>", "...": "full ticket fields"}],
+ "events": [{"...": "written event envelope"}],
+ "sync": {"...": "ordinary sync object"}}
+```
+
+- `results` has exactly one entry per input change, in input order. Each
+  entry names the resolved ticket and the event id it wrote, or null for a
+  no-op. Creates always write; their event id equals the ticket id.
+- `created` maps create change indices (JSON object keys are strings) to
+  ticket ULIDs. Use these ids to persist identity back to client headings.
+- `tickets` contains each distinct ticket targeted by a change once, in id
+  order, with full state **after sync**, including assigned numbers. Tickets
+  mentioned only as `to` targets are not included. Use `read` for all affected
+  tickets, current document text and new cursors; `apply` returns no cursors
+  and does not change the read contract.
+- `events` contains the mutation's written envelopes in order, including a
+  possible actor declaration, excluding no-ops and publication events.
+- An empty or entirely no-op batch returns `written: false`, `events: []`,
+  `created: {}`, `sync: null`; it does not commit or sync. No-op results and
+  their tickets are still returned; an empty batch has empty lists.
 
 ### Scope read
 
