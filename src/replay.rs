@@ -22,7 +22,8 @@ pub struct Skipped {
     pub op: Option<String>,
     pub code: RejectCode,
     pub message: String,
-    /// The line exactly as found.
+    /// The line exactly as found; for a line that is not valid UTF-8, a
+    /// lossy rendering of it.
     pub raw: String,
 }
 
@@ -73,6 +74,16 @@ pub fn replay(config: &Config, blobs: BTreeSet<String>, lines: &[LogLine]) -> Re
     let mut skipped_lines = Vec::new();
     let mut by_id: BTreeMap<Ulid, Vec<(&LogLine, RawEnvelope)>> = BTreeMap::new();
     for line in lines {
+        if !line.utf8 {
+            skipped_lines.push(skipped(
+                line,
+                None,
+                None,
+                RejectCode::Malformed,
+                "line is not valid UTF-8".into(),
+            ));
+            continue;
+        }
         match RawEnvelope::parse(&line.text) {
             Ok(env) => by_id.entry(env.id).or_default().push((line, env)),
             Err(e) => {

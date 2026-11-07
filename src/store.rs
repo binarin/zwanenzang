@@ -24,7 +24,12 @@ pub struct LogLine {
     pub log: String,
     /// 1-based line number.
     pub line_no: usize,
+    /// The line's text. For a line that is not valid UTF-8 this is a lossy
+    /// rendering for display only, and `utf8` is false.
     pub text: String,
+    /// Whether the line's bytes are valid UTF-8. Replay skips a line that
+    /// is not as malformed.
+    pub utf8: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -215,15 +220,21 @@ impl Tracker {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let bytes = fs::read(&path).map_err(Error::io(&path))?;
-            let text = String::from_utf8_lossy(&bytes);
-            for (i, line) in text.split('\n').enumerate() {
-                if line.trim().is_empty() {
+            // Decoded line by line and strictly, so distinct byte sequences
+            // stay distinct text and an invalid line cannot pass as valid.
+            for (i, line) in bytes.split(|&b| b == b'\n').enumerate() {
+                let (text, utf8) = match std::str::from_utf8(line) {
+                    Ok(t) => (t.to_string(), true),
+                    Err(_) => (String::from_utf8_lossy(line).into_owned(), false),
+                };
+                if utf8 && text.trim().is_empty() {
                     continue;
                 }
                 out.push(LogLine {
                     log: log.clone(),
                     line_no: i + 1,
-                    text: line.to_string(),
+                    text,
+                    utf8,
                 });
             }
         }

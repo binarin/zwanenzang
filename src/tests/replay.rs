@@ -152,6 +152,37 @@ fn conflicting_lines_with_one_id_are_all_skipped() {
 }
 
 #[test]
+fn lines_that_are_not_utf8_are_malformed() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    // Two lines with one id that differ only in an invalid byte: a lossy
+    // decoding would make them one identical line and apply it.
+    let line = ev(
+        u(20),
+        ACTOR_A,
+        Some(u(BASE_LAST)),
+        u(T1),
+        Op::Title(TextTo {
+            to: "hello @".into(),
+        }),
+    )
+    .to_line();
+    let mut bytes = Vec::new();
+    for bad in [0xFFu8, 0xFE] {
+        bytes.extend(line.bytes().map(|b| if b == b'@' { bad } else { b }));
+        bytes.push(b'\n');
+    }
+    append_bytes(&t, &ACTOR_A.to_canonical(), &bytes);
+    let rp = load(&t);
+    assert_eq!(skipped_codes(&rp), vec!["malformed", "malformed"]);
+    assert_eq!(rp.state.tickets[&u(T1)].title, "one");
+    assert_eq!(rp.events.len(), 6);
+    let lines: Vec<usize> = rp.skipped.iter().map(|s| s.line).collect();
+    assert_eq!(lines, vec![7, 8]);
+    assert!(rp.skipped[0].raw.contains("hello \u{FFFD}"));
+}
+
+#[test]
 fn unknown_op_skipped_with_raw_line() {
     let dir = disposable_dir();
     let t = based(&dir);

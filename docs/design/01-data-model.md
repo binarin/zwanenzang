@@ -193,7 +193,9 @@ none changes a decision above.
   skipped and reported.
 - **Envelope checks at replay.** A malformed line, an event whose `actor`
   does not match its log file name, an unknown operation, or invalid data is
-  skipped and reported, never fatal.
+  skipped and reported, never fatal. A line that is not valid UTF-8 is
+  malformed; lines are decoded one by one, so it does not affect its
+  neighbours.
 - **Tombstones.** Any further operation on a tombstoned entity is rejected.
   Tombstoned tickets are excluded from `list` unless asked for.
 - **No-op writes.** A live write that would not change derived state (the

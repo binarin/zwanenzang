@@ -192,7 +192,8 @@ new version.
 ```
 
 - `skipped`: lines replay did not apply, with the reason `code` (see below)
-  and the line as found. `log` is the log file name without `.jsonl`,
+  and the line as found (a lossy rendering when the line is not valid
+  UTF-8, which is skipped as `malformed`). `log` is the log file name without `.jsonl`,
   `line` is 1-based; `id` and `op` are `null` when they could not be read.
 - `concurrent`: two changes by different actors to the same field (`title`,
   `status`, `kind`, `parent`) of one ticket where the later writer had not

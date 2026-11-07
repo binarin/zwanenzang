@@ -66,6 +66,18 @@ pub fn append_raw(t: &Tracker, log: &str, lines: &[String]) {
     }
 }
 
+/// Appends raw bytes to the log named `log`, for lines that are not text.
+pub fn append_bytes(t: &Tracker, log: &str, bytes: &[u8]) {
+    assert_disposable(&t.root);
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(t.events_dir().join(format!("{log}.jsonl")))
+        .unwrap();
+    f.write_all(bytes).unwrap();
+}
+
 pub fn append_events(t: &Tracker, events: &[Event]) {
     for e in events {
         append_raw(t, &e.actor.to_canonical(), &[e.to_line()]);
