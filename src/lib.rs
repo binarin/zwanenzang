@@ -19,6 +19,7 @@ pub mod git;
 pub mod import;
 pub mod lint;
 pub mod names;
+pub mod read;
 pub mod replay;
 pub mod state;
 pub mod store;

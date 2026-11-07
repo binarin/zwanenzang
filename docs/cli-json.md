@@ -69,6 +69,7 @@ them; any change to them fails with `tombstoned`.
 | `list [--status S]... [--tag X]... [--kind K]... [--all]` | nothing | `{"tickets": [summary, ...]}` |
 | `query [T]... [--status S]... [--tag X]... [--kind K]... [--parent T\|none] [--under T] [--repo R]... [--title TEXT] [--all] [--summary]` | nothing | `{"tickets": [ticket, ...]}` |
 | `sync` | `number`, commits | `{"sync": sync object}` |
+| `read` | nothing; request from stdin | scope read object (below) |
 | `lint` | nothing | lint report |
 | `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
 
@@ -94,10 +95,10 @@ branch or merge request in that repository alias, and `--title` a substring
 of the title, ignoring case. Tickets are ordered by id. An unknown or
 ambiguous ticket reference anywhere fails the whole query.
 
-`query` reads derived state only. Reading events after a cursor, which the
-org client's pull needs, is part of milestone 3's batched read.
+`query` reads derived state only. `read` supplies events after per-ticket
+cursors and document text for a whole scope in one call.
 
-Read-only commands (`show`, `list`, `query`, `doc get`, `lint`) take no lock,
+Read-only commands (`show`, `list`, `query`, `read`, `doc get`, `lint`) take no lock,
 write nothing, do not fetch and do not need git.
 
 Every command that writes events commits them, as one commit holding only
@@ -127,6 +128,60 @@ of it is written or none of it; `--dry-run` validates everything and
 writes nothing. Running it again imports only tickets not imported yet.
 How tickets map to events is listed in the
 [data model](design/01-data-model.md) under the milestone 2 choices.
+
+### Scope read
+
+`read` takes exactly one JSON object on stdin. Both fields may be omitted:
+
+```json
+{"cursors": {"ZZ-0042": "<opaque ticket cursor>", "ZZ-0043": null},
+ "since": "<opaque scope cursor>"}
+```
+
+`cursors` names headings already in scope using any supported ticket
+reference. Null requests all history for that ticket. `since` is the scope
+cursor from the last read; null requests discovery of all live tickets.
+Unknown or ambiguous references fail the whole call with the usual ticket
+reference errors. Duplicate references to the same ticket, malformed cursors
+and unknown request fields fail with `invalid-argument`.
+No actor is allocated; no git repository is needed.
+
+```json
+{"tracker": {"id": "<tracker ULID>", "name": "...", "prefix": "ZZ",
+             "statuses": ["draft", "..."], "kinds": ["task", "..."]},
+ "cursor": "<opaque scope cursor>" | null,
+ "reset": false,
+ "tickets": [{"ticket": {<full ticket object>},
+              "documents": {"description": "<current text>", "plan": "..."},
+              "events": [{<accepted event>}, ...],
+              "cursor": "<opaque ticket cursor>", "reset": false}]}
+```
+
+- Tickets are in id order. All named tickets are returned, including
+  archived and tombstoned tickets, even with no newer events. Other tickets
+  appear only when neither archived nor tombstoned and affected by an
+  event newer than the scope cursor. Supplying only `since` discovers
+  changes to absent tickets; supplying `{}` reads every live ticket.
+- Full state and current document text are returned even when no events
+  are newer. `documents` maps names to UTF-8 text, with version ids and
+  blob names in `ticket.documents`. Missing document blobs fail the call.
+  Vocabularies include accepted `config` events.
+- Events are in id order, exclusive of the input cursor. They include
+  relations from the other end, child moves on both old and new parents,
+  and tombstones that remove visible children or relations. The event's
+  `entity` remains the ticket it was written on. Tracker-level events are
+  excluded from per-ticket history.
+- Cursors are opaque and specific to a tracker or ticket. Save them
+  verbatim, separately from `last_event`. They fingerprint history so a
+  lower-id event merged later cannot be silently missed. A changed or
+  unavailable history prefix returns `reset: true` and all accepted
+  history for that ticket. A scope reset rediscovers all live absent
+  tickets. Treat these as a full comparison against the client's saved
+  sync state, preserving local edits and avoiding duplicate comments.
+  A well-formed cursor for another entity also resets. Null input is an
+  initial read, with `reset: false`. An empty tracker has a null scope cursor.
+- The response uses one replay of local logs. It does not fetch; call
+  `sync` first to incorporate remote events.
 
 ### Init object
 
