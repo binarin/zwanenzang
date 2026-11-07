@@ -697,6 +697,24 @@ or nil."
                              (append (remove zwanenzang-conflict-tag (plist-get h :tags))
                                      (list zwanenzang-conflict-tag)))))
 
+(defun zwanenzang--add-conflict (conflict)
+  "Add CONFLICT to the conflict drawer of the heading at point and tag it."
+  (let* ((body (zwanenzang--body))
+         (drawer (seq-find (lambda (s) (and (eq (car s) 'drawer)
+                                            (equal (nth 2 s) "ZWANENZANG_CONFLICT")))
+                           (zwanenzang--body-segments body)))
+         (old (if drawer
+                  (replace-regexp-in-string "\\`.*\n\\|.*\n\\'" "" (cadr drawer))
+                "")))
+    (zwanenzang--write-body
+     (zwanenzang--compose-body
+      body `(("ZWANENZANG_CONFLICT" . ,(concat old (zwanenzang--conflict-content
+                                                     (list conflict)))))))
+    (let ((h (zwanenzang--heading)))
+      (zwanenzang--set-heading (plist-get h :keyword) (plist-get h :title)
+                               (append (remove zwanenzang-conflict-tag (plist-get h :tags))
+                                       (list zwanenzang-conflict-tag))))))
+
 (defun zwanenzang--merge-prose (remote fresh hash-property)
   "Reconcile the body text at point with REMOTE, normalized tracker text.
 HASH-PROPERTY holds the hash of the text as last synced; FRESH means
@@ -787,7 +805,9 @@ parent and nesting to record."
                   nil)
             (cdr keep)))
      ((eq decision 'move)
-      (push (cons (alist-get 'id ticket) (or expected :inbox)) (zwanenzang--pull-moves pull))
+      (push (list (alist-get 'id ticket) (or expected :inbox) remote
+                  (assq 'parent sync) (assq 'nest sync))
+            (zwanenzang--pull-moves pull))
       (list nil remote expected))
      (t (list nil remote nest)))))
 
@@ -986,17 +1006,35 @@ cursor."
             (zwanenzang--note-result pull (alist-get 'ticket entry)
                                      (zwanenzang--pull-ticket pull entry (plist-get tk :nest))))
           (cl-incf (zwanenzang--pull-pulled pull)))))
-    (dolist (move (reverse (zwanenzang--pull-moves pull)))
+    (pcase-dolist (`(,id ,target ,parent ,old-parent ,old-nest)
+                   (reverse (zwanenzang--pull-moves pull)))
       (zwanenzang--rescan pull)
-      (let* ((from (gethash (car move) ids))
-             (to (if (eq (cdr move) :inbox)
-                     (zwanenzang--ensure-inbox root)
-                   (gethash (cdr move) ids)))
-             (label (alist-get 'display (alist-get 'ticket (gethash (car move) entries)))))
-        (if (and (<= from to) (< to (zwanenzang--subtree-end from)))
-            (zwanenzang--pull-line pull "%s: not moved, the new parent is nested inside it" label)
-          (zwanenzang--move-subtree from to)
-          (cl-incf (zwanenzang--pull-moved pull)))))
+      (let ((from (gethash id ids))
+            (to (if (eq target :inbox)
+                    (zwanenzang--ensure-inbox root)
+                  (gethash target ids)))
+            (ticket (alist-get 'ticket (gethash id entries))))
+        (if (not (and (<= from to) (< to (zwanenzang--subtree-end from))))
+            (progn (zwanenzang--move-subtree from to)
+                   (cl-incf (zwanenzang--pull-moved pull)))
+          ;; An earlier move put the new parent inside this subtree.  The
+          ;; heading stays, and so does the sync state of its nesting.
+          (save-excursion
+            (goto-char from)
+            (zwanenzang--put "ZWANENZANG_SYNC"
+                             (zwanenzang--format-sync
+                              (append (list old-parent old-nest)
+                                      (seq-remove (lambda (cell) (memq (car cell) '(parent nest)))
+                                                  (zwanenzang--parse-sync
+                                                   (org-entry-get nil "ZWANENZANG_SYNC"))))))
+            (zwanenzang--add-conflict
+             (list "parent" (format "tracker parent %s is nested inside this heading; %s"
+                                    parent "Org nesting kept")
+                   nil)))
+          (cl-incf (zwanenzang--pull-conflicted pull))
+          (zwanenzang--pull-line
+           pull "%s: conflict in parent (not moved, the new parent is nested inside it)"
+           (zwanenzang--label ticket)))))
     (zwanenzang--rescan pull)
     (let ((complete (zwanenzang--discover
                      pull (seq-remove (lambda (e)

@@ -197,6 +197,58 @@
       (should (string-match-p (format "- parent: tracker parent is %s; Org nesting kept" p2)
                               (zwanenzang-test-entry child))))))
 
+(ert-deftest zwanenzang-pull-conflicts-on-a-move-made-cyclic-by-an-earlier-move ()
+  ;; Org nests C under A; the tracker moves B under C and A under B.
+  ;; Moving A first puts C, and so B's new parent, inside B's subtree.
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((a (zwanenzang-test-create trk "A"))
+          (b (zwanenzang-test-create trk "B"))
+          (c (zwanenzang-test-create trk "C")))
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto c)
+        (org-cut-subtree)
+        (zwanenzang-test-goto a)
+        (org-end-of-subtree t t)
+        (org-paste-subtree 4))
+      (zwanenzang-test-cli trk "parent" b c)
+      (zwanenzang-test-cli trk "parent" a b)
+      (zwanenzang-test-clear-report)
+      (zwanenzang-test-pull)
+      (should (equal (zwanenzang-test-parent-heading a) "B"))
+      (should (equal (zwanenzang-test-parent-heading c) "A"))
+      (should (equal (zwanenzang-test-parent-heading b) "Inbox"))
+      (should (member zwanenzang-conflict-tag (zwanenzang-test-tags b)))
+      (should (string-match-p "- parent: tracker parent .* is nested inside this heading"
+                              (zwanenzang-test-entry b)))
+      ;; The sync state still has the nesting before the skipped move.
+      (should (string-match-p "parent=- nest=-\\'" (zwanenzang-test-property b "ZWANENZANG_SYNC")))
+      (should (string-match-p "B: conflict in parent" (zwanenzang-test-report)))
+      ;; The next pull reaches the same verdict.
+      (zwanenzang-test-pull)
+      (should (equal (zwanenzang-test-parent-heading b) "Inbox"))
+      (should (string-match-p "parent=- nest=-\\'" (zwanenzang-test-property b "ZWANENZANG_SYNC"))))))
+
+(ert-deftest zwanenzang-pull-refuses-to-move-under-own-descendant ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((x (zwanenzang-test-create trk "X"))
+          (y (zwanenzang-test-create trk "Y")))
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto y)
+        (org-cut-subtree)
+        (zwanenzang-test-goto x)
+        (org-end-of-subtree t t)
+        (org-paste-subtree 4))
+      (zwanenzang-test-cli trk "parent" x y)
+      (zwanenzang-test-pull)
+      (should (equal (zwanenzang-test-parent-heading x) "Inbox"))
+      (should (equal (zwanenzang-test-parent-heading y) "X"))
+      (should (member zwanenzang-conflict-tag (zwanenzang-test-tags x)))
+      (should (string-match-p (format "- parent: tracker parent %s is nested inside this heading" y)
+                              (zwanenzang-test-entry x)))
+      (should (string-match-p "parent=- nest=-\\'" (zwanenzang-test-property x "ZWANENZANG_SYNC"))))))
+
 (ert-deftest zwanenzang-pull-conflicts-when-the-map-lost-the-synced-status ()
   ;; The human removed the keyword; the map no longer shows the synced
   ;; status, so nothing says Org still has it: no keyword reappears.

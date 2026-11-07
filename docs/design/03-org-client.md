@@ -388,7 +388,9 @@ tracker.
   subtree moves under the new parent's heading, or under the inbox when
   the parent has no heading in scope or was cleared. When the nesting
   changed too, it is a conflict, as is a move under the heading's own
-  descendant.
+  descendant, including one an earlier move in the same pull would
+  cause. A move that does not happen leaves the nesting's sync state as
+  it was.
 - Discovery: a new ticket goes under its parent's heading when that is
   in scope (parents are inserted before children), otherwise under the
   inbox.

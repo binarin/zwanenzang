@@ -273,6 +273,17 @@
                                                    (plan (current . :null)))))
                    "[[zwanenzang:01T/status][status (hidden)]]\n"))))
 
+(ert-deftest zwanenzang-add-conflict-appends-to-the-drawer ()
+  (zwanenzang-test-with-org
+      (concat "* TODO T :a:\n:PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"
+              ":ZWANENZANG_CONFLICT:\n- title: skipped\n  : New\n:END:\nText\n")
+    (zwanenzang--add-conflict '("parent" "kept" nil))
+    (should (equal (buffer-substring-no-properties (line-end-position) (point-max))
+                   (concat "\n:PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"
+                           ":ZWANENZANG_CONFLICT:\n- title: skipped\n  : New\n- parent: kept\n"
+                           ":END:\nText\n")))
+    (should (equal (org-get-tags nil t) '("a" "zz_conflict")))))
+
 (ert-deftest zwanenzang-conflicts-render-notes-and-values ()
   (should (equal (zwanenzang--conflict-content
                   '(("title" "tracker title skipped" "New") ("tombstoned" "gone" nil)))
