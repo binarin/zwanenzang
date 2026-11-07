@@ -86,12 +86,14 @@ pub fn run_in(dir: &Path, args: &[&str], stdin: &str) -> Out {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn zwanenzang");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    // A command that fails before reading stdin (a usage error) may exit
+    // first; the write then fails with a broken pipe, which is not an error
+    // of the test.
+    if let Err(e) = child.stdin.take().unwrap().write_all(stdin.as_bytes())
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        panic!("writing stdin: {e}");
+    }
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     let json = if stdout.trim().is_empty() {
