@@ -16,5 +16,5 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      # The runner is x86_64; the aarch64 outputs are only evaluated.
-      - run: nix flake check --print-build-logs --system x86_64-linux
+      # The runner is x86_64: aarch64 outputs are evaluated, not built.
+      - run: nix flake check --all-systems --print-build-logs
