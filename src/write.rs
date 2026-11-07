@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::clock::{Clock, format_ts, next_id};
+use crate::clock::{Clock, format_ts, leaps_too_far, next_id};
 use crate::error::{Error, Result};
 use crate::event::{ActorData, Event, Op};
 use crate::names::valid_actor_name;
@@ -128,6 +128,16 @@ impl Tracker {
                 entity,
                 op,
             };
+            let anchor = highest.map_or(state.root, |h| h.max(state.root));
+            if leaps_too_far(anchor, id) {
+                return Err(Error::Rejected(Rejection {
+                    code: RejectCode::IdOutOfRange,
+                    message: format!(
+                        "id {id} is more than 1000 years after {anchor}, the newest id seen; \
+                         is the clock set right?"
+                    ),
+                }));
+            }
             let mut trial = state.clone();
             let applied = apply(&mut trial, &ev).map_err(Error::Rejected)?;
             if let Some(lost) = applied.lost {

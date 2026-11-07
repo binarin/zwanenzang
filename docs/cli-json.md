@@ -232,6 +232,7 @@ Rejections: returned as the error code when a write is refused, and as
 | `actor-mismatch` | the event's actor is not the log it was found in (replay only) |
 | `duplicate-id` | different lines share one id (replay only) |
 | `id-not-after-parent` | the id does not sort after the event's parent |
+| `id-out-of-range` | the id's time is more than 1000 years after the newest id before it; such a line also does not count as seen |
 | `unknown-entity` | the ticket does not exist |
 | `entity-exists`, `create-id-mismatch` | a `create` that does not create a new entity named by its own id |
 | `wrong-entity` | a ticket operation on the tracker root, or `actor`/`config` on a ticket |

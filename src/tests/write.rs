@@ -317,6 +317,95 @@ fn lagging_wall_clock_still_sorts_after_everything_seen() {
 }
 
 #[test]
+fn ids_at_the_end_of_the_range_do_not_block_writes() {
+    use crate::clock::MAX_LEAP_MS;
+    use crate::ulid::{RANDOM_MAX, TIME_MAX};
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let raw = |id: Ulid, actor: Ulid, op: &str, data: &str| {
+        format!(
+            r#"{{"id":"{id}","actor":"{actor}","parent":null,"ts":"x","entity":"{}","op":"{op}","data":{data}}}"#,
+            u(T1)
+        )
+    };
+    // The very last id as an unknown op, the last id of the millisecond
+    // before as a valid title, and the last id again in a log it does not
+    // belong to: all far more than 1000 years after anything before them.
+    let last = Ulid(u128::MAX);
+    let next_to_last = Ulid::from_parts(TIME_MAX - 1, RANDOM_MAX);
+    append_raw(
+        &t,
+        &ACTOR_B.to_canonical(),
+        &[raw(last, ACTOR_B, "future-op", "{}")],
+    );
+    append_raw(
+        &t,
+        &ACTOR_A.to_canonical(),
+        &[raw(
+            next_to_last,
+            ACTOR_A,
+            "title",
+            r#"{"to":"far future"}"#,
+        )],
+    );
+    append_raw(
+        &t,
+        &ACTOR_A.to_canonical(),
+        &[raw(last, ACTOR_B, "future-op", "{}")],
+    );
+    let rp = load(&t);
+    assert_eq!(
+        skipped_codes(&rp),
+        ["id-out-of-range", "id-out-of-range", "id-out-of-range"]
+    );
+    assert_eq!(rp.state.tickets[&u(T1)].title, "one");
+    // Out of range is not seen.
+    assert_eq!(rp.highest_seen, Some(u(BASE_LAST)));
+
+    // So writes go on, several events in one command and again afterwards.
+    let now = 1_794_054_896_000;
+    let mut c = FixedClock::new(now);
+    let w = write_one(&t, &mut c, u(T1), status("doing")).unwrap();
+    assert_eq!(w.events.len(), 2, "actor declaration and the status");
+    assert_eq!(w.events[0].parent, Some(u(BASE_LAST)));
+    assert_eq!(w.events[0].id.time_ms(), now);
+    assert_eq!(w.events[1].parent, Some(w.events[0].id));
+    let w2 = write_one(&t, &mut c, u(T2), status("doing")).unwrap();
+    assert_eq!(w2.events[0].parent, Some(w.events[1].id));
+    let rp = load(&t);
+    assert_eq!(rp.state.tickets[&u(T2)].status, "doing");
+    assert_eq!(rp.highest_seen, Some(w2.events[0].id));
+
+    // An id far ahead but within the bound counts: the clock follows it, as
+    // for any wall clock that runs ahead. The bound is relative to the
+    // newest id before, so a second leap from there is in range too.
+    let ahead = Ulid::from_parts(now + MAX_LEAP_MS - 1, 9);
+    let further = Ulid::from_parts(ahead.time_ms() + 10, 3);
+    append_raw(
+        &t,
+        &ACTOR_A.to_canonical(),
+        &[
+            raw(ahead, ACTOR_A, "tag", r#"{"tag":"ahead"}"#),
+            raw(further, ACTOR_A, "tag", r#"{"tag":"further"}"#),
+        ],
+    );
+    let w3 = write_one(&t, &mut c, u(T2), status("done")).unwrap();
+    assert_eq!(w3.events[0].parent, Some(further));
+    assert_eq!(w3.events[0].id, Ulid::from_parts(further.time_ms(), 4));
+    assert!(load(&t).state.tickets[&u(T1)].tags.contains("further"));
+
+    // A wall clock more than 1000 years past everything seen is refused on
+    // write, as replay would skip what it wrote.
+    let before = log_snapshot(&t);
+    c.now = further.time_ms() + MAX_LEAP_MS + 1;
+    assert_eq!(
+        rejected_code(write_one(&t, &mut c, u(T2), status("todo"))),
+        "id-out-of-range"
+    );
+    assert_eq!(log_snapshot(&t), before);
+}
+
+#[test]
 fn document_compare_and_set() {
     let dir = disposable_dir();
     let t = based(&dir);

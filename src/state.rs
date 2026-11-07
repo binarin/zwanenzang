@@ -30,6 +30,9 @@ pub enum RejectCode {
     DuplicateId,
     /// The event id does not sort after its parent.
     IdNotAfterParent,
+    /// The event id's time is more than [`crate::clock::MAX_LEAP_MS`] after
+    /// the newest id before it, or after the tracker root for the first.
+    IdOutOfRange,
     UnknownEntity,
     EntityExists,
     /// A `create` whose entity is not its own id.
@@ -66,6 +69,7 @@ impl RejectCode {
             RejectCode::ActorMismatch => "actor-mismatch",
             RejectCode::DuplicateId => "duplicate-id",
             RejectCode::IdNotAfterParent => "id-not-after-parent",
+            RejectCode::IdOutOfRange => "id-out-of-range",
             RejectCode::UnknownEntity => "unknown-entity",
             RejectCode::EntityExists => "entity-exists",
             RejectCode::CreateIdMismatch => "create-id-mismatch",

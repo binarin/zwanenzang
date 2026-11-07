@@ -32,6 +32,20 @@ impl Clock for SystemClock {
     }
 }
 
+/// How far an id's time may run ahead of the newest id before it: 1000
+/// Gregorian years in milliseconds. No working clock is that far ahead of
+/// the last event a tracker saw.
+pub const MAX_LEAP_MS: u64 = 1000 * 31_556_952_000;
+
+/// True when `id` is out of range after `anchor`, the newest id seen before
+/// it (or the tracker root). Such an id counts neither as accepted nor as
+/// seen. Without this bound one line near the end of the ULID range would
+/// leave the hybrid clock no later id, and every later write would fail;
+/// with it, reaching the end takes a chain of such leaps.
+pub fn leaps_too_far(anchor: Ulid, id: Ulid) -> bool {
+    id.time_ms() > anchor.time_ms().saturating_add(MAX_LEAP_MS)
+}
+
 /// Returns a new id that sorts after `highest_seen`.
 ///
 /// The time part is `max(now, highest_seen.time)`. When that equals the
@@ -52,7 +66,8 @@ pub fn next_id(clock: &mut dyn Clock, highest_seen: Option<Ulid>) -> Ulid {
         // The random part is exhausted within this millisecond; move to the
         // next one. Practically unreachable. At the very last millisecond
         // there is no later id; the result then fails validation as not
-        // sorting after its parent instead of overflowing.
+        // sorting after its parent instead of overflowing. One stray line
+        // cannot put the highest seen id there: see `leaps_too_far`.
         Ulid::from_parts((seen_t + 1).min(TIME_MAX), clock.random80())
     }
 }
@@ -164,6 +179,18 @@ mod tests {
         let id = next_id(&mut c, Some(seen));
         assert_eq!(id.time_ms(), 9_001);
         assert!(id > seen);
+    }
+
+    #[test]
+    fn leap_bound() {
+        let anchor = Ulid::from_parts(1_794_054_896_000, 5);
+        let edge = Ulid::from_parts(1_794_054_896_000 + MAX_LEAP_MS, RANDOM_MAX);
+        assert!(!leaps_too_far(anchor, edge));
+        assert!(leaps_too_far(anchor, Ulid(edge.0 + 1)));
+        assert!(leaps_too_far(anchor, Ulid(u128::MAX)));
+        // Only leaps ahead are bounded.
+        assert!(!leaps_too_far(anchor, Ulid(0)));
+        assert!(!leaps_too_far(Ulid(u128::MAX), Ulid(u128::MAX)));
     }
 
     #[test]

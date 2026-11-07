@@ -264,8 +264,18 @@ none changes a decision above.
   another (`already-numbered`).
 - **What counts as seen.** Every line whose envelope parses counts for the
   hybrid clock and as the next event's parent, even when replay skips it
-  (an unknown operation from a newer build, say). Empty lines are ignored.
-  A line found in a log other than its actor's is `actor-mismatch`.
+  (an unknown operation from a newer build, say), unless its id is out of
+  range (below). Empty lines are ignored. A line found in a log other than
+  its actor's is `actor-mismatch`.
+- **Ids out of range.** Going through ids in ULID order, an id whose time is
+  more than 1000 years after the newest id seen before it (the tracker
+  root's id for the first) is `id-out-of-range`: skipped, and not seen.
+  Without a bound, one line at the end of the ULID range, even one replay
+  skips, would leave the hybrid clock no later id and make every later
+  write fail. The bound is relative so that reaching the end takes a chain
+  of such leaps rather than one line; a fixed ceiling would only move the
+  blocking id below it. A live write whose clock is more than 1000 years
+  past everything seen is refused with the same code.
 - **Live writes are all or nothing per command.** A command such as
   `create --parent P --tag X` writes several events; if any is refused,
   none is written. The actor's `actor` declaration is written only together

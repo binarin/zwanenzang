@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::clock::leaps_too_far;
 use crate::config::Config;
 use crate::event::{Event, OpError, RawEnvelope};
 use crate::state::{RejectCode, State, apply};
@@ -33,8 +34,9 @@ pub struct Replay {
     /// Accepted events in ULID order.
     pub events: Vec<Event>,
     pub skipped: Vec<Skipped>,
-    /// The highest id of any parseable envelope, accepted or not. New ids
-    /// must sort after it, and it is the parent of the next event.
+    /// The highest id of any parseable envelope, accepted or not, that is
+    /// not out of range. New ids must sort after it, and it is the parent
+    /// of the next event.
     pub highest_seen: Option<Ulid>,
 }
 
@@ -92,11 +94,29 @@ pub fn replay(config: &Config, blobs: BTreeSet<String>, lines: &[LogLine]) -> Re
             }
         }
     }
-    let highest_seen = by_id.keys().next_back().copied();
-
     let mut state = State::new(config, blobs);
     let mut events = Vec::new();
+    // The newest id seen so far, starting from the tracker root; an id too
+    // far after it is out of range and is not seen.
+    let mut anchor = config.id;
+    let mut highest_seen = None;
     for (id, occurrences) in by_id {
+        if leaps_too_far(anchor, id) {
+            for (line, env) in &occurrences {
+                skipped_lines.push(skipped(
+                    line,
+                    Some(id),
+                    Some(env.op.clone()),
+                    RejectCode::IdOutOfRange,
+                    format!(
+                        "id {id} is more than 1000 years after {anchor}, the newest id before it"
+                    ),
+                ));
+            }
+            continue;
+        }
+        anchor = anchor.max(id);
+        highest_seen = Some(id);
         let distinct: BTreeSet<&str> = occurrences.iter().map(|(l, _)| l.text.as_str()).collect();
         if distinct.len() > 1 {
             for (line, env) in &occurrences {

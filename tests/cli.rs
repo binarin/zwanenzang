@@ -471,9 +471,9 @@ fn lint_clean_then_reporting_issues() {
     let other = "01ZZZZZZZZZZZZZZZZZZZZZZZB";
     let doing_id = first["event"]["id"].as_str().unwrap();
     let create_id = a.as_str();
-    let later = "7ZZZZZZZZZZZZZZZZZZZZZZZZ0";
-    let later2 = "7ZZZZZZZZZZZZZZZZZZZZZZZZ1";
-    let later3 = "7ZZZZZZZZZZZZZZZZZZZZZZZZ2";
+    let later = "0GZZZZZZZZZZZZZZZZZZZZZZZ0";
+    let later2 = "0GZZZZZZZZZZZZZZZZZZZZZZZ1";
+    let later3 = "0GZZZZZZZZZZZZZZZZZZZZZZZ2";
     append_raw(
         p,
         other,
@@ -536,7 +536,7 @@ fn lint_clean_then_reporting_issues() {
         .as_str()
         .unwrap()
         .to_string();
-    let stale = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
+    let stale = "0GZZZZZZZZZZZZZZZZZZZZZZZZ";
     append_raw(
         p,
         other,
@@ -558,6 +558,62 @@ fn lint_clean_then_reporting_issues() {
 }
 
 #[test]
+fn a_line_with_the_last_possible_id_does_not_block_writes() {
+    let d = tracker();
+    let p = d.path();
+    let created = ok(p, &["create", "A"]);
+    let a = id(&created);
+    let parent = created["event"]["id"].as_str().unwrap().to_string();
+    let actor = read(p, ".zwanenzang/actor").trim().to_string();
+    let toml = read(p, "zwanenzang.toml");
+    let root = toml
+        .lines()
+        .find_map(|l| l.strip_prefix("id = \""))
+        .and_then(|l| l.strip_suffix('"'))
+        .unwrap()
+        .to_string();
+    append_raw(
+        p,
+        &actor,
+        &[line(
+            "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+            &actor,
+            &parent,
+            &root,
+            "future-op",
+            json!({}),
+        )],
+    );
+    // And the last id of the millisecond before, as a valid change.
+    append_raw(
+        p,
+        &actor,
+        &[line(
+            "7ZZZZZZZZYZZZZZZZZZZZZZZZZ",
+            &actor,
+            &parent,
+            &a,
+            "title",
+            json!({"to": "far future"}),
+        )],
+    );
+    let lint = run_in(p, &["lint"], "");
+    assert_eq!(lint.code, 1);
+    let codes: Vec<&str> = lint.json["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["id-out-of-range", "id-out-of-range"]);
+    assert_eq!(ok(p, &["show", &a])["title"], "A");
+    let b = ok(p, &["create", "B"]);
+    assert_eq!(b["written"], true);
+    ok(p, &["status", &a, "done"]);
+    assert_eq!(ok(p, &["show", &a])["status"], "done");
+}
+
+#[test]
 fn numbers_resolve_and_display() {
     let d = tracker();
     let p = d.path();
@@ -568,7 +624,7 @@ fn numbers_resolve_and_display() {
         .as_str()
         .unwrap()
         .to_string();
-    let n_id = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
+    let n_id = "0GZZZZZZZZZZZZZZZZZZZZZZZZ";
     append_raw(
         p,
         &actor,
