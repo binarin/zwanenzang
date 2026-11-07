@@ -1,30 +1,59 @@
 //! Helpers for driving the built binary. Every tracker these tests touch is
 //! a directory under the system temporary directory whose name ends in
 //! `-test-repo`; each helper that opens or writes one checks both markers
-//! first and panics otherwise.
+//! first and panics otherwise. The binary searches upward from `-C DIR` for
+//! the tracker it opens, so the helper checks the tracker found that way,
+//! not only `DIR`.
 
 #![allow(dead_code)]
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
 pub const MARKER: &str = "-test-repo";
 
-pub fn assert_disposable(path: &Path) {
+/// Why `path` is not disposable, or `None` when it carries both markers.
+pub fn not_disposable(path: &Path) -> Option<String> {
     let tmp = std::fs::canonicalize(std::env::temp_dir()).expect("temp dir");
     let p = std::fs::canonicalize(path).expect("test path exists");
-    assert!(
-        p.starts_with(&tmp),
-        "refusing to touch {p:?}: not under the temporary directory {tmp:?}"
-    );
+    if !p.starts_with(&tmp) {
+        return Some(format!(
+            "{p:?} is not under the temporary directory {tmp:?}"
+        ));
+    }
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    assert!(
-        name.ends_with(MARKER),
-        "refusing to touch {p:?}: directory name does not end in {MARKER}"
-    );
+    if !name.ends_with(MARKER) {
+        return Some(format!("{p:?}: directory name does not end in {MARKER}"));
+    }
+    None
+}
+
+pub fn assert_disposable(path: &Path) {
+    if let Some(why) = not_disposable(path) {
+        panic!("refusing to touch {why}");
+    }
+}
+
+/// The tracker the binary opens when pointed at `dir`: the nearest
+/// directory, upward, holding `zwanenzang.toml`. Walked here rather than by
+/// the library under test.
+pub fn tracker_above(dir: &Path) -> Option<PathBuf> {
+    let start = std::fs::canonicalize(dir).expect("test path exists");
+    start
+        .ancestors()
+        .find(|d| d.join("zwanenzang.toml").is_file())
+        .map(Path::to_path_buf)
+}
+
+/// Checks `dir` and whatever tracker the binary would open from it.
+pub fn assert_opens_disposable(dir: &Path) {
+    assert_disposable(dir);
+    if let Some(why) = tracker_above(dir).and_then(|root| not_disposable(&root)) {
+        panic!("refusing to run in {dir:?}: the binary would open the tracker at {why}");
+    }
 }
 
 pub fn disposable_dir() -> tempfile::TempDir {
@@ -45,7 +74,7 @@ pub struct Out {
 
 /// Runs the binary against `dir` with `args`, feeding `stdin`.
 pub fn run_in(dir: &Path, args: &[&str], stdin: &str) -> Out {
-    assert_disposable(dir);
+    assert_opens_disposable(dir);
     let mut child = Command::new(env!("CARGO_BIN_EXE_zwanenzang"))
         .arg("-C")
         .arg(dir)

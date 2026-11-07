@@ -43,8 +43,25 @@ fn init_writes_tracker_files() {
 #[test]
 fn commands_outside_a_tracker_fail() {
     let d = disposable_dir();
+    // Otherwise the binary would open, and `create` write, that tracker.
+    assert_eq!(tracker_above(d.path()), None, "a tracker encloses {d:?}");
     err(d.path(), &["list"], "not-a-tracker");
     err(d.path(), &["create", "x"], "not-a-tracker");
+}
+
+#[test]
+#[should_panic(expected = "would open the tracker at")]
+fn helper_refuses_an_enclosing_tracker_without_markers() {
+    // The enclosing directory lacks the name marker; only its marker file
+    // is written, and the helper must refuse before the binary runs.
+    let outer = tempfile::Builder::new()
+        .prefix("zwanenzang-guard-")
+        .tempdir_in(std::env::temp_dir())
+        .unwrap();
+    std::fs::write(outer.path().join("zwanenzang.toml"), "").unwrap();
+    let inner = outer.path().join("inner-test-repo");
+    std::fs::create_dir(&inner).unwrap();
+    run_in(&inner, &["list"], "");
 }
 
 #[test]
