@@ -60,6 +60,18 @@
                               text text text)))
     (should (equal (apply #'concat (mapcar #'cadr segments)) zwanenzang-test--body))))
 
+(ert-deftest zwanenzang-body-segments-end-drawers-in-any-case ()
+  ;; Org closes a drawer at a lowercase :end: too.
+  (let ((body ":PROPERTIES:\n:ZWANENZANG_ID: X\n:end:\n:LOGBOOK:\n- n\n:End:\nText\n"))
+    (should (equal (mapcar (lambda (s) (if (eq (car s) 'drawer) (nth 2 s) (car s)))
+                           (zwanenzang--body-segments body))
+                   '("PROPERTIES" "LOGBOOK" text)))
+    (should (equal (zwanenzang--body-description body) "Text\n")))
+  ;; Planning keywords stay case-sensitive.
+  (should (equal (caar (zwanenzang--body-segments "scheduled: soon\n")) 'text))
+  ;; Tracker text with such a line cannot close a drawer either.
+  (should (equal (zwanenzang--escape-text ":end:\n") ",:end:\n")))
+
 (ert-deftest zwanenzang-description-excludes-drawers-and-planning ()
   (should (equal (zwanenzang--body-description zwanenzang-test--body)
                  "First line\n* escaped\n:UNCLOSED:\nlast\n"))

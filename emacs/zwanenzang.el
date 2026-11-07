@@ -248,14 +248,17 @@ and TEXT ends in a newline.  A drawer without its :END: line is text."
     (while (< i n)
       (let ((line (aref lines i)) end)
         (cond
-         ((and start (string-match-p org-planning-line-re line))
+         ((and start (let ((case-fold-search nil))
+                       (string-match-p org-planning-line-re line)))
           (push (list 'planning (concat line "\n")) segments)
           (cl-incf i))
          ((and (string-match org-drawer-regexp line)
                (not (string-equal-ignore-case (match-string 1 line) "END"))
-               (setq end (cl-loop for j from (1+ i) below n
-                                  when (string-match-p org-property-end-re (aref lines j))
-                                  return j)))
+               ;; Org ends a drawer at :END: in any case.
+               (setq end (let ((case-fold-search t))
+                           (cl-loop for j from (1+ i) below n
+                                    when (string-match-p org-property-end-re (aref lines j))
+                                    return j))))
           (push (list 'drawer
                       (mapconcat (lambda (l) (concat l "\n"))
                                  (cl-subseq lines i (1+ end)) "")

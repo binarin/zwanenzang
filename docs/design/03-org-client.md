@@ -410,7 +410,11 @@ tracker.
   read as a heading, a drawer boundary or a `#+` keyword is written with
   a leading comma, which reading strips again, so tracker text cannot
   change the outline. Comment text and skipped values are written as
-  fixed-width `: ` lines.
+  fixed-width `: ` lines. Drawers end at `:END:` in any case, as in Org.
+- Writing a body keeps planning lines first and the other drawers in
+  their order, then the client's drawers, then the text. Human text
+  interleaved between drawers therefore moves, verbatim, after them; the
+  description it forms is unchanged.
 - Named documents are the ticket heading's direct children with
   `ZWANENZANG_DOC`, titled with the document name. A tracker document
   without such a subheading gets one, including one the human deleted:
