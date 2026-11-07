@@ -45,7 +45,7 @@ contract.
 - Import fixture: the frozen ai-workflow tracker, the `bug-tracker` branch of
   `forgejo.lynx-lizard.ts.net/binarin/ai-workflow`. Tickets are markdown with
   YAML frontmatter (`status`, `branches`, `merge-requests`, `related`,
-  `handoff`) and a body whose first heading is the title. Twenty-eight
+  `handoff`) and a body whose first heading is the title. Twenty-seven
   tickets, `AIWF-NNNN`. Its `tracker-dashboard` and `tracker-lint` tools on
   `master` are the starting point for `render` and `lint` behaviour, not
   code to port.
