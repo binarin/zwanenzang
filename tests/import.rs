@@ -248,6 +248,8 @@ fn imports_every_frontmatter_shape() {
         report["docs"],
         json!([
             {"path": "docs/AIWF-0001-notes.md", "linked_from": ["AIWF-0001"], "existing": false},
+            {"path": "docs/AIWF-0003-plan.md", "linked_from": ["AIWF-0003"], "existing": false},
+            {"path": "docs/AIWF-0003-review.md", "linked_from": ["AIWF-0003"], "existing": false},
             {"path": "docs/shared.md", "linked_from": ["AIWF-0001", "AIWF-0002"], "existing": false}
         ])
     );
@@ -402,7 +404,7 @@ fn a_different_supporting_file_refuses_the_import() {
     write_file(p, "docs/shared.md", &same);
     let report = ok(p, &args);
     assert_eq!(
-        report["docs"][1],
+        report["docs"][3],
         json!({"path": "docs/shared.md", "linked_from": ["AIWF-0001", "AIWF-0002"], "existing": true})
     );
 }
@@ -492,7 +494,7 @@ fn the_tickets_directory_works_as_the_source() {
         &["--exclude", "AIWF-0004,AIWF-0005", "--exclude", "AIWF-0098"],
     );
     assert_eq!(report["imported"].as_array().unwrap().len(), 7);
-    assert_eq!(report["docs"].as_array().unwrap().len(), 2);
+    assert_eq!(report["docs"].as_array().unwrap().len(), 4);
     assert!(codes(&report).contains(&("AIWF-0098".into(), "unknown-exclude".into())));
 }
 
@@ -527,5 +529,99 @@ fn a_git_checkout_records_its_revision() {
     assert_eq!(
         git(s, &["status", "--porcelain"]).trim(),
         "M tickets/AIWF-0010-empty-body.md"
+    );
+}
+
+#[test]
+fn doc_patterns_leave_supporting_files_out() {
+    let d = target();
+    let p = d.path();
+    let exclude = disposable_dir();
+    write_file(
+        exclude.path(),
+        "exclude.txt",
+        "AIWF-0004\ndocs/*-review.md  # review records\ndocs/nothing-*.md\n",
+    );
+    let ex = exclude.path().join("exclude.txt");
+    let report = import(
+        p,
+        &fixture(),
+        &[
+            "--exclude-file",
+            ex.to_str().unwrap(),
+            "--exclude",
+            "docs/shared.md",
+        ],
+    );
+    assert_eq!(
+        report["docs"],
+        json!([
+            {"path": "docs/AIWF-0001-notes.md", "linked_from": ["AIWF-0001"], "existing": false},
+            {"path": "docs/AIWF-0003-plan.md", "linked_from": ["AIWF-0003"], "existing": false}
+        ])
+    );
+    assert_eq!(
+        report["dropped_docs"],
+        json!([
+            {"path": "docs/AIWF-0003-review.md", "linked_from": ["AIWF-0003"], "pattern": "docs/*-review.md"},
+            {"path": "docs/shared.md", "linked_from": ["AIWF-0001", "AIWF-0002"], "pattern": "docs/shared.md"}
+        ])
+    );
+    assert!(codes(&report).contains(&("-".into(), "unknown-exclude".into())));
+    assert!(p.join("docs/AIWF-0003-plan.md").exists());
+    assert!(!p.join("docs/AIWF-0003-review.md").exists());
+    assert!(!p.join("docs/shared.md").exists());
+
+    // No comment links to a left-out file; the description is as written.
+    let t = by_source(&report);
+    let three_id = t["AIWF-0003"]["id"].as_str().unwrap().to_string();
+    let three = ok(p, &["show", &three_id]);
+    let links: Vec<&Value> = three["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| &c["link"])
+        .filter(|l| !l.is_null())
+        .collect();
+    assert_eq!(links, [&json!("docs/AIWF-0003-plan.md")]);
+    let desc = ok(p, &["doc", "get", &three_id, "description"]);
+    assert!(
+        desc["text"]
+            .as_str()
+            .unwrap()
+            .contains("(../docs/AIWF-0003-review.md)")
+    );
+    let two = ok(p, &["show", t["AIWF-0002"]["id"].as_str().unwrap()]);
+    assert!(
+        two["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["link"].is_null())
+    );
+    let lint = run_in(p, &["lint"], "");
+    assert_eq!(lint.code, 0, "{}", lint.json);
+
+    err(
+        p,
+        &[
+            "import",
+            "ai-workflow",
+            fixture().to_str().unwrap(),
+            "--exclude",
+            "docs/../x",
+        ],
+        "invalid-argument",
+    );
+    err(
+        p,
+        &[
+            "import",
+            "ai-workflow",
+            fixture().to_str().unwrap(),
+            "--exclude",
+            "notes/x.md",
+        ],
+        "invalid-argument",
     );
 }

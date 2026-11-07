@@ -6,4 +6,5 @@ tickets use every frontmatter shape the frozen tracker uses, plus edge
 cases: missing and unknown fields, empty lists, references to excluded,
 missing and the same ticket, an unknown or absent status, no frontmatter,
 no title heading, an empty body, non-ASCII text, and links to present,
-missing and unrelated files. The tests exclude AIWF-0004.
+missing and unrelated files, and a review record a test leaves out by
+pattern. The tests exclude AIWF-0004.

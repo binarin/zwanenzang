@@ -64,7 +64,7 @@ them; any change to them fails with `tombstoned`.
 | `show T` | nothing | ticket object |
 | `list [--status S]... [--tag X]... [--kind K]... [--all]` | nothing | `{"tickets": [summary, ...]}` |
 | `lint` | nothing | lint report |
-| `import ai-workflow SOURCE [--exclude IDS]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
+| `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
 
 `comment` reads its text from the argument, from `--file`, or from stdin.
 Text up to 2048 bytes is stored inline; longer text goes to a blob. Text that
@@ -81,9 +81,13 @@ write nothing.
 
 `import ai-workflow` reads the frozen ai-workflow tracker at `SOURCE` (a
 checkout holding `tickets/` and `docs/`, or its `tickets/` directory) and
-never writes there. `--exclude` takes comma-separated ticket ids;
-`--exclude-file` a file with one id per line, `#` starting a comment. Both
-repeat and add up. `--repo-alias FROM=TO` imports the source's repository
+never writes there. `--exclude` takes comma-separated entries;
+`--exclude-file` a file with one entry per line, `#` starting a comment.
+Both repeat and add up. An entry is a ticket id (`AIWF-0005`), which leaves
+that ticket out, or a path pattern starting with `docs/`
+(`docs/*-review.md`), which leaves matching supporting files uncopied;
+`*` matches any characters and `?` one character, neither crossing a
+`/`, and the pattern must match the whole path. `--repo-alias FROM=TO` imports the source's repository
 alias `FROM` as `TO`. Every alias the imported branches and merge requests
 use must be declared in `zwanenzang.toml` first. The import is written as a
 new actor named `ai-workflow import`; `--actor-name` does not apply. All
@@ -135,6 +139,7 @@ How tickets map to events is listed in the
  "dropped_references": [{"source": "AIWF-0003", "field": "related" | "original-ticket" | "parent",
                          "target": "AIWF-0005", "reason": "excluded" | "missing" | "self"}],
  "docs": [{"path": "docs/notes.md", "linked_from": ["AIWF-0003"], "existing": false}],
+ "dropped_docs": [{"path": "docs/review.md", "linked_from": ["AIWF-0003"], "pattern": "docs/*review*"}],
  "warnings": [{"source": "AIWF-0003" | null, "code": "unknown-status", "message": "..."}]}
 ```
 
@@ -151,12 +156,16 @@ How tickets map to events is listed in the
 - `docs`: supporting files linked from imported descriptions, copied to
   the same path in the tracker. `existing` means the tracker already held
   identical content.
+- `dropped_docs`: linked supporting files an exclude pattern left out,
+  with the first pattern that matched. The link text in the description
+  stays as written; no file and no link comment is written for them.
 - Warning codes: `unknown-status` (missing or not in the ai-workflow
   vocabulary; imported as `draft`), `no-title` (no `# ` heading; title
   from the file name), `no-frontmatter`, `unknown-field` (kept as text),
   `missing-doc-file` (a link into `docs/` that does not resolve to a
   file there), `skipped-file` (not a `PREFIX-NNNN-slug.md` file),
-  `unknown-exclude`, `excluded-but-imported`, `imported-twice`,
+  `unknown-exclude` (an excluded id not in the source, or a pattern
+  matching no file linked from an imported ticket), `excluded-but-imported`, `imported-twice`,
   `dirty-source`, `no-revision`.
 
 ### Event

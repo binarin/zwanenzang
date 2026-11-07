@@ -348,6 +348,14 @@ none changes a decision above.
   from imported tickets are copied, links inside the copied files are not
   followed, and the description text is left as written. A destination
   with different content refuses the import (`doc-conflict`).
+- **Leaving supporting files out.** The same exclude input takes `docs/`
+  path patterns beside ticket ids (`*` and `?` within one path segment,
+  matched against the whole path), so process records such as reviews and
+  stage histories need not enter the tracker while plans and contracts
+  do. A linked file a pattern matches is not copied and gets no link
+  comment; the description keeps the link text as written, and the report
+  lists it under `dropped_docs`. One input for both keeps a single
+  reviewed list of what stays behind.
 - **Re-running.** A ticket counts as imported when a live ticket carries
   its provenance comment; re-runs skip it and import only the rest, so an
   exclusion can be lifted later. References from newly imported tickets

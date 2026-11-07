@@ -64,6 +64,8 @@ pub struct Options {
     pub source: PathBuf,
     /// Original ids to leave out.
     pub exclude: BTreeSet<String>,
+    /// Patterns of supporting files under `docs/` not to copy.
+    pub exclude_docs: BTreeSet<String>,
     /// Repository alias renames, source alias to tracker alias.
     pub repo_aliases: BTreeMap<String, String>,
     pub dry_run: bool,
@@ -596,20 +598,80 @@ fn source_revision(root: &Path, warnings: &mut Vec<Warning>) -> Option<String> {
     Some(rev)
 }
 
-/// Parses an exclude file: one id per line, `#` starts a comment.
+/// A `docs/` path pattern: starts with `docs/`, no empty, `.` or `..`
+/// segments.
+fn valid_doc_pattern(s: &str) -> bool {
+    s.starts_with("docs/")
+        && s.split('/')
+            .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+}
+
+/// Matches a path against a pattern where `*` stands for any run of
+/// characters and `?` for one character, neither crossing a `/`.
+pub fn doc_pattern_matches(pattern: &str, path: &str) -> bool {
+    fn go(p: &[char], s: &[char]) -> bool {
+        match p.split_first() {
+            None => s.is_empty(),
+            Some(('*', rest)) => {
+                let mut i = 0;
+                loop {
+                    if go(rest, &s[i..]) {
+                        return true;
+                    }
+                    if i == s.len() || s[i] == '/' {
+                        return false;
+                    }
+                    i += 1;
+                }
+            }
+            Some(('?', rest)) => matches!(s.first(), Some(c) if *c != '/') && go(rest, &s[1..]),
+            Some((c, rest)) => s.first() == Some(c) && go(rest, &s[1..]),
+        }
+    }
+    let p: Vec<char> = pattern.chars().collect();
+    let s: Vec<char> = path.chars().collect();
+    go(&p, &s)
+}
+
+impl Options {
+    /// Adds one exclude entry: a ticket id such as `AIWF-0005`, or a
+    /// pattern of supporting files such as `docs/*-review.md`.
+    pub fn add_exclude(&mut self, entry: &str) -> Result<()> {
+        let e = entry.trim();
+        if e.is_empty() {
+            return Ok(());
+        }
+        if e.starts_with("docs/") {
+            if !valid_doc_pattern(e) {
+                return Err(Error::InvalidArgument(format!(
+                    "{e:?} is not a docs/ path pattern"
+                )));
+            }
+            self.exclude_docs.insert(e.to_string());
+        } else if valid_ticket_id(e) {
+            self.exclude.insert(e.to_string());
+        } else {
+            return Err(Error::InvalidArgument(format!(
+                "{e:?} is neither a ticket id nor a docs/ path pattern"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Parses an exclude file: one entry per line (a ticket id or a `docs/`
+/// pattern), `#` starts a comment.
 pub fn parse_exclude_file(text: &str) -> Result<Vec<String>> {
     let mut out = Vec::new();
+    let mut check = Options::default();
     for (i, line) in text.lines().enumerate() {
         let line = line.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
         }
-        if !valid_ticket_id(line) {
-            return Err(Error::InvalidArgument(format!(
-                "exclude file line {}: {line:?} is not a ticket id",
-                i + 1
-            )));
-        }
+        check
+            .add_exclude(line)
+            .map_err(|e| Error::InvalidArgument(format!("exclude file line {}: {e}", i + 1)))?;
         out.push(line.to_string());
     }
     Ok(out)
@@ -711,6 +773,9 @@ struct Planned {
     /// tickets linking to each, and whether the tracker already holds the
     /// same content.
     docs: BTreeMap<String, (Vec<String>, bool)>,
+    /// Linked supporting files left out by a pattern: the tickets linking
+    /// to each and the first pattern that matched.
+    dropped_docs: BTreeMap<String, (Vec<String>, String)>,
     warnings: Vec<Warning>,
 }
 
@@ -727,11 +792,16 @@ fn copy_doc(src: &Path, dst: &Path) -> Result<()> {
 /// Runs an import into `tracker` and returns its JSON report.
 pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Result<Value> {
     let source = read_source(&opts.source)?;
-    for id in &opts.exclude {
-        if !valid_ticket_id(id) {
-            return Err(Error::InvalidArgument(format!("{id:?} is not a ticket id")));
-        }
+    let mut check = Options::default();
+    for e in opts.exclude.iter().chain(&opts.exclude_docs) {
+        check.add_exclude(e)?;
     }
+    let doc_excluded = |rel: &str| {
+        opts.exclude_docs
+            .iter()
+            .find(|pat| doc_pattern_matches(pat, rel))
+            .cloned()
+    };
     let by_id: BTreeMap<&str, usize> = source
         .tickets
         .iter()
@@ -823,9 +893,18 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
 
             // Supporting files: refuse to overwrite different content.
             let mut docs: BTreeMap<String, (Vec<String>, bool)> = BTreeMap::new();
+            let mut dropped_docs: BTreeMap<String, (Vec<String>, String)> = BTreeMap::new();
             for &i in &p.new {
                 let t = &source.tickets[i];
                 for rel in &t.doc_links {
+                    if let Some(pat) = doc_excluded(rel) {
+                        dropped_docs
+                            .entry(rel.clone())
+                            .or_insert_with(|| (Vec::new(), pat))
+                            .0
+                            .push(t.id.clone());
+                        continue;
+                    }
                     if let Some((from, _)) = docs.get_mut(rel) {
                         from.push(t.id.clone());
                         continue;
@@ -849,6 +928,23 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
                 }
             }
             p.docs = docs;
+            p.dropped_docs = dropped_docs;
+            if !p.new.is_empty() {
+                let linked: Vec<&String> = p
+                    .new
+                    .iter()
+                    .flat_map(|&i| &source.tickets[i].doc_links)
+                    .collect();
+                for pat in &opts.exclude_docs {
+                    if !linked.iter().any(|rel| doc_pattern_matches(pat, rel)) {
+                        p.warnings.push(warn(
+                            None,
+                            "unknown-exclude",
+                            format!("{pat} matches no file linked from an imported ticket"),
+                        ));
+                    }
+                }
+            }
 
             let mut plan = Plan::default();
             let revision = source.revision.as_deref();
@@ -891,7 +987,7 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
                     }
                 };
                 plan.ops.push((me, Op::Comment(comment)));
-                for rel in &t.doc_links {
+                for rel in t.doc_links.iter().filter(|r| doc_excluded(r).is_none()) {
                     plan.ops.push((
                         me,
                         Op::Comment(CommentData {
@@ -1071,6 +1167,11 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
         .iter()
         .map(|(rel, (from, existing))| json!({"path": rel, "linked_from": from, "existing": existing}))
         .collect();
+    let dropped_docs: Vec<Value> = p
+        .dropped_docs
+        .iter()
+        .map(|(rel, (from, pat))| json!({"path": rel, "linked_from": from, "pattern": pat}))
+        .collect();
     let actor = written
         .events
         .first()
@@ -1090,6 +1191,7 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
         "excluded": excluded,
         "dropped_references": p.dropped,
         "docs": docs,
+        "dropped_docs": dropped_docs,
         "warnings": p.warnings,
     }))
 }
@@ -1153,5 +1255,24 @@ mod tests {
         let ids = parse_exclude_file("# leave out\nAB-0001\n\n  AB-0002  # why\n").unwrap();
         assert_eq!(ids, vec!["AB-0001", "AB-0002"]);
         assert!(parse_exclude_file("AB-1\n").is_err());
+        let mixed = parse_exclude_file("AB-0001\ndocs/*-review.md # reviews\n").unwrap();
+        assert_eq!(mixed, vec!["AB-0001", "docs/*-review.md"]);
+        for bad in ["docs/../x", "docs//x", "docs/", "other/x.md"] {
+            assert!(parse_exclude_file(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn doc_patterns() {
+        assert!(doc_pattern_matches("docs/a.md", "docs/a.md"));
+        assert!(doc_pattern_matches(
+            "docs/*-review.md",
+            "docs/X-1-code-review.md"
+        ));
+        assert!(doc_pattern_matches("docs/X-000?-*", "docs/X-0003-plan.md"));
+        assert!(doc_pattern_matches("docs/*/*.md", "docs/sub/a.md"));
+        assert!(!doc_pattern_matches("docs/*.md", "docs/sub/a.md"));
+        assert!(!doc_pattern_matches("docs/a.md", "docs/a.md.bak"));
+        assert!(!doc_pattern_matches("docs/?", "docs/ab"));
     }
 }

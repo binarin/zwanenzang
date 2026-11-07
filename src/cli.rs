@@ -165,11 +165,12 @@ pub enum ImportCommand {
         /// The tracker checkout (holding tickets/ and docs/), or its
         /// tickets/ directory. Only read.
         source: PathBuf,
-        /// Ticket ids to leave out, comma-separated (repeatable).
-        #[arg(long, value_delimiter = ',', value_name = "IDS")]
+        /// What to leave out, comma-separated (repeatable): ticket ids, and
+        /// `docs/` path patterns (`*`, `?`) of supporting files not to copy.
+        #[arg(long, value_delimiter = ',', value_name = "ENTRIES")]
         exclude: Vec<String>,
-        /// A file of ticket ids to leave out, one per line; `#` starts a
-        /// comment (repeatable).
+        /// A file of exclude entries, one per line; `#` starts a comment
+        /// (repeatable).
         #[arg(long, value_name = "PATH")]
         exclude_file: Vec<PathBuf>,
         /// Use repository alias TO for the source's alias FROM
@@ -574,16 +575,14 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 dry_run,
                 ..Default::default()
             };
-            for id in exclude {
-                let id = id.trim();
-                if !id.is_empty() {
-                    opts.exclude.insert(id.to_string());
-                }
+            for entry in exclude {
+                opts.add_exclude(&entry)?;
             }
             for path in exclude_file {
                 let text = std::fs::read_to_string(&path).map_err(Error::io(&path))?;
-                opts.exclude
-                    .extend(crate::import::parse_exclude_file(&text)?);
+                for entry in crate::import::parse_exclude_file(&text)? {
+                    opts.add_exclude(&entry)?;
+                }
             }
             for pair in repo_alias {
                 let (from, to) = pair.split_once('=').ok_or_else(|| {
