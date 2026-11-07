@@ -183,6 +183,9 @@ pub enum Command {
         #[arg(long)]
         summary: bool,
     },
+    /// Fetch, rebase, number unnumbered tickets and push. Exits 1 when the
+    /// remote could not be reached or the rebase conflicted.
+    Sync,
     /// Report skipped events, concurrent changes, lost document edits,
     /// dangling repository aliases and unnamed actors. Exits 1 on issues.
     Lint,
@@ -309,6 +312,7 @@ impl Ctx<'_> {
             "event": w.primary(),
             "events": w.events,
             "ticket": view.ticket(t),
+            "sync": w.sync,
         })
     }
 }
@@ -348,8 +352,9 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "tracker".into()),
         };
-        let t = Tracker::init(&dir, &name, prefix, clock)?;
-        let actor = t.actor_id(false, clock)?;
+        let t = Tracker::init(&dir, &name, prefix, cli.actor_name.as_deref(), clock)?;
+        let actor = t.actor_id_opt(clock)?;
+        let sync = t.sync(clock, cli.actor_name.as_deref())?;
         return Ok((
             json!({
                 "tracker": {
@@ -361,6 +366,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     "kinds": t.config.kinds,
                 },
                 "actor": actor,
+                "sync": sync,
             }),
             0,
         ));
@@ -419,6 +425,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     "event": created,
                     "events": w.events,
                     "ticket": view.ticket(&w.replay.state.tickets[&id]),
+                    "sync": w.sync,
                 }),
                 0,
             ))
@@ -678,6 +685,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             let mut opts = crate::import::Options {
                 source,
                 dry_run,
+                publisher_name: ctx.actor_name.clone(),
                 ..Default::default()
             };
             for entry in exclude {
@@ -698,6 +706,11 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             }
             let report = crate::import::import(&ctx.tracker, ctx.clock, &opts)?;
             Ok((report, 0))
+        }
+        Command::Sync => {
+            let report = ctx.tracker.sync(ctx.clock, ctx.actor_name.as_deref())?;
+            let code = if report.error.is_some() { 1 } else { 0 };
+            Ok((json!({ "sync": report }), code))
         }
         Command::Lint => {
             let rp = ctx.tracker.load()?;

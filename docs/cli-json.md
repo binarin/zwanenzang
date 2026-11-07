@@ -1,9 +1,9 @@
 # CLI JSON contract
 
 What a client (the Emacs client, an agent, a script) can rely on when it
-runs `zwanenzang`. This describes the local-only slice of milestone 2: no
-git, no numbering at publish, no batched operations yet. The format grows by
-adding fields; a client must ignore fields it does not know.
+runs `zwanenzang`. Every write is committed to the tracker's git repository
+and synced with its upstream; batched operations are not there yet. The
+format grows by adding fields; a client must ignore fields it does not know.
 
 ## Invocation
 
@@ -14,9 +14,13 @@ zwanenzang [-C DIR | --tracker DIR] [--actor-name NAME] <command> ...
 - `-C DIR`: start the tracker search in `DIR` instead of the current
   directory. The tracker is the nearest directory, upward, that holds
   `zwanenzang.toml`. For `init`, `DIR` is where the tracker is created;
-  it must not be in or below an existing tracker.
+  it must not be in or below an existing tracker, nor inside another git
+  work tree unless it is that work tree's top.
 - `--actor-name NAME`: display name declared by this clone's first write.
   Defaults to `$USER`, then `unknown`. Ignored once the actor is declared.
+
+The `git` binary must be on `PATH` (the nix package falls back to its own).
+The clone's actor id is `zwanenzang.actor` in its local git configuration.
 
 ## Output and exit status
 
@@ -46,7 +50,7 @@ them; any change to them fails with `tombstoned`.
 
 | Command | Writes | Output |
 |---|---|---|
-| `init --prefix P [--name N]` | config, `.gitattributes`, `.gitignore`, actor id | init object |
+| `init --prefix P [--name N]` | config, `.gitattributes`, actor id; a git repository if there is none; first commit | init object |
 | `create TITLE [--status S] [--kind K] [--parent T] [--tag X]...` | `create`, then `parent`, `tag` | mutation object |
 | `status T STATUS` | `status` | mutation object |
 | `title T TITLE` | `title` | mutation object |
@@ -64,6 +68,7 @@ them; any change to them fails with `tombstoned`.
 | `show T` | nothing | ticket object |
 | `list [--status S]... [--tag X]... [--kind K]... [--all]` | nothing | `{"tickets": [summary, ...]}` |
 | `query [T]... [--status S]... [--tag X]... [--kind K]... [--parent T\|none] [--under T] [--repo R]... [--title TEXT] [--all] [--summary]` | nothing | `{"tickets": [ticket, ...]}` |
+| `sync` | `number`, commits | `{"sync": sync object}` |
 | `lint` | nothing | lint report |
 | `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
 
@@ -92,8 +97,19 @@ ambiguous ticket reference anywhere fails the whole query.
 `query` reads derived state only. Reading events after a cursor, which the
 org client's pull needs, is part of milestone 3's batched read.
 
-Read-only commands (`show`, `list`, `query`, `doc get`, `lint`) take no lock
-and write nothing.
+Read-only commands (`show`, `list`, `query`, `doc get`, `lint`) take no lock,
+write nothing, do not fetch and do not need git.
+
+Every command that writes events commits them, as one commit holding only
+the files it wrote, and then syncs: fetch the branch's upstream, rebase,
+give every unnumbered live ticket the next number, push. A clone whose
+branch has no upstream is the whole tracker and numbers new tickets at
+once. When the remote cannot be reached, the rebase conflicts or the push
+fails, the command still succeeds with its events committed locally, and
+its `sync` object says what went wrong; the next write or `sync` pushes
+them. `sync` runs the same steps without a write and exits 1 when they
+fail. Edits to `docs/` and `zwanenzang.toml` are never committed by the
+tool.
 
 `import ai-workflow` reads the frozen ai-workflow tracker at `SOURCE` (a
 checkout holding `tickets/` and `docs/`, or its `tickets/` directory) and
@@ -106,7 +122,7 @@ that ticket out, or a path pattern starting with `docs/`
 `/`, and the pattern must match the whole path. `--repo-alias FROM=TO` imports the source's repository
 alias `FROM` as `TO`. Every alias the imported branches and merge requests
 use must be declared in `zwanenzang.toml` first. The import is written as a
-new actor named `ai-workflow import`; `--actor-name` does not apply. All
+new actor named `ai-workflow import`; `--actor-name` names only this clone's actor, which numbers the imported tickets in the sync afterwards. All
 of it is written or none of it; `--dry-run` validates everything and
 writes nothing. Running it again imports only tickets not imported yet.
 How tickets map to events is listed in the
@@ -117,8 +133,28 @@ How tickets map to events is listed in the
 ```json
 {"tracker": {"root": "/path", "id": "<root ULID>", "name": "...", "prefix": "ZZ",
              "statuses": ["draft", "..."], "kinds": ["task", "..."]},
- "actor": "<this clone's actor ULID>"}
+ "actor": "<this clone's actor ULID>",
+ "sync": {<sync object>}}
 ```
+
+### Sync object
+
+```json
+{"upstream": "origin/main" | null, "pushed": true,
+ "numbered": [{"id": "<ticket ULID>", "number": 42, "display": "ZZ-0042",
+               "event": "<number event ULID>"}],
+ "error": null | {"code": "fetch-failed", "message": "..."}}
+```
+
+- `upstream` is `null` when the branch has none; nothing is fetched or
+  pushed then, and `pushed` is `false`.
+- `numbered`: numbers this sync assigned, and pushed when there is an
+  upstream. A push that does not land takes its numbers back, so they are
+  never listed then.
+- `error.code`: `fetch-failed` (the remote could not be reached),
+  `rebase-conflict` (rebasing onto the remote conflicted, which only
+  `docs/` can; the rebase was aborted), `push-failed`, `push-rejected`
+  (the remote kept moving; gave up after five attempts).
 
 ### Mutation object
 
@@ -139,6 +175,10 @@ How tickets map to events is listed in the
   `parent` and `tag` events from `--parent` and `--tag`.
 - A command writes all of its events or none: if one is refused, nothing is
   written and the error is returned.
+- `sync` is the sync object for the sync after the write, or `null` when
+  nothing was written. `ticket` is the state after it, so a ticket can
+  already carry its number. The `number` events are in `sync.numbered`,
+  not in `events`.
 
 ### Import report
 
@@ -156,7 +196,8 @@ How tickets map to events is listed in the
                          "target": "AIWF-0005", "reason": "excluded" | "missing" | "self"}],
  "docs": [{"path": "docs/notes.md", "linked_from": ["AIWF-0003"], "existing": false}],
  "dropped_docs": [{"path": "docs/review.md", "linked_from": ["AIWF-0003"], "pattern": "docs/*review*"}],
- "warnings": [{"source": "AIWF-0003" | null, "code": "unknown-status", "message": "..."}]}
+ "warnings": [{"source": "AIWF-0003" | null, "code": "unknown-status", "message": "..."}],
+ "sync": {<sync object>} | null}
 ```
 
 - `revision` is the source's commit when `SOURCE`'s root is a git
@@ -300,6 +341,9 @@ Command errors:
 | `invalid-source` | an import source file cannot be read as a ticket: frontmatter outside the supported subset, a field of the wrong shape, a duplicate id |
 | `undeclared-repo` | an import would use repository aliases that `zwanenzang.toml` does not declare |
 | `doc-conflict` | an import would overwrite a file in `docs/` that has different content |
+| `not-a-repository` | a write in a tracker that is not the top of a git work tree |
+| `inside-repository` | `init` in a directory inside another git work tree |
+| `git` | a git command failed unexpectedly |
 | `io` | a file could not be read or written |
 
 Rejections: returned as the error code when a write is refused, and as

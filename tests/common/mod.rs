@@ -81,6 +81,12 @@ pub fn run_in(dir: &Path, args: &[&str], stdin: &str) -> Out {
         .args(["--actor-name", "tester"])
         .args(args)
         .current_dir(dir)
+        // The binary's git commands see no user or system configuration,
+        // so a developer's hooks, signing or url rewrites play no part.
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -169,6 +175,13 @@ pub fn logs(dir: &Path) -> Vec<(String, Vec<u8>)> {
 pub fn read(dir: &Path, rel: &str) -> String {
     assert_disposable(dir);
     std::fs::read_to_string(dir.join(rel)).unwrap()
+}
+
+/// The actor id of the clone at `dir`, from its git configuration.
+pub fn actor_of(dir: &Path) -> String {
+    git(dir, &["config", "--local", "zwanenzang.actor"])
+        .trim()
+        .to_string()
 }
 
 pub fn id(v: &Value) -> String {

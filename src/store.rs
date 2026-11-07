@@ -1,5 +1,5 @@
-//! The tracker directory: configuration, per-actor logs, blobs, the local
-//! actor id and the lock.
+//! The tracker directory: configuration, per-actor logs, blobs, and the
+//! clone's actor id and lock, both kept in its git directory.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -10,12 +10,15 @@ use sha2::{Digest, Sha256};
 use crate::clock::{Clock, next_id};
 use crate::config::{CONFIG_FILE, Config};
 use crate::error::{Error, Result};
+use crate::git::{self, Repo};
 use crate::names::valid_blob_name;
 use crate::ulid::Ulid;
 
 pub const GITATTRIBUTES_LINE: &str = "events/*.jsonl merge=union";
-pub const GITIGNORE_LINE: &str = "/.zwanenzang/";
-pub const LOCAL_DIR: &str = ".zwanenzang";
+/// The git configuration key holding this clone's actor id.
+pub const ACTOR_KEY: &str = "zwanenzang.actor";
+/// The lock file, in the clone's git directory.
+pub const LOCK_FILE: &str = "zwanenzang.lock";
 
 /// One line read from a log file.
 #[derive(Debug, Clone)]
@@ -157,10 +160,10 @@ fn write_file_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     }
 }
 
-/// Takes the exclusive lock file in the local directory `local`, blocking
-/// until it is free.
-fn lock_in(local: &Path) -> Result<LockGuard> {
-    let path = local.join("lock");
+/// Takes the exclusive lock file in the repository's git directory,
+/// blocking until it is free.
+pub fn lock_repo(repo: &Repo) -> Result<LockGuard> {
+    let path = repo.git_dir.join(LOCK_FILE);
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -172,10 +175,19 @@ fn lock_in(local: &Path) -> Result<LockGuard> {
 }
 
 impl Tracker {
-    /// Creates a tracker in `dir`, which is created if missing. Refused when
-    /// `dir` is a tracker or lies inside one: a nested tracker would capture
-    /// the upward search of every command run below it.
-    pub fn init(dir: &Path, name: &str, prefix: &str, clock: &mut dyn Clock) -> Result<Tracker> {
+    /// Creates a tracker in `dir`, which is created if missing, and commits
+    /// it. Refused when `dir` is a tracker or lies inside one: a nested
+    /// tracker would capture the upward search of every command run below
+    /// it. `dir` becomes a git repository unless it already is the top of
+    /// one; inside some other work tree it is refused, since a tracker is
+    /// always its own repository.
+    pub fn init(
+        dir: &Path,
+        name: &str,
+        prefix: &str,
+        actor_name: Option<&str>,
+        clock: &mut dyn Clock,
+    ) -> Result<Tracker> {
         if let Some(existing) = enclosing_tracker(dir) {
             return Err(Error::AlreadyInitialized(existing));
         }
@@ -194,9 +206,12 @@ impl Tracker {
         // The checks above only spare a refused init from creating
         // anything; they are repeated under the lock, so of two concurrent
         // inits exactly one writes and the other is refused.
-        let local = root.join(LOCAL_DIR);
-        ensure_dir(&local)?;
-        let _lock = lock_in(&local)?;
+        let repo = match git::toplevel(&root)? {
+            Some(top) if top == root => Repo::open(&root)?,
+            Some(top) => return Err(Error::InsideRepository(root, top)),
+            None => git::init(&root)?,
+        };
+        let _lock = lock_repo(&repo)?;
         if let Some(existing) = enclosing_tracker(&root) {
             return Err(Error::AlreadyInitialized(existing));
         }
@@ -204,12 +219,17 @@ impl Tracker {
             ensure_dir(&root.join(sub))?;
         }
         ensure_line(&root.join(".gitattributes"), GITATTRIBUTES_LINE)?;
-        ensure_line(&root.join(".gitignore"), GITIGNORE_LINE)?;
         let tracker = Tracker { root, config };
-        tracker.actor_id(true, clock)?;
+        let actor = tracker.actor_in(&repo, true, clock)?.expect("created");
         // The configuration goes last: its presence is what marks the
         // directory as a tracker.
         write_file_synced(&config_path, tracker.config.to_toml().as_bytes())?;
+        let identity = crate::sync::identity(actor, actor_name.map(str::to_string));
+        repo.commit(
+            &[PathBuf::from(CONFIG_FILE), PathBuf::from(".gitattributes")],
+            "init",
+            &identity,
+        )?;
         Ok(tracker)
     }
 
@@ -236,10 +256,9 @@ impl Tracker {
         self.root.join("blobs")
     }
 
-    fn local_dir(&self) -> Result<PathBuf> {
-        let p = self.root.join(LOCAL_DIR);
-        ensure_dir(&p)?;
-        Ok(p)
+    /// The tracker's repository; its root must be the top of a work tree.
+    pub fn repo(&self) -> Result<Repo> {
+        Repo::open(&self.root)
     }
 
     pub fn log_path(&self, actor: Ulid) -> PathBuf {
@@ -248,37 +267,42 @@ impl Tracker {
 
     /// Takes the exclusive tracker lock, blocking until it is free.
     pub fn lock(&self) -> Result<LockGuard> {
-        lock_in(&self.local_dir()?)
+        lock_repo(&self.repo()?)
     }
 
-    /// This clone's actor id. With `create`, a missing id is generated and
-    /// stored; without it, a missing id is `None`.
-    pub fn actor_id_opt(&self, create: bool, clock: &mut dyn Clock) -> Result<Option<Ulid>> {
-        let path = self.root.join(LOCAL_DIR).join("actor");
-        match fs::read_to_string(&path) {
-            Ok(text) => Ulid::parse_canonical(text.trim())
+    /// This clone's actor id, from the repository's local git
+    /// configuration. With `create`, a missing id is generated and stored;
+    /// without it, a missing id is `None`.
+    pub fn actor_in(
+        &self,
+        repo: &Repo,
+        create: bool,
+        clock: &mut dyn Clock,
+    ) -> Result<Option<Ulid>> {
+        match repo.config_get(ACTOR_KEY)? {
+            Some(text) => Ulid::parse_canonical(text.trim())
                 .map(Some)
                 .map_err(|e| Error::Config {
-                    path,
-                    message: e.to_string(),
+                    path: repo.git_dir.join("config"),
+                    message: format!("{ACTOR_KEY}: {e}"),
                 }),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                if !create {
-                    return Ok(None);
-                }
+            None if create => {
                 let id = next_id(clock, None);
-                self.local_dir()?;
-                write_file_synced(&path, format!("{id}\n").as_bytes())?;
+                repo.config_set(ACTOR_KEY, &id.to_string())?;
                 Ok(Some(id))
             }
-            Err(e) => Err(Error::io(path)(e)),
+            None => Ok(None),
         }
     }
 
-    pub fn actor_id(&self, create: bool, clock: &mut dyn Clock) -> Result<Ulid> {
-        Ok(self
-            .actor_id_opt(create, clock)?
-            .expect("created when missing"))
+    /// This clone's actor id, or `None` when it has none yet or the tracker
+    /// is not a repository (a copy, say). Creates nothing.
+    pub fn actor_id_opt(&self, clock: &mut dyn Clock) -> Result<Option<Ulid>> {
+        match self.repo() {
+            Ok(repo) => self.actor_in(&repo, false, clock),
+            Err(Error::NotARepository(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Reads every line of every `events/*.jsonl` file, in file name order.

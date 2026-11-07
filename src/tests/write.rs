@@ -53,7 +53,7 @@ fn status(to: &str) -> Op {
 }
 
 fn me(t: &Tracker) -> Ulid {
-    t.actor_id(false, &mut FixedClock::new(0)).unwrap()
+    t.actor_id_opt(&mut FixedClock::new(0)).unwrap().unwrap()
 }
 
 #[test]
@@ -75,16 +75,21 @@ fn first_write_declares_actor_then_never_again() {
     // Each event's parent is the highest id seen before it.
     assert_eq!(w.events[0].parent, Some(u(BASE_LAST)));
     assert_eq!(w.events[1].parent, Some(w.events[0].id));
+    // Without an upstream, the sync after the write numbers the tickets
+    // at once, in this actor's log.
+    let numbered = w.sync.as_ref().unwrap().numbered.len();
+    assert!(numbered > 0);
     let w = write_one(&t, &mut c, u(T1), status("done")).unwrap();
     assert_eq!(w.events.len(), 1);
+    assert!(w.sync.as_ref().unwrap().numbered.is_empty());
     // What was written replays to the same state the write reported.
     let rp = load(&t);
     assert!(rp.skipped.is_empty());
     assert_eq!(rp.state.tickets[&u(T1)].status, "done");
     assert_eq!(rp.state.actors[&me(&t)].name.as_deref(), Some("tester"));
-    assert_eq!(rp.events.len(), 9);
+    assert_eq!(rp.events.len(), 9 + numbered);
     let log = std::fs::read_to_string(t.log_path(me(&t))).unwrap();
-    assert_eq!(log.lines().count(), 3);
+    assert_eq!(log.lines().count(), 3 + numbered);
     assert!(log.ends_with('\n'));
 }
 
@@ -267,7 +272,7 @@ fn dry_run_builds_events_but_writes_nothing() {
             |_| Ok(linked_pair_plan()),
             |_| {
                 called = true;
-                Ok(())
+                Ok(Vec::new())
             },
         )
         .unwrap();
@@ -328,7 +333,7 @@ fn new_actor_gets_its_own_declared_log() {
         ..WriteOptions::default()
     };
     let w = t
-        .write_with(&mut c, opts, |_| Ok(linked_pair_plan()), |_| Ok(()))
+        .write_with(&mut c, opts, |_| Ok(linked_pair_plan()), |_| Ok(Vec::new()))
         .unwrap();
     let actor = w.events[0].actor;
     assert_ne!(actor, mine);
@@ -347,7 +352,12 @@ fn new_actor_gets_its_own_declared_log() {
         new_actor: true,
         ..WriteOptions::default()
     };
-    let r = t.write_with(&mut c, unnamed, |_| Ok(linked_pair_plan()), |_| Ok(()));
+    let r = t.write_with(
+        &mut c,
+        unnamed,
+        |_| Ok(linked_pair_plan()),
+        |_| Ok(Vec::new()),
+    );
     assert!(matches!(r, Err(Error::InvalidArgument(_))));
 }
 
@@ -531,8 +541,10 @@ fn ids_at_the_end_of_the_range_do_not_block_writes() {
     assert_eq!(w.events[0].parent, Some(u(BASE_LAST)));
     assert_eq!(w.events[0].id.time_ms(), now);
     assert_eq!(w.events[1].parent, Some(w.events[0].id));
+    let seen = load(&t).highest_seen;
+    assert!(seen > Some(w.events[1].id), "numbers were written after it");
     let w2 = write_one(&t, &mut c, u(T2), status("doing")).unwrap();
-    assert_eq!(w2.events[0].parent, Some(w.events[1].id));
+    assert_eq!(w2.events[0].parent, seen);
     let rp = load(&t);
     assert_eq!(rp.state.tickets[&u(T2)].status, "doing");
     assert_eq!(rp.highest_seen, Some(w2.events[0].id));
