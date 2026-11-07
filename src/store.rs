@@ -85,10 +85,36 @@ fn ensure_line(path: &Path, line: &str) -> Result<()> {
     fs::write(path, text).map_err(Error::io(path))
 }
 
+/// Syncs a directory, so entries created or renamed in it survive a crash.
+/// Syncing a file covers its data, not its name in the directory.
+fn sync_dir(dir: &Path) -> Result<()> {
+    File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(Error::io(dir))
+}
+
+/// Creates `dir` if missing; a newly created one is made durable in its
+/// parent.
+fn ensure_dir(dir: &Path) -> Result<()> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(dir).map_err(Error::io(dir))?;
+    match dir.parent() {
+        Some(p) => sync_dir(p),
+        None => Ok(()),
+    }
+}
+
+/// Writes a file and syncs both it and its directory entry.
 fn write_file_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut f = File::create(path).map_err(Error::io(path))?;
     f.write_all(bytes).map_err(Error::io(path))?;
-    f.sync_all().map_err(Error::io(path))
+    f.sync_all().map_err(Error::io(path))?;
+    match path.parent() {
+        Some(p) => sync_dir(p),
+        None => Ok(()),
+    }
 }
 
 impl Tracker {
@@ -106,8 +132,7 @@ impl Tracker {
             message,
         })?;
         for sub in ["events", "blobs", LOCAL_DIR] {
-            let p = root.join(sub);
-            fs::create_dir_all(&p).map_err(Error::io(p))?;
+            ensure_dir(&root.join(sub))?;
         }
         ensure_line(&root.join(".gitattributes"), GITATTRIBUTES_LINE)?;
         ensure_line(&root.join(".gitignore"), GITIGNORE_LINE)?;
@@ -144,7 +169,7 @@ impl Tracker {
 
     fn local_dir(&self) -> Result<PathBuf> {
         let p = self.root.join(LOCAL_DIR);
-        fs::create_dir_all(&p).map_err(Error::io(&p))?;
+        ensure_dir(&p)?;
         Ok(p)
     }
 
@@ -249,8 +274,9 @@ impl Tracker {
             return Ok(());
         }
         let dir = self.events_dir();
-        fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        ensure_dir(&dir)?;
         let path = self.log_path(actor);
+        let is_new = !path.exists();
         let mut f = OpenOptions::new()
             .create(true)
             .read(true)
@@ -273,7 +299,13 @@ impl Tracker {
             buf.push('\n');
         }
         f.write_all(buf.as_bytes()).map_err(Error::io(&path))?;
-        f.sync_all().map_err(Error::io(&path))
+        f.sync_all().map_err(Error::io(&path))?;
+        if is_new {
+            // An actor's first write creates its log; its name in events/
+            // must be durable too.
+            sync_dir(&dir)?;
+        }
+        Ok(())
     }
 
     /// The names of all blobs present.
@@ -299,7 +331,7 @@ impl Tracker {
     pub fn put_blob(&self, text: &str, clock: &mut dyn Clock) -> Result<String> {
         let name = blob_name(text);
         let dir = self.blobs_dir();
-        fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        ensure_dir(&dir)?;
         let path = dir.join(&name);
         if path.exists() {
             return Ok(name);
@@ -307,6 +339,9 @@ impl Tracker {
         let tmp = dir.join(format!(".tmp-{}", next_id(clock, None)));
         write_file_synced(&tmp, text.as_bytes())?;
         fs::rename(&tmp, &path).map_err(Error::io(&path))?;
+        // The rename must be durable before the event naming the blob is
+        // appended, or a crash could leave the event without its blob.
+        sync_dir(&dir)?;
         Ok(name)
     }
 

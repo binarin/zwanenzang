@@ -142,6 +142,26 @@ fn blob_store_hashes_and_dedupes() {
 }
 
 #[test]
+fn writes_recreate_missing_directories() {
+    // A git clone has no empty directories, so events/ and blobs/ may be
+    // missing; the durable write paths create (and sync) them.
+    let dir = disposable_dir();
+    let t = new_tracker(&dir);
+    assert_disposable(&t.root);
+    fs::remove_dir(t.events_dir()).unwrap();
+    fs::remove_dir(t.blobs_dir()).unwrap();
+    let mut c = FixedClock::new(5);
+    let name = t.put_blob("text", &mut c).unwrap();
+    assert_eq!(t.get_blob(&name).unwrap(), "text");
+    t.append_lines(ACTOR_A, &["{\"a\":1}".into()]).unwrap();
+    t.append_lines(ACTOR_A, &["{\"a\":2}".into()]).unwrap();
+    assert_eq!(
+        fs::read_to_string(t.log_path(ACTOR_A)).unwrap(),
+        "{\"a\":1}\n{\"a\":2}\n"
+    );
+}
+
+#[test]
 fn lock_is_exclusive() {
     let dir = disposable_dir();
     let t = new_tracker(&dir);
