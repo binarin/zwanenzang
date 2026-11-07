@@ -243,6 +243,10 @@
                   (nil "a" "a" keep)))
     (should (eq (apply #'zwanenzang--merge (butlast case)) (car (last case))))))
 
+(ert-deftest zwanenzang-tags-hash-ignores-order ()
+  (should (equal (zwanenzang--tags-hash '("b" "a" "c")) (zwanenzang--tags-hash '("a" "b" "c"))))
+  (should-not (equal (zwanenzang--tags-hash '("a" "b")) (zwanenzang--tags-hash '("a")))))
+
 (ert-deftest zwanenzang-merge-parent-moves-only-when-nesting-unchanged ()
   (dolist (case '(;; nest base-nest remote base-parent expected -> result
                   ("P" "P" "P" "P" "P" same)

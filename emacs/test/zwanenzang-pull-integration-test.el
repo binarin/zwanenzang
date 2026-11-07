@@ -269,6 +269,46 @@
       (should (string-match-p "- status: tracker has todo (TODO); Org keyword kept"
                               (zwanenzang-test-entry id))))))
 
+(ert-deftest zwanenzang-pull-keeps-archive-tag-and-ignores-tag-order ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((id (zwanenzang-test-create trk "Old" "--tag" "a" "--tag" "b")))
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (org-set-tags '("b" "a" "ARCHIVE")))
+      (zwanenzang-test-cli trk "title" id "New")
+      (zwanenzang-test-cli trk "tag" id "c")
+      (zwanenzang-test-pull)
+      ;; Reordered tags were no change, so the new tag applies; ARCHIVE stays.
+      (should (equal (zwanenzang-test-tags id) '("a" "b" "c" "ARCHIVE")))
+      (should (string-prefix-p "*** TODO New " (zwanenzang-test-heading id)))
+      (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
+      (should (equal (zwanenzang-test-property id "ZWANENZANG_SYNC")
+                     (zwanenzang--format-sync
+                      `((status . "draft") (title . ,(zwanenzang--hash "New"))
+                        (tags . ,(zwanenzang--tags-hash '("a" "b" "c")))
+                        (parent . nil) (nest . nil))))))))
+
+(ert-deftest zwanenzang-pull-adds-a-second-document-after-the-first ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let* ((id (zwanenzang-test-create trk "Ticket"))
+           (child (zwanenzang-test-create trk "Child" "--parent" id)))
+      (zwanenzang-test-set-doc trk id "plan" "Plan\n")
+      (zwanenzang-test-pull)
+      (zwanenzang-test-set-doc trk id "notes" "Notes\n")
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (should (equal (mapcar #'car (zwanenzang--doc-headings)) '("plan" "notes")))
+        (let ((children nil) (level (org-current-level)))
+          (org-map-entries (lambda () (when (= (org-current-level) (1+ level))
+                                        (push (org-get-heading t t t t) children)))
+                           nil 'tree)
+          (should (equal (nreverse children) '("plan" "notes" "Child"))))
+        (goto-char (cdr (assoc "notes" (zwanenzang--doc-headings))))
+        (should (equal (zwanenzang--body-description (zwanenzang--body)) "Notes\n")))
+      (should (equal (zwanenzang-test-parent-heading child) "Ticket")))))
+
 (ert-deftest zwanenzang-pull-leaves-archived-and-flags-tombstoned ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let ((archived (zwanenzang-test-create trk "Archived"))
