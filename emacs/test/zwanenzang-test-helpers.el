@@ -9,6 +9,12 @@
 ;; from -C DIR for the tracker it opens, and sync can write the human
 ;; checkouts a clone lists, so those are checked as well.  The client itself
 ;; has no bypass; this guard exists only here.
+;;
+;; Every CLI invocation in the tests goes through `zwanenzang-test-run' or
+;; `zwanenzang-test-call', and every git invocation through
+;; `zwanenzang-test-git', even where the program is a stand-in script, so
+;; the guard is the one way in.  Tests never call `zwanenzang--run',
+;; `zwanenzang-call' or git directly.
 
 ;;; Code:
 
@@ -43,39 +49,81 @@
             "GIT_DIR" "GIT_WORK_TREE")
           process-environment))
 
+(defun zwanenzang-test-git (dir &rest args)
+  "Run git with ARGS in the disposable DIR and return its stdout.
+Git sees an identity and no user or system configuration."
+  (zwanenzang-test-assert-disposable dir)
+  (let ((process-environment (zwanenzang-test--git-env)))
+    (with-temp-buffer
+      (let ((exit (apply #'call-process "git" nil (list t nil) nil
+                         "-C" dir
+                         "-c" "user.name=Test" "-c" "user.email=test@example.invalid"
+                         "-c" "init.defaultBranch=main" "-c" "commit.gpgsign=false"
+                         args)))
+        (unless (eql exit 0)
+          (error "git %S in %s failed with %s" args dir exit))
+        (buffer-string)))))
+
 (defun zwanenzang-test--checkouts (root)
-  "The human checkouts the clone at ROOT lists, as absolute file names."
+  "The `zwanenzang.checkout' values configured in the clone at ROOT."
   (zwanenzang-test-assert-disposable root)
   (let ((process-environment (zwanenzang-test--git-env)))
     (with-temp-buffer
-      (let ((exit (call-process "git" nil t nil "-C" root "config" "--local"
+      (let ((exit (call-process "git" nil (list t nil) nil "-C" root "config" "--local"
                                 "--null" "--get-all" "zwanenzang.checkout")))
         (unless (memql exit '(0 1))
           (error "Cannot inspect checkout configuration of %s" root))
-        (mapcar (lambda (p) (expand-file-name p root))
-                (split-string (buffer-string) "\0" t))))))
+        (split-string (buffer-string) "\0" t)))))
+
+(defun zwanenzang-test--checkout-path (root configured)
+  "The checkout path CONFIGURED names, resolved as the CLI does.
+An absolute value stands as it is; anything else is relative to the
+clone ROOT, whatever the current directory.  There is no `~' or shell
+expansion: a leading `~' is an ordinary directory name to the CLI."
+  (if (string-prefix-p "/" configured)
+      configured
+    (concat (file-name-as-directory root) configured)))
+
+(defun zwanenzang-test--assert-checkout-disposable (root configured)
+  "Signal unless the checkout CONFIGURED in the clone at ROOT is disposable.
+A path that does not exist yet must carry the name marker, and its
+nearest existing ancestor must be disposable."
+  ;; No file name handlers: to the CLI, \"/ssh:host:/x\" or \"/:x\" is an
+  ;; ordinary local path.
+  (let ((file-name-handler-alist nil)
+        (path (zwanenzang-test--checkout-path root configured)))
+    ;; Lisp collapses `..' lexically and the CLI physically, which differ
+    ;; across a symbolic link, so such values are refused outright.
+    (when (member ".." (split-string path "/"))
+      (error "Refusing checkout path with `..': %s" configured))
+    (if (file-exists-p path)
+        (zwanenzang-test-assert-disposable path)
+      (unless (string-suffix-p zwanenzang-test-marker
+                               (file-name-nondirectory (directory-file-name path)))
+        (error "Unmarked checkout path: %s" path))
+      (let ((ancestor path))
+        (while (not (file-exists-p ancestor))
+          (setq ancestor (file-name-directory (directory-file-name ancestor))))
+        (zwanenzang-test-assert-disposable ancestor)))))
 
 (defun zwanenzang-test-assert-opens-disposable (dir)
   "Signal unless DIR and everything the CLI could touch from it are disposable.
 That is the tracker the CLI would open from DIR and the human checkouts
 it lists."
   (zwanenzang-test-assert-disposable dir)
-  (let ((root (or (locate-dominating-file (file-truename dir) "zwanenzang.toml")
-                  dir)))
+  ;; `locate-dominating-file' may abbreviate to `~'; the CLI sees the
+  ;; canonical root.
+  (let ((root (file-truename
+               (or (locate-dominating-file (file-truename dir) "zwanenzang.toml")
+                   dir))))
     (let ((why (zwanenzang-test-not-disposable root)))
       (when why
         (error "Refusing to run in %s: the CLI would open the tracker at %s" dir why)))
     (when (file-exists-p (expand-file-name ".git" root))
-      (dolist (path (zwanenzang-test--checkouts root))
-        (if (file-exists-p path)
-            (zwanenzang-test-assert-disposable path)
-          (unless (string-suffix-p zwanenzang-test-marker
-                                   (file-name-nondirectory (directory-file-name path)))
-            (error "Unmarked checkout path: %s" path))
-          (let ((ancestor path))
-            (while (not (file-exists-p ancestor))
-              (setq ancestor (file-name-directory (directory-file-name ancestor))))
-            (zwanenzang-test-assert-disposable ancestor)))))))
+      (dolist (configured (zwanenzang-test--checkouts root))
+        ;; The CLI skips an empty value without touching anything.
+        (unless (string-empty-p configured)
+          (zwanenzang-test--assert-checkout-disposable root configured))))))
 
 (defun zwanenzang-test-make-dir ()
   "Create and return a fresh disposable directory."

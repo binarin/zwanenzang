@@ -43,9 +43,10 @@ The script sees the arguments it was given in \"$@\" and its stdin."
     (let ((zwanenzang-program
            (zwanenzang-test--fake-program
             dir "printf '{\"args\": \"%s\", \"stdin\": ' \"$*\"; cat; printf '}'")))
-      (let ((v (zwanenzang-call dir '("read") '((since . :null)))))
+      (let ((v (zwanenzang-test-call dir '("read") '((since . :null)))))
         (should (equal (alist-get 'args v)
-                       (concat "-C " (file-name-as-directory dir) " read")))
+                       (concat "-C " (file-name-as-directory dir)
+                               " --actor-name tester read")))
         (should (equal (alist-get 'stdin v) '((since . :null))))))))
 
 (ert-deftest zwanenzang-call-signals-user-error-on-error-object ()
@@ -53,9 +54,9 @@ The script sees the arguments it was given in \"$@\" and its stdin."
     (let ((zwanenzang-program
            (zwanenzang-test--fake-program
             dir "echo '{\"error\": {\"code\": \"not-a-tracker\", \"message\": \"no tracker\"}}'; exit 1")))
-      (let ((err (should-error (zwanenzang-call dir '("read")) :type 'user-error)))
+      (let ((err (should-error (zwanenzang-test-call dir '("read")) :type 'user-error)))
         (should (equal (cadr err) "zwanenzang: not-a-tracker: no tracker")))
-      (let ((r (zwanenzang--run dir '("read"))))
+      (let ((r (zwanenzang-test-run dir '("read"))))
         (should (eql (plist-get r :exit) 1))
         (should (equal (alist-get 'code (zwanenzang--error-object (plist-get r :json)))
                        "not-a-tracker"))))))
@@ -65,16 +66,16 @@ The script sees the arguments it was given in \"$@\" and its stdin."
     (let ((zwanenzang-program
            (zwanenzang-test--fake-program
             dir "echo \"error: unrecognized subcommand 'frob'\" >&2; exit 2")))
-      (let ((err (should-error (zwanenzang-call dir '("frob")) :type 'user-error)))
+      (let ((err (should-error (zwanenzang-test-call dir '("frob")) :type 'user-error)))
         (should (equal (cadr err)
                        "zwanenzang: usage: error: unrecognized subcommand 'frob'"))))))
 
 (ert-deftest zwanenzang-call-signals-user-error-on-missing-or-silent-program ()
   (zwanenzang-test-with-dir dir
     (let ((zwanenzang-program (expand-file-name "no-such-program" dir)))
-      (should-error (zwanenzang-call dir '("read")) :type 'user-error))
+      (should-error (zwanenzang-test-call dir '("read")) :type 'user-error))
     (let ((zwanenzang-program (zwanenzang-test--fake-program dir "exit 0")))
-      (should-error (zwanenzang-call dir '("read")) :type 'user-error))))
+      (should-error (zwanenzang-test-call dir '("read")) :type 'user-error))))
 
 ;;;; Configuration and reports
 
@@ -164,6 +165,54 @@ The script sees the arguments it was given in \"$@\" and its stdin."
           (should-error (zwanenzang-test-run outer '("read") nil))
           (should-not (file-exists-p ran)))
       (delete-directory outer t))))
+
+(defun zwanenzang-test--set-checkouts (tracker &rest paths)
+  "Configure exactly PATHS as the checkouts of the disposable TRACKER."
+  (ignore-errors
+    (zwanenzang-test-git tracker "config" "--local" "--unset-all" "zwanenzang.checkout"))
+  (dolist (p paths)
+    (zwanenzang-test-git tracker "config" "--local" "--add" "zwanenzang.checkout" p)))
+
+(ert-deftest zwanenzang-guard-refuses-existing-unmarked-checkout ()
+  (zwanenzang-test-with-tracker tracker
+    (let ((human (make-temp-file "zwanenzang-el-human-" t)))
+      (unwind-protect
+          (progn
+            (zwanenzang-test--set-checkouts tracker human)
+            (should-error (zwanenzang-test-assert-opens-disposable tracker))
+            (zwanenzang-test--set-checkouts tracker "/")
+            (should-error (zwanenzang-test-assert-opens-disposable tracker))
+            ;; Relative to the clone: its parent is not marked.
+            (zwanenzang-test--set-checkouts tracker "..")
+            (should-error (zwanenzang-test-assert-opens-disposable tracker)))
+        (delete-directory human t)))))
+
+(ert-deftest zwanenzang-guard-walks-up-from-missing-checkout ()
+  (zwanenzang-test-with-tracker tracker
+    ;; Not created yet, under the disposable clone: accepted.
+    (zwanenzang-test--set-checkouts tracker "later-test-repo")
+    (zwanenzang-test-assert-opens-disposable tracker)
+    ;; No `~' expansion: the CLI reads this as a directory named `~' in
+    ;; the clone.
+    (zwanenzang-test--set-checkouts tracker "~/home-test-repo")
+    (zwanenzang-test-assert-opens-disposable tracker)
+    ;; Missing and unmarked.
+    (zwanenzang-test--set-checkouts tracker "later")
+    (should-error (zwanenzang-test-assert-opens-disposable tracker))
+    ;; Missing and marked, but its nearest existing ancestor is not
+    ;; disposable.
+    (zwanenzang-test--set-checkouts tracker "/zwanenzang-nonexistent/later-test-repo")
+    (should-error (zwanenzang-test-assert-opens-disposable tracker))
+    ;; Any marked value is checked, not just the first.
+    (zwanenzang-test--set-checkouts tracker "later-test-repo" "later")
+    (should-error (zwanenzang-test-assert-opens-disposable tracker))))
+
+(ert-deftest zwanenzang-guard-accepts-disposable-checkout ()
+  (zwanenzang-test-with-tracker tracker
+    (zwanenzang-test-with-dir human
+      (zwanenzang-test--set-checkouts tracker human)
+      (zwanenzang-test-assert-opens-disposable tracker)
+      (should (zwanenzang-test-call tracker '("read") '((cursors)))))))
 
 (provide 'zwanenzang-test)
 ;;; zwanenzang-test.el ends here
