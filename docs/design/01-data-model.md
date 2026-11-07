@@ -48,9 +48,10 @@ order, same state. The causal parent is consulted only to classify two events
 as concurrent, which drives conflict reporting and document compare-and-set.
 
 Replay is total. An event that fails validation at replay (unknown entity,
-stale document parent, unknown operation from a newer build) is skipped and
-reported by lint, never fatal. The same failure on a live write is an error
-returned to the caller.
+unknown operation from a newer build) is skipped and reported by lint, never
+fatal. The same failure on a live write is an error returned to the caller.
+A `doc` event with a stale base is the one exception: replay keeps it in the
+document's history as a lost edit instead of skipping it (see Documents).
 
 ## Operations
 
@@ -119,7 +120,8 @@ Applied on live writes (error) and on replay (skip and report):
 
 - Status in vocabulary. Kind in vocabulary. Tag format.
 - Parent and relation targets exist and are not tombstoned. No parent cycles.
-- `doc.base` is the current version.
+- `doc.base` is the current version. On replay a stale base is not skipped:
+  the version is kept in history as lost and does not become current.
 - `number` is unique and greater than any existing number.
 - Event id greater than its parent's id.
 
@@ -247,13 +249,9 @@ none changes a decision above.
   `blobs/` is rejected (`missing-blob`). A live write stores its blob only
   after the event is accepted, and before the event line is appended, so no
   accepted event ever names a missing blob.
-- **Stale document base at replay.** The Documents section is followed: the
-  version is kept in history marked lost and does not become current; lint
-  reports it. The mention of a stale document parent among skipped events
-  under "Ordering and replay" and "Validation rules" is read as "does not
-  become current", not as removal from history. A base that is not a
-  version of that document at all counts as stale. On a live write a stale
-  base is the error `stale-doc-base`.
+- **Stale document base.** A base that is not a version of that document
+  at all counts as stale. On a live write a stale base is the error
+  `stale-doc-base`.
 - **Concurrent field reports.** For each accepted `title`, `status`,
   `kind` or `parent` event, every earlier change to the same field of the
   same ticket by another actor that its writer had not seen is reported, if
