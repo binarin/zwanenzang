@@ -163,14 +163,14 @@ question; start human-only.
   `unarchive` yet; it is added as a new operation if the org client needs it.
 - Attachments (images). Probably blobs with a size cap, as in epiq, but not
   needed for the first milestones.
-- Numbers for imported tickets. The importer writes no `number` events,
+- Numbers for imported tickets.
+  **Decided:** fresh numbers. The importer writes no `number` events,
   because only publish writes numbers; the sync after the import numbers
   the imported tickets like any others, in import order from `max + 1`,
-  and their original `AIWF-NNNN` is in a provenance comment. Keeping the
-  original numbers (gaps where tickets were left out, prefix `AIWF`)
-  would mean letting an import into a tracker with the original prefix
-  write given numbers rather than `max + 1`. Undecided; it matters once
-  the import becomes real history (milestone 6).
+  without gaps. The original `AIWF-NNNN` stays in each provenance comment.
+  Keeping the original numbers, under either prefix, was rejected: it
+  would be the one exception to "only publish writes numbers", for the
+  sake of ids of an abandoned project.
 
 ### Choices made while implementing milestone 2
 
@@ -328,9 +328,9 @@ none changes a decision above.
   milliseconds per event. When the source root is a git checkout, its
   `HEAD` is read with read-only git commands and recorded as provenance,
   with a warning if `tickets/` or `docs/` differ from it.
-- **No numbers.** See the open question above. Because the import writes
-  no numbers itself, the target tracker can have any prefix and need not
-  be empty; publish numbers what it imported.
+- **No numbers.** See the decided question above. Because the import
+  writes no numbers itself, the target tracker can have any prefix and
+  need not be empty; publish numbers what it imported.
 - **Ticket fields.** The title is the first `# ` heading outside fenced
   code; without one it is the file name's slug, with a warning. The body
   without that line, trimmed of blank lines at both ends and with `\n`
