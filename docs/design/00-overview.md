@@ -64,6 +64,36 @@ owners. Process lives elsewhere.
 - **Scope**: an org subtree whose root carries the tracker location property.
   Everything under it syncs with that tracker.
 
+## Rejected alternatives
+
+Recorded so they are not re-surveyed.
+
+- **CRDTs with silent conflict resolution.** Concurrent edits here are rare
+  and semantic, such as two actors choosing different statuses. Merging them
+  automatically produces a state nobody chose, which contradicts principle 1.
+  The log is CRDT-shaped for replication, but collisions are reported.
+- **SQLite or DuckDB as the primary store.** A binary file in git is
+  single-writer and unmergeable, so multi-machine sync gets worse. Either
+  remains possible as a derived cache if replay ever becomes slow; in Rust it
+  is not expected to.
+- **A local daemon serializing access.** Solves only same-machine
+  concurrency, which a lock in a single writer binary already solves, and
+  adds a lifecycle to manage.
+- **Org as a rendered projection with edit extraction.** Rejected because
+  the human's org files are the authority and hold structure the tracker
+  must not know about; the human also works from a single desktop Emacs
+  against trackers on other machines.
+- **Org files as the committed source of truth edited in place by the
+  tool.** This is the predecessor's design in a different syntax and keeps
+  the merge problem.
+- **Operations stored in git refs** (git-bug). Invisible to `ls`, `cat`,
+  grep and the forge; human readability was the first complaint.
+- **A tracker as a branch of the code repository.** Trackers span several
+  repositories, and for external projects the tracker cannot live in their
+  repository at all.
+- **Any global per-user state** such as a home-directory folder of all
+  tracker worktrees or a global identity. Violates principle 5.
+
 ## Prior art read before deciding
 
 - **epiq** (`ljtn/epiq`): per-actor JSONL logs with union merge on a
