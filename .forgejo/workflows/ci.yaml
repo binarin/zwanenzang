@@ -1,0 +1,20 @@
+---
+"on":
+  push:
+    branches:
+      - master
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+jobs:
+  flake-check:
+    name: nix flake check
+    runs-on: native
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # The runner is x86_64: aarch64 outputs are evaluated, not built.
+      - run: nix flake check --all-systems --print-build-logs
