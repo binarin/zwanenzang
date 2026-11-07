@@ -150,6 +150,36 @@ pub enum Command {
     /// Report skipped events, concurrent changes, lost document edits,
     /// dangling repository aliases and unnamed actors. Exits 1 on issues.
     Lint,
+    /// Import tickets from another tracker.
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ImportCommand {
+    /// Import the frozen ai-workflow tracker, written as a new actor named
+    /// "ai-workflow import". Tickets already imported are skipped.
+    AiWorkflow {
+        /// The tracker checkout (holding tickets/ and docs/), or its
+        /// tickets/ directory. Only read.
+        source: PathBuf,
+        /// Ticket ids to leave out, comma-separated (repeatable).
+        #[arg(long, value_delimiter = ',', value_name = "IDS")]
+        exclude: Vec<String>,
+        /// A file of ticket ids to leave out, one per line; `#` starts a
+        /// comment (repeatable).
+        #[arg(long, value_name = "PATH")]
+        exclude_file: Vec<PathBuf>,
+        /// Use repository alias TO for the source's alias FROM
+        /// (repeatable).
+        #[arg(long = "repo-alias", value_name = "FROM=TO")]
+        repo_alias: Vec<String>,
+        /// Validate and report, write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -528,6 +558,42 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 .map(|t| view.summary(t))
                 .collect();
             Ok((json!({ "tickets": items }), 0))
+        }
+        Command::Import {
+            command:
+                ImportCommand::AiWorkflow {
+                    source,
+                    exclude,
+                    exclude_file,
+                    repo_alias,
+                    dry_run,
+                },
+        } => {
+            let mut opts = crate::import::Options {
+                source,
+                dry_run,
+                ..Default::default()
+            };
+            for id in exclude {
+                let id = id.trim();
+                if !id.is_empty() {
+                    opts.exclude.insert(id.to_string());
+                }
+            }
+            for path in exclude_file {
+                let text = std::fs::read_to_string(&path).map_err(Error::io(&path))?;
+                opts.exclude
+                    .extend(crate::import::parse_exclude_file(&text)?);
+            }
+            for pair in repo_alias {
+                let (from, to) = pair.split_once('=').ok_or_else(|| {
+                    Error::InvalidArgument(format!("--repo-alias wants FROM=TO, not {pair:?}"))
+                })?;
+                opts.repo_aliases
+                    .insert(from.trim().to_string(), to.trim().to_string());
+            }
+            let report = crate::import::import(&ctx.tracker, ctx.clock, &opts)?;
+            Ok((report, 0))
         }
         Command::Lint => {
             let rp = ctx.tracker.load()?;

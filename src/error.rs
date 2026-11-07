@@ -30,6 +30,12 @@ pub enum Error {
     MissingBlob(String),
     #[error("{0}")]
     InvalidArgument(String),
+    #[error("import source: {0}")]
+    InvalidSource(String),
+    #[error("repository aliases not declared in zwanenzang.toml: {0}")]
+    UndeclaredRepo(String),
+    #[error("{0} exists with different content")]
+    DocConflict(PathBuf),
 }
 
 impl Error {
@@ -45,6 +51,9 @@ impl Error {
             Error::UnknownDocument(_) => "unknown-document",
             Error::MissingBlob(_) => "missing-blob",
             Error::InvalidArgument(_) => "invalid-argument",
+            Error::InvalidSource(_) => "invalid-source",
+            Error::UndeclaredRepo(_) => "undeclared-repo",
+            Error::DocConflict(_) => "doc-conflict",
         }
     }
 

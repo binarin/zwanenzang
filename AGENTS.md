@@ -45,10 +45,15 @@ contract.
 - Import fixture: the frozen ai-workflow tracker, the `bug-tracker` branch of
   `forgejo.lynx-lizard.ts.net/binarin/ai-workflow`. Tickets are markdown with
   YAML frontmatter (`status`, `branches`, `merge-requests`, `related`,
-  `handoff`) and a body whose first heading is the title. Twenty-seven
-  tickets, `AIWF-NNNN`. Its `tracker-dashboard` and `tracker-lint` tools on
-  `master` are the starting point for `render` and `lint` behaviour, not
-  code to port.
+  `original-ticket`, `handoff`) and a body whose first heading is the
+  title. Twenty-seven tickets, `AIWF-NNNN`. Its `tracker-dashboard` and
+  `tracker-lint` tools on `master` are the starting point for `render` and
+  `lint` behaviour, not code to port.
+- That tracker is private. None of its text (tickets, titles, ids, how
+  they were classified for import) goes into this repository: not in
+  fixtures, docs, comments or commit messages. The importer's tests use
+  the synthetic tickets in `tests/fixtures/ai-workflow/`, which follow the
+  same format.
 - Prior art consulted, for reading rather than reuse: epiq (per-actor JSONL
   with union merge, `source/git/` and its `AGENTS.md`), git-bug
   (`doc/design/data-model.md`), org-caldav (`org-caldav.el`, sync state and
@@ -72,5 +77,7 @@ first and refuses otherwise. The CLI itself keeps no test mode and no
 environment variable that bypasses the check; a test that needs a repository
 creates one that satisfies the markers.
 
-Fixture-based tests import the frozen tracker into such a repository and
-assert on what replay produces.
+Fixture-based tests import the synthetic fixture in the frozen tracker's
+format into such a repository and assert on what replay produces. The real
+tracker is imported only by hand, into a disposable directory, and nothing
+from that run is committed.
