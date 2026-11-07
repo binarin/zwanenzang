@@ -250,6 +250,7 @@ fn one(target: Ulid, op: Op) -> Plan {
     Plan {
         ops: vec![(Target::Entity(target), op)],
         blobs: Vec::new(),
+        refs: Vec::new(),
     }
 }
 
@@ -335,6 +336,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 Ok(Plan {
                     ops,
                     blobs: Vec::new(),
+                    refs: Vec::new(),
                 })
             })?;
             let created = w
@@ -435,6 +437,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                             }),
                         )],
                         blobs: vec![text],
+                        refs: Vec::new(),
                     })
                 } else {
                     Ok(one(
@@ -470,6 +473,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                         }),
                     )],
                     blobs: vec![text],
+                    refs: Vec::new(),
                 })
             })
         }

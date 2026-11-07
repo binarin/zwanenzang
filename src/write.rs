@@ -2,7 +2,7 @@
 //! the hybrid clock, validate it with the same [`apply`] replay uses, and
 //! append only what is accepted and changes derived state.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::clock::{Clock, format_ts, leaps_too_far, next_id};
 use crate::error::{Error, Result};
@@ -20,6 +20,9 @@ pub enum Target {
     /// The ticket created by an earlier `create` in the same plan. A
     /// `create` itself always names its own id, whatever its target.
     Created,
+    /// The ticket created by the plan's `create` number `n`, counting the
+    /// plan's `create` operations from 0.
+    Nth(usize),
 }
 
 /// What a command wants written, computed from the replayed state.
@@ -29,6 +32,24 @@ pub struct Plan {
     pub ops: Vec<(Target, Op)>,
     /// Texts the operations refer to by blob name.
     pub blobs: Vec<String>,
+    /// Ticket references resolved when the events are built: the `to` of
+    /// the `relate`, `unrelate` or `parent` operation at index `i` of `ops`
+    /// becomes the entity of the target. A plan can so relate tickets it
+    /// creates itself, whose ids are not known until they are written.
+    pub refs: Vec<(usize, Target)>,
+}
+
+/// How [`Tracker::write_with`] writes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriteOptions<'a> {
+    /// Display name for an actor that has not declared one yet; see
+    /// [`Tracker::write`].
+    pub actor_name: Option<&'a str>,
+    /// Write as a new actor with a fresh id instead of this clone's actor.
+    /// The new actor declares `actor_name`, which is then required.
+    pub new_actor: bool,
+    /// Validate and build every event, but write nothing.
+    pub dry_run: bool,
 }
 
 #[derive(Debug)]
@@ -54,6 +75,16 @@ impl Written {
     }
 }
 
+/// The entity a target names, given the tickets created so far.
+fn resolve(target: Target, created: &[Ulid]) -> Result<Ulid> {
+    match target {
+        Target::Entity(e) => Some(e),
+        Target::Created => created.last().copied(),
+        Target::Nth(n) => created.get(n).copied(),
+    }
+    .ok_or_else(|| Error::InvalidArgument("plan names a created ticket before creating it".into()))
+}
+
 impl Tracker {
     /// Replays the tracker without taking the lock.
     pub fn load(&self) -> Result<Replay> {
@@ -71,19 +102,52 @@ impl Tracker {
         actor_name: Option<&str>,
         plan: impl FnOnce(&Replay) -> Result<Plan>,
     ) -> Result<Written> {
+        let opts = WriteOptions {
+            actor_name,
+            ..WriteOptions::default()
+        };
+        self.write_with(clock, opts, plan, |_| Ok(()))
+    }
+
+    /// [`Tracker::write`] with options. `before_append` runs under the lock
+    /// once every event has been accepted, before any blob or line is
+    /// written; if it fails, nothing is written. It is not called on a dry
+    /// run, nor when there is nothing to write.
+    pub fn write_with(
+        &self,
+        clock: &mut dyn Clock,
+        opts: WriteOptions<'_>,
+        plan: impl FnOnce(&Replay) -> Result<Plan>,
+        before_append: impl FnOnce(&[Event]) -> Result<()>,
+    ) -> Result<Written> {
         let _lock = self.lock()?;
-        let actor = self.actor_id(true, clock)?;
         let mut rp = self.load()?;
+        let actor = if opts.new_actor {
+            if opts.actor_name.is_none() {
+                return Err(Error::InvalidArgument("a new actor needs a name".into()));
+            }
+            // Like a clone's actor id: fresh, not from the event clock.
+            next_id(clock, None)
+        } else if opts.dry_run {
+            // A dry run must not create this clone's actor id either.
+            match self.actor_id_opt(false, clock)? {
+                Some(a) => a,
+                None => next_id(clock, None),
+            }
+        } else {
+            self.actor_id(true, clock)?
+        };
         let plan = plan(&rp)?;
 
         let mut state = rp.state.clone();
         let pending: BTreeSet<String> = plan.blobs.iter().map(|t| blob_name(t)).collect();
         state.blobs.extend(pending.iter().cloned());
 
-        let mut ops: Vec<(Target, Op, bool)> = Vec::new();
+        // (operation, index in the plan, or None for the actor declaration)
+        let mut ops: Vec<(Target, Op, Option<usize>)> = Vec::new();
         let declared = state.actors.get(&actor).is_some_and(|a| a.name.is_some());
         if !declared && !plan.ops.is_empty() {
-            let name = match actor_name {
+            let name = match opts.actor_name {
                 Some(n) => {
                     if !valid_actor_name(n) {
                         return Err(Error::InvalidArgument(format!("invalid actor name {n:?}")));
@@ -98,27 +162,43 @@ impl Tracker {
             ops.push((
                 Target::Entity(state.root),
                 Op::Actor(ActorData { name }),
-                false,
+                None,
             ));
         }
-        ops.extend(plan.ops.into_iter().map(|(e, o)| (e, o, true)));
+        ops.extend(
+            plan.ops
+                .into_iter()
+                .enumerate()
+                .map(|(i, (e, o))| (e, o, Some(i))),
+        );
+        let refs: BTreeMap<usize, Target> = plan.refs.into_iter().collect();
 
         let mut highest = rp.highest_seen;
         let mut events = Vec::new();
         let mut planned = Vec::new();
-        let mut created = None;
-        for (target, op, from_plan) in ops {
+        let mut created: Vec<Ulid> = Vec::new();
+        for (target, mut op, index) in ops {
             let id = next_id(clock, highest);
             let ts = format_ts(clock.now_ms());
-            let entity = match (&op, target) {
-                (Op::Create(_), _) => {
-                    created = Some(id);
+            if let Some(t) = index.and_then(|i| refs.get(&i)) {
+                let to = resolve(*t, &created)?;
+                match &mut op {
+                    Op::Relate(d) | Op::Unrelate(d) => d.to = to,
+                    Op::Parent(d) => d.to = Some(to),
+                    _ => {
+                        return Err(Error::InvalidArgument(format!(
+                            "plan resolves a ticket reference in a {} operation",
+                            op.name()
+                        )));
+                    }
+                }
+            }
+            let entity = match &op {
+                Op::Create(_) => {
+                    created.push(id);
                     id
                 }
-                (_, Target::Entity(e)) => e,
-                (_, Target::Created) => created.ok_or_else(|| {
-                    Error::InvalidArgument("plan names a created ticket before creating it".into())
-                })?,
+                _ => resolve(target, &created)?,
             };
             let ev = Event {
                 id,
@@ -156,7 +236,7 @@ impl Tracker {
             }
             state = trial;
             highest = Some(id);
-            if from_plan {
+            if index.is_some() {
                 planned.push(id);
             }
             events.push(ev);
@@ -169,6 +249,17 @@ impl Tracker {
                 replay: rp,
             });
         }
+        if opts.dry_run {
+            rp.state = state;
+            rp.events.extend(events.iter().cloned());
+            rp.highest_seen = highest;
+            return Ok(Written {
+                events,
+                planned,
+                replay: rp,
+            });
+        }
+        before_append(&events)?;
 
         // Blobs first, so a crash never leaves an event naming a missing blob.
         let used: BTreeSet<&str> = events
