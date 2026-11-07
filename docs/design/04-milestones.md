@@ -7,7 +7,7 @@ org file on the desktop until milestone 3 makes it a synced scope.
 ## Context
 
 - The ai-workflow effort is abandoned. Its tracker branch is frozen and
-  becomes the import fixture (28 AIWF tickets).
+  becomes the import fixture (27 AIWF tickets).
 - The swan-lake (ZL) tracker keeps running on the frozen ai-workflow tooling
   until zwanenzang can take it over. It is not a fixture yet.
 - Rust, distributed as a nix flake. Nix is available on every machine,

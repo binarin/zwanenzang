@@ -64,6 +64,7 @@ them; any change to them fails with `tombstoned`.
 | `show T` | nothing | ticket object |
 | `list [--status S]... [--tag X]... [--kind K]... [--all]` | nothing | `{"tickets": [summary, ...]}` |
 | `lint` | nothing | lint report |
+| `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
 
 `comment` reads its text from the argument, from `--file`, or from stdin.
 Text up to 2048 bytes is stored inline; longer text goes to a blob. Text that
@@ -77,6 +78,23 @@ order.
 
 Read-only commands (`show`, `list`, `doc get`, `lint`) take no lock and
 write nothing.
+
+`import ai-workflow` reads the frozen ai-workflow tracker at `SOURCE` (a
+checkout holding `tickets/` and `docs/`, or its `tickets/` directory) and
+never writes there. `--exclude` takes comma-separated entries;
+`--exclude-file` a file with one entry per line, `#` starting a comment.
+Both repeat and add up. An entry is a ticket id (`AIWF-0005`), which leaves
+that ticket out, or a path pattern starting with `docs/`
+(`docs/*-review.md`), which leaves matching supporting files uncopied;
+`*` matches any characters and `?` one character, neither crossing a
+`/`, and the pattern must match the whole path. `--repo-alias FROM=TO` imports the source's repository
+alias `FROM` as `TO`. Every alias the imported branches and merge requests
+use must be declared in `zwanenzang.toml` first. The import is written as a
+new actor named `ai-workflow import`; `--actor-name` does not apply. All
+of it is written or none of it; `--dry-run` validates everything and
+writes nothing. Running it again imports only tickets not imported yet.
+How tickets map to events is listed in the
+[data model](design/01-data-model.md) under the milestone 2 choices.
 
 ### Init object
 
@@ -105,6 +123,50 @@ write nothing.
   `parent` and `tag` events from `--parent` and `--tag`.
 - A command writes all of its events or none: if one is refused, nothing is
   written and the error is returned.
+
+### Import report
+
+```json
+{"dry_run": false,
+ "source": {"root": "/path", "tickets": "/path/tickets", "revision": "<commit>" | null},
+ "actor": "<the import actor's ULID>" | null,
+ "events": 183,
+ "imported": [{"source": "AIWF-0003", "file": "tickets/AIWF-0003-x.md", "id": "<ULID>" | null,
+               "title": "...", "status": "todo", "source_status": "needs-plan" | null,
+               "kept_fields": ["handoff"]}],
+ "already_imported": [{"source": "AIWF-0001", "id": "<ULID>"}],
+ "excluded": [{"source": "AIWF-0005", "file": "tickets/AIWF-0005-y.md"}],
+ "dropped_references": [{"source": "AIWF-0003", "field": "related" | "original-ticket" | "parent",
+                         "target": "AIWF-0005", "reason": "excluded" | "missing" | "self"}],
+ "docs": [{"path": "docs/notes.md", "linked_from": ["AIWF-0003"], "existing": false}],
+ "dropped_docs": [{"path": "docs/review.md", "linked_from": ["AIWF-0003"], "pattern": "docs/*review*"}],
+ "warnings": [{"source": "AIWF-0003" | null, "code": "unknown-status", "message": "..."}]}
+```
+
+- `revision` is the source's commit when `SOURCE`'s root is a git
+  checkout, read with read-only git commands; otherwise `null`.
+- `actor` and each `imported[].id` are `null` on a dry run and when
+  nothing was written. `events` counts the lines written, or that would
+  be written on a dry run.
+- `already_imported`: tickets an earlier run imported, found by their
+  provenance comment; they are left as they are.
+- `dropped_references`: references of the imported tickets to tickets
+  that are excluded, not in the source, or the ticket itself. Nothing is
+  written for them.
+- `docs`: supporting files linked from imported descriptions, copied to
+  the same path in the tracker. `existing` means the tracker already held
+  identical content.
+- `dropped_docs`: linked supporting files an exclude pattern left out,
+  with the first pattern that matched. The link text in the description
+  stays as written; no file and no link comment is written for them.
+- Warning codes: `unknown-status` (missing or not in the ai-workflow
+  vocabulary; imported as `draft`), `no-title` (no `# ` heading; title
+  from the file name), `no-frontmatter`, `unknown-field` (kept as text),
+  `missing-doc-file` (a link into `docs/` that does not resolve to a
+  file there), `skipped-file` (not a `PREFIX-NNNN-slug.md` file),
+  `unknown-exclude` (an excluded id not in the source, or a pattern
+  matching no file linked from an imported ticket), `excluded-but-imported`, `imported-twice`,
+  `dirty-source`, `no-revision`.
 
 ### Event
 
@@ -219,6 +281,9 @@ Command errors:
 | `unknown-document` | `doc get` of a document the ticket does not have |
 | `missing-blob` | a blob to read is missing |
 | `invalid-argument` | an argument is malformed, such as `--base` |
+| `invalid-source` | an import source file cannot be read as a ticket: frontmatter outside the supported subset, a field of the wrong shape, a duplicate id |
+| `undeclared-repo` | an import would use repository aliases that `zwanenzang.toml` does not declare |
+| `doc-conflict` | an import would overwrite a file in `docs/` that has different content |
 | `io` | a file could not be read or written |
 
 Rejections: returned as the error code when a write is refused, and as

@@ -7,7 +7,7 @@ use crate::event::{
 };
 use crate::store::{Tracker, blob_name};
 use crate::ulid::Ulid;
-use crate::write::{Plan, Target, Written};
+use crate::write::{Plan, Target, WriteOptions, Written};
 
 fn based(dir: &tempfile::TempDir) -> Tracker {
     let t = new_tracker(dir);
@@ -22,7 +22,13 @@ fn write_ops(
     blobs: Vec<String>,
 ) -> crate::error::Result<Written> {
     assert_disposable(&t.root);
-    t.write(clock, Some("tester"), |_| Ok(Plan { ops, blobs }))
+    t.write(clock, Some("tester"), |_| {
+        Ok(Plan {
+            ops,
+            blobs,
+            refs: Vec::new(),
+        })
+    })
 }
 
 fn write_one(
@@ -188,6 +194,161 @@ fn created_target_names_the_new_ticket() {
     assert_eq!(n.parent, Some(u(T1)));
     assert!(n.tags.contains("x"));
     assert_eq!(n.status, "draft");
+}
+
+/// A plan that creates two tickets, relates them and makes the second a
+/// child of the first, all through references resolved at write time.
+fn linked_pair_plan() -> Plan {
+    let placeholder = Ulid(0);
+    Plan {
+        ops: vec![
+            (Target::Created, create("first")),
+            (Target::Created, create("second")),
+            (Target::Nth(0), Op::Relate(RelateData { to: placeholder })),
+            (Target::Nth(1), Op::Parent(ParentData { to: None })),
+        ],
+        blobs: vec![],
+        refs: vec![(2, Target::Nth(1)), (3, Target::Nth(0))],
+    }
+}
+
+#[test]
+fn plan_refs_name_tickets_created_by_the_plan() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let mut c = FixedClock::new(1_000_000);
+    let w = t
+        .write(&mut c, Some("tester"), |_| Ok(linked_pair_plan()))
+        .unwrap();
+    let (first, second) = (w.events[1].id, w.events[2].id);
+    assert_eq!(w.events[3].entity, first);
+    assert_eq!(w.events[3].op, Op::Relate(RelateData { to: second }));
+    assert_eq!(w.events[4].entity, second);
+    let rp = load(&t);
+    assert!(rp.state.tickets[&first].related.contains(&second));
+    assert_eq!(rp.state.tickets[&second].parent, Some(first));
+    assert!(rp.skipped.is_empty(), "{:?}", rp.skipped);
+}
+
+#[test]
+fn plan_ref_before_its_create_is_refused() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let before = log_snapshot(&t);
+    let r = t.write(&mut FixedClock::new(1_000_000), Some("tester"), |_| {
+        Ok(Plan {
+            ops: vec![
+                (Target::Nth(0), create("x")),
+                (Target::Nth(1), status("todo")),
+            ],
+            blobs: vec![],
+            refs: vec![],
+        })
+    });
+    assert!(matches!(r, Err(Error::InvalidArgument(_))));
+    assert_eq!(log_snapshot(&t), before);
+}
+
+#[test]
+fn dry_run_builds_events_but_writes_nothing() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let before = log_snapshot(&t);
+    let mut called = false;
+    let opts = WriteOptions {
+        actor_name: Some("tester"),
+        dry_run: true,
+        ..WriteOptions::default()
+    };
+    let w = t
+        .write_with(
+            &mut FixedClock::new(1_000_000),
+            opts,
+            |_| Ok(linked_pair_plan()),
+            |_| {
+                called = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert_eq!(w.planned.len(), 4);
+    assert_eq!(w.replay.state.tickets.len(), 5);
+    assert!(!called, "the hook runs only before a real append");
+    assert_eq!(log_snapshot(&t), before);
+}
+
+#[test]
+fn failing_hook_writes_nothing() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let before = log_snapshot(&t);
+    let blobs_before = t.blob_names().unwrap();
+    let opts = WriteOptions {
+        actor_name: Some("tester"),
+        ..WriteOptions::default()
+    };
+    let r = t.write_with(
+        &mut FixedClock::new(1_000_000),
+        opts,
+        |_| {
+            Ok(Plan {
+                ops: vec![(
+                    Target::Entity(u(T1)),
+                    Op::Doc(DocData {
+                        name: "description".into(),
+                        blob: blob_name("text"),
+                        base: None,
+                    }),
+                )],
+                blobs: vec!["text".into()],
+                refs: vec![],
+            })
+        },
+        |events| {
+            assert_eq!(events.len(), 2, "actor declaration and the doc");
+            Err(Error::InvalidArgument("hook says no".into()))
+        },
+    );
+    assert!(matches!(r, Err(Error::InvalidArgument(_))));
+    assert_eq!(log_snapshot(&t), before);
+    assert_eq!(t.blob_names().unwrap(), blobs_before);
+}
+
+#[test]
+fn new_actor_gets_its_own_declared_log() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let mut c = FixedClock::new(1_000_000);
+    // This clone's own actor exists and has written before.
+    write_one(&t, &mut c, u(T1), status("todo")).unwrap();
+    let mine = me(&t);
+    let opts = WriteOptions {
+        actor_name: Some("importer"),
+        new_actor: true,
+        ..WriteOptions::default()
+    };
+    let w = t
+        .write_with(&mut c, opts, |_| Ok(linked_pair_plan()), |_| Ok(()))
+        .unwrap();
+    let actor = w.events[0].actor;
+    assert_ne!(actor, mine);
+    assert!(w.events.iter().all(|e| e.actor == actor));
+    assert_eq!(
+        w.events[0].op,
+        Op::Actor(ActorData {
+            name: "importer".into()
+        })
+    );
+    assert!(t.log_path(actor).is_file());
+    let rp = load(&t);
+    assert_eq!(rp.state.actors[&actor].name.as_deref(), Some("importer"));
+    assert_eq!(me(&t), mine, "the clone keeps its own actor");
+    let unnamed = WriteOptions {
+        new_actor: true,
+        ..WriteOptions::default()
+    };
+    let r = t.write_with(&mut c, unnamed, |_| Ok(linked_pair_plan()), |_| Ok(()));
+    assert!(matches!(r, Err(Error::InvalidArgument(_))));
 }
 
 #[test]

@@ -22,6 +22,9 @@
         cargoLock.lockFile = ../Cargo.lock;
         # The test suite runs in checkPhase; `nix flake check` builds this.
         doCheck = true;
+        # The importer reads a source checkout's revision with git, and its
+        # test builds such a checkout.
+        nativeCheckInputs = [ pkgs.git ];
         meta.mainProgram = "zwanenzang";
       };
       packages.default = self'.packages.zwanenzang;

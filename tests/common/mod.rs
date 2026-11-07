@@ -86,12 +86,14 @@ pub fn run_in(dir: &Path, args: &[&str], stdin: &str) -> Out {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn zwanenzang");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    // A command that fails before reading stdin (a usage error) may exit
+    // first; the write then fails with a broken pipe, which is not an error
+    // of the test.
+    if let Err(e) = child.stdin.take().unwrap().write_all(stdin.as_bytes())
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        panic!("writing stdin: {e}");
+    }
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     let json = if stdout.trim().is_empty() {
@@ -171,4 +173,71 @@ pub fn read(dir: &Path, rel: &str) -> String {
 
 pub fn id(v: &Value) -> String {
     v["ticket"]["id"].as_str().unwrap().to_string()
+}
+
+/// Writes `text` to `rel` under the disposable `dir`, creating directories.
+pub fn write_file(dir: &Path, rel: &str, text: &str) {
+    assert_disposable(dir);
+    let p = dir.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, text).unwrap();
+}
+
+/// Appends `text` to the tracker configuration of the disposable `dir`.
+pub fn append_config(dir: &Path, text: &str) {
+    assert_disposable(dir);
+    let p = dir.join("zwanenzang.toml");
+    let mut cur = std::fs::read_to_string(&p).unwrap();
+    cur.push_str(text);
+    std::fs::write(p, cur).unwrap();
+}
+
+/// Copies the directory tree `src` into the disposable `dst`.
+pub fn copy_tree(src: &Path, dst: &Path) {
+    assert_disposable(dst);
+    fn walk(src: &Path, dst: &Path) {
+        std::fs::create_dir_all(dst).unwrap();
+        for e in std::fs::read_dir(src).unwrap() {
+            let e = e.unwrap();
+            let to = dst.join(e.file_name());
+            if e.file_type().unwrap().is_dir() {
+                walk(&e.path(), &to);
+            } else {
+                std::fs::copy(e.path(), to).unwrap();
+            }
+        }
+    }
+    walk(src, dst);
+}
+
+/// Runs git in the disposable repository `dir`, with an identity and no
+/// user or system configuration, and returns its stdout.
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    assert_disposable(dir);
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "init.defaultBranch=main",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
 }

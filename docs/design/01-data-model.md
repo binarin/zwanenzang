@@ -162,6 +162,13 @@ question; start human-only.
   `unarchive` yet; it is added as a new operation if the org client needs it.
 - Attachments (images). Probably blobs with a size cap, as in epiq, but not
   needed for the first milestones.
+- Numbers for imported tickets. The importer writes no `number` events,
+  because only publish writes numbers; imported tickets display as short
+  ids, and their original `AIWF-NNNN` is in a provenance comment. Keeping
+  the original numbers (gaps where tickets were left out, prefix `AIWF`)
+  would mean letting publish, or an import into a tracker with the
+  original prefix, write given numbers rather than `max + 1`. Undecided;
+  it matters once the import becomes real history (milestone 6).
 
 ### Choices made while implementing milestone 2
 
@@ -282,3 +289,82 @@ none changes a decision above.
 - **Interrupted appends.** If a log does not end in a newline (an
   interrupted write), the next append starts with one, so lines never run
   together; the partial line is reported as malformed.
+
+#### Import from the frozen ai-workflow tracker
+
+- **What is imported is the caller's choice.** The importer takes the ids
+  to leave out as input (`--exclude`, `--exclude-file`) and never
+  classifies tickets itself. A relation, `original-ticket` or `parent`
+  naming a left-out ticket, a ticket not in the source, or the ticket
+  itself is dropped and reported, so no event names a ticket that is not
+  there and replay rejects nothing.
+- **One write.** The import is a single live write through the same
+  `apply` as every command, so one refused event refuses the whole import.
+  Supporting files are copied after every event has been accepted and
+  before any line is appended. `--dry-run` runs the same validation and
+  writes nothing.
+- **Its own actor.** Each run writes as a new actor that declares the name
+  `ai-workflow import`, not as the clone's actor: the human did not write
+  these events, and one log per run keeps an import recognisable.
+- **Ids and times.** Ids come from the hybrid clock at import time and
+  `ts` is the import time; history is not reconstructed from the source's
+  git log, because ids order writes and wall-clock time is display only,
+  and historical ids would sort before events already in the tracker. The
+  importer's clock moves at least one millisecond per event, so each
+  imported ticket's id has its own time part and short ids keep their
+  10-character minimum; ids run ahead of the wall clock by at most a few
+  milliseconds per event. When the source root is a git checkout, its
+  `HEAD` is read with read-only git commands and recorded as provenance,
+  with a warning if `tickets/` or `docs/` differ from it.
+- **No numbers.** See the open question above. Because no numbers are
+  written, the target tracker can have any prefix and need not be empty.
+- **Ticket fields.** The title is the first `# ` heading outside fenced
+  code; without one it is the file name's slug, with a warning. The body
+  without that line, trimmed of blank lines at both ends and with `\n`
+  line endings, becomes the first version of the `description` document;
+  an empty body writes none. Status maps `draft` to `draft`;
+  `needs-triage`, `needs-plan` and `ready-for-implementation` to `todo`;
+  `ready-for-review` to `review`; `needs-human-input` to `blocked`; `done`
+  to `done`. A missing status or one outside that vocabulary is imported as
+  `draft`, with a warning. No kind, tag or archive is written; a done
+  ticket stays in the active set until the human archives it.
+- **Provenance comment.** Each imported ticket gets one comment whose first
+  line is `Imported from the ai-workflow tracker: <id>`, followed by the
+  source file, the source revision, the original status, the
+  `original-ticket` and any frontmatter with no counterpart here
+  (`handoff`, unknown keys) verbatim. Such fields are kept only as text,
+  never as structured state, so no process metadata enters derived state.
+- **References.** `related` and `original-ticket` become `relate` (the
+  provenance comment keeps the direction of `original-ticket`); `parent`
+  becomes `parent`. `branches` (`repo: name`) become `branch` events with
+  the source key as alias; `merge-requests` become `mr` events with the
+  repository name in the URL (`https://HOST/OWNER/REPO/pulls/N`) as alias.
+  `--repo-alias FROM=TO` renames an alias. Every alias must be declared in
+  `zwanenzang.toml` before anything is written (`undeclared-repo`), so
+  lint reports no dangling repositories.
+- **Supporting files.** A link in an imported description that resolves
+  into the source's `docs/` copies that file to the same path in the
+  tracker and adds a comment whose `link` is that path. Only files linked
+  from imported tickets are copied, links inside the copied files are not
+  followed, and the description text is left as written. A destination
+  with different content refuses the import (`doc-conflict`).
+- **Leaving supporting files out.** The same exclude input takes `docs/`
+  path patterns beside ticket ids (`*` and `?` within one path segment,
+  matched against the whole path), so process records such as reviews and
+  stage histories need not enter the tracker while plans and contracts
+  do. A linked file a pattern matches is not copied and gets no link
+  comment; the description keeps the link text as written, and the report
+  lists it under `dropped_docs`. One input for both keeps a single
+  reviewed list of what stays behind.
+- **Re-running.** A ticket counts as imported when a live ticket carries
+  its provenance comment; re-runs skip it and import only the rest, so an
+  exclusion can be lifted later. References from newly imported tickets
+  are restored, so an earlier import only gains relations, and a parent if
+  it has none, to newly imported tickets. Excluding a ticket that is
+  already imported leaves it as it is, with a warning. Tombstoning an
+  imported ticket lets it be imported again.
+- **Source format.** The frontmatter reader accepts the subset the frozen
+  tracker writes: scalars, flow or block lists of scalars and one-level
+  maps. Anything else, a field of the wrong shape, a malformed merge
+  request URL or a duplicate id refuses the import (`invalid-source`)
+  rather than importing a misread value.

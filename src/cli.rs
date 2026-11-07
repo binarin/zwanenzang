@@ -150,6 +150,37 @@ pub enum Command {
     /// Report skipped events, concurrent changes, lost document edits,
     /// dangling repository aliases and unnamed actors. Exits 1 on issues.
     Lint,
+    /// Import tickets from another tracker.
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ImportCommand {
+    /// Import the frozen ai-workflow tracker, written as a new actor named
+    /// "ai-workflow import". Tickets already imported are skipped.
+    AiWorkflow {
+        /// The tracker checkout (holding tickets/ and docs/), or its
+        /// tickets/ directory. Only read.
+        source: PathBuf,
+        /// What to leave out, comma-separated (repeatable): ticket ids, and
+        /// `docs/` path patterns (`*`, `?`) of supporting files not to copy.
+        #[arg(long, value_delimiter = ',', value_name = "ENTRIES")]
+        exclude: Vec<String>,
+        /// A file of exclude entries, one per line; `#` starts a comment
+        /// (repeatable).
+        #[arg(long, value_name = "PATH")]
+        exclude_file: Vec<PathBuf>,
+        /// Use repository alias TO for the source's alias FROM
+        /// (repeatable).
+        #[arg(long = "repo-alias", value_name = "FROM=TO")]
+        repo_alias: Vec<String>,
+        /// Validate and report, write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -250,6 +281,7 @@ fn one(target: Ulid, op: Op) -> Plan {
     Plan {
         ops: vec![(Target::Entity(target), op)],
         blobs: Vec::new(),
+        refs: Vec::new(),
     }
 }
 
@@ -335,6 +367,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 Ok(Plan {
                     ops,
                     blobs: Vec::new(),
+                    refs: Vec::new(),
                 })
             })?;
             let created = w
@@ -435,6 +468,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                             }),
                         )],
                         blobs: vec![text],
+                        refs: Vec::new(),
                     })
                 } else {
                     Ok(one(
@@ -470,6 +504,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                         }),
                     )],
                     blobs: vec![text],
+                    refs: Vec::new(),
                 })
             })
         }
@@ -524,6 +559,40 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 .map(|t| view.summary(t))
                 .collect();
             Ok((json!({ "tickets": items }), 0))
+        }
+        Command::Import {
+            command:
+                ImportCommand::AiWorkflow {
+                    source,
+                    exclude,
+                    exclude_file,
+                    repo_alias,
+                    dry_run,
+                },
+        } => {
+            let mut opts = crate::import::Options {
+                source,
+                dry_run,
+                ..Default::default()
+            };
+            for entry in exclude {
+                opts.add_exclude(&entry)?;
+            }
+            for path in exclude_file {
+                let text = std::fs::read_to_string(&path).map_err(Error::io(&path))?;
+                for entry in crate::import::parse_exclude_file(&text)? {
+                    opts.add_exclude(&entry)?;
+                }
+            }
+            for pair in repo_alias {
+                let (from, to) = pair.split_once('=').ok_or_else(|| {
+                    Error::InvalidArgument(format!("--repo-alias wants FROM=TO, not {pair:?}"))
+                })?;
+                opts.repo_aliases
+                    .insert(from.trim().to_string(), to.trim().to_string());
+            }
+            let report = crate::import::import(&ctx.tracker, ctx.clock, &opts)?;
+            Ok((report, 0))
         }
         Command::Lint => {
             let rp = ctx.tracker.load()?;
