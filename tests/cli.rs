@@ -414,6 +414,67 @@ fn documents_compare_and_set() {
 }
 
 #[test]
+fn query_filters_derived_state() {
+    let d = tracker();
+    let p = d.path();
+    let root = id(&ok(p, &["create", "Root epic", "--kind", "feature"]));
+    let mid = id(&ok(
+        p,
+        &["create", "Middle", "--parent", &root, "--tag", "x"],
+    ));
+    let leaf = id(&ok(
+        p,
+        &["create", "Leaf BUG here", "--parent", &mid, "--tag", "x"],
+    ));
+    let other = id(&ok(p, &["create", "Other", "--status", "doing"]));
+    ok(p, &["branch", &leaf, "app", "feature/leaf"]);
+    ok(
+        p,
+        &["mr", &other, "lib", "https://forge.example/lib/pulls/2"],
+    );
+    ok(p, &["archive", &other]);
+    let ids = |args: &[&str]| -> Vec<String> {
+        let mut full = vec!["query"];
+        full.extend_from_slice(args);
+        ok(p, &full)["tickets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(ids(&[]), vec![root.clone(), mid.clone(), leaf.clone()]);
+    assert_eq!(ids(&["--parent", "none"]), vec![root.clone()]);
+    assert_eq!(ids(&["--parent", &mid]), vec![leaf.clone()]);
+    assert_eq!(ids(&["--under", &root]), vec![mid.clone(), leaf.clone()]);
+    assert_eq!(
+        ids(&["--under", &root, "--tag", "x", "--title", "bug"]),
+        vec![leaf.clone()]
+    );
+    assert_eq!(ids(&["--kind", "feature"]), vec![root.clone()]);
+    assert_eq!(ids(&["--repo", "app"]), vec![leaf.clone()]);
+    // Archived tickets need --all, unless they are named.
+    assert!(ids(&["--repo", "lib"]).is_empty());
+    assert_eq!(ids(&["--repo", "lib", "--all"]), vec![other.clone()]);
+    assert_eq!(
+        ids(&[&other, &root, &other]),
+        vec![root.clone(), other.clone()]
+    );
+    assert_eq!(
+        ids(&[&other, &root, "--status", "doing"]),
+        vec![other.clone()]
+    );
+    // Full objects by default, summaries on request.
+    let full = ok(p, &["query", &leaf]);
+    assert_eq!(full["tickets"][0], ok(p, &["show", &leaf]));
+    let short = ok(p, &["query", &leaf, "--summary"]);
+    assert!(short["tickets"][0].get("comments").is_none());
+    assert_eq!(short["tickets"][0]["title"], "Leaf BUG here");
+    err(p, &["query", "ZZZZ"], "unknown-ticket");
+    err(p, &["query", "--under", "ZZZZ"], "unknown-ticket");
+}
+
+#[test]
 fn archive_and_tombstone_leave_the_default_list() {
     let d = tracker();
     let p = d.path();

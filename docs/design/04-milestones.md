@@ -43,6 +43,8 @@ open questions that block milestone 2 are answered; the rest stay listed.
 - Number assignment at publish; offline behaviour; actor id in clone config.
 - Batched JSON operations for clients: read a scope's worth of tickets and
   events after cursors in one call; apply a list of changes in one call.
+  Milestone 2's `query` covers the ticket half; the per-ticket event
+  cursors are new here.
 - Emacs client against a local desktop clone: scope roots, pull, push,
   create, sync state in properties, Org wins, conflict tag, foreign and
   duplicate id handling, archive as absence.

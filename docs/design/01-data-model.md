@@ -290,6 +290,16 @@ none changes a decision above.
   interrupted write), the next append starts with one, so lines never run
   together; the partial line is reported as malformed.
 
+- **Query reads derived state only.** `query` filters tickets by fields
+  of derived state (status, kind, tags, parent, ancestry, repository, title
+  text, named tickets) and returns full ticket objects. Filters are flags
+  combined with "and", not an expression language; the clients known so
+  far ask for a scope's tickets or a few named ones, and an "or" across
+  fields can be two calls. Events after a cursor are left to milestone 3's
+  batched read, because the org client keeps one cursor per ticket and
+  that read takes the whole set of cursors in one call; a single
+  `--after` on `query` would not serve it.
+
 #### Import from the frozen ai-workflow tracker
 
 - **What is imported is the caller's choice.** The importer takes the ids
