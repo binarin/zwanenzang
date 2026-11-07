@@ -325,6 +325,27 @@
         (let ((last-command nil)) (undo))
         (should (equal (buffer-string) unfolded-start))))))
 
+(ert-deftest zwanenzang-open-shows-hidden-document ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((id (zwanenzang-test-create trk "With status")))
+      (zwanenzang-test-set-doc trk id "status" "Agent summary\n")
+      (zwanenzang-test-pull)
+      (zwanenzang-test-goto id)
+      (search-forward "[[zwanenzang:")
+      (let ((shown (zwanenzang-open)))
+        (unwind-protect
+            (with-current-buffer shown
+              (should (equal (buffer-string) "Agent summary\n"))
+              (should buffer-read-only))
+          (kill-buffer shown)))
+      ;; Following the link through Org works too.
+      (with-current-buffer buf
+        (zwanenzang-test-goto id)
+        (search-forward "[[zwanenzang:")
+        (org-open-at-point)
+        (should (get-buffer "*zwanenzang ZZ-0001 status*"))
+        (kill-buffer "*zwanenzang ZZ-0001 status*")))))
+
 (ert-deftest zwanenzang-pull-after-reset-compares-in-full-without-duplicate-comments ()
   ;; An event that sorts before one already pulled arrives later, as a
   ;; merge from another clone would deliver it.

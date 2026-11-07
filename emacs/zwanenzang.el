@@ -1096,5 +1096,40 @@ report appended to the `*zwanenzang*' buffer."
     (user-error "zwanenzang: not an Org buffer"))
   (zwanenzang--pull-scope (zwanenzang--scope-root)))
 
+;;;; Hidden documents
+
+(defun zwanenzang--link-follow (path _arg)
+  "Open PATH, `<ticket id>/<name>', the target of a zwanenzang: link."
+  (zwanenzang-open path))
+
+(org-link-set-parameters "zwanenzang" :follow #'zwanenzang--link-follow)
+
+(defun zwanenzang-open (&optional path)
+  "Show the document a zwanenzang: link names, read-only.
+PATH is `<ticket id>/<document name>'; interactively, the link at point.
+The tracker is the one of the scope containing point."
+  (interactive)
+  (unless path
+    (let ((context (org-element-context)))
+      (unless (and (eq (org-element-type context) 'link)
+                   (equal (org-element-property :type context) "zwanenzang"))
+        (user-error "zwanenzang: no zwanenzang: link at point"))
+      (setq path (org-element-property :path context))))
+  (unless (string-match "\\`\\([^/]+\\)/\\(.+\\)\\'" path)
+    (user-error "zwanenzang: malformed link zwanenzang:%s" path))
+  (let* ((id (match-string 1 path))
+         (name (match-string 2 path))
+         (doc (funcall zwanenzang--call (zwanenzang--scope-directory (zwanenzang--scope-root))
+                       (list "doc" "get" id name)))
+         (buffer (get-buffer-create (format "*zwanenzang %s %s*" (alist-get 'display doc) name))))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (alist-get 'text doc))
+        (goto-char (point-min)))
+      (special-mode))
+    (pop-to-buffer buffer)
+    buffer))
+
 (provide 'zwanenzang)
 ;;; zwanenzang.el ends here
