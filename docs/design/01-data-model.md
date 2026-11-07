@@ -169,7 +169,9 @@ none changes a decision above.
 - **No nested trackers.** `init` refuses a directory that is a tracker or
   lies anywhere inside one (`already-initialized`, naming the existing
   root), since a nested tracker would capture the upward search of every
-  command run below it.
+  command run below it. `init` takes the tracker lock like any mutating
+  command and repeats the check under it, so of several concurrent `init`s
+  in one directory exactly one succeeds.
 - **Tracker root entity.** `init` generates a ULID for the tracker root and
   stores it as `id` in `zwanenzang.toml`. `actor` and `config` events must
   name that entity; ticket operations must not.

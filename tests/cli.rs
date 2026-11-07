@@ -41,6 +41,36 @@ fn init_writes_tracker_files() {
 }
 
 #[test]
+fn concurrent_inits_one_wins_and_reports_what_is_on_disk() {
+    for _ in 0..10 {
+        let d = disposable_dir();
+        let p = d.path();
+        let outs: Vec<Out> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..6)
+                .map(|_| s.spawn(|| run_in(p, &["init", "--prefix", "ZZ"], "")))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let winners: Vec<&Out> = outs.iter().filter(|o| o.code == 0).collect();
+        assert_eq!(winners.len(), 1, "exactly one init succeeds");
+        for o in outs.iter().filter(|o| o.code != 0) {
+            assert_eq!(o.code, 1);
+            assert_eq!(o.json["error"]["code"], "already-initialized");
+        }
+        let won = &winners[0].json;
+        let toml = read(p, "zwanenzang.toml");
+        assert!(
+            toml.contains(&format!(
+                "id = \"{}\"",
+                won["tracker"]["id"].as_str().unwrap()
+            )),
+            "reported tracker id is the one on disk: {toml}"
+        );
+        assert_eq!(read(p, ".zwanenzang/actor").trim(), won["actor"]);
+    }
+}
+
+#[test]
 fn commands_outside_a_tracker_fail() {
     let d = disposable_dir();
     // Otherwise the binary would open, and `create` write, that tracker.

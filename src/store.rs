@@ -157,6 +157,20 @@ fn write_file_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     }
 }
 
+/// Takes the exclusive lock file in the local directory `local`, blocking
+/// until it is free.
+fn lock_in(local: &Path) -> Result<LockGuard> {
+    let path = local.join("lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(Error::io(&path))?;
+    file.lock().map_err(Error::io(&path))?;
+    Ok(LockGuard { file })
+}
+
 impl Tracker {
     /// Creates a tracker in `dir`, which is created if missing. Refused when
     /// `dir` is a tracker or lies inside one: a nested tracker would capture
@@ -176,7 +190,17 @@ impl Tracker {
             path: config_path.clone(),
             message,
         })?;
-        for sub in ["events", "blobs", LOCAL_DIR] {
+        // init is a mutating command and takes the lock like the others.
+        // The checks above only spare a refused init from creating
+        // anything; they are repeated under the lock, so of two concurrent
+        // inits exactly one writes and the other is refused.
+        let local = root.join(LOCAL_DIR);
+        ensure_dir(&local)?;
+        let _lock = lock_in(&local)?;
+        if let Some(existing) = enclosing_tracker(&root) {
+            return Err(Error::AlreadyInitialized(existing));
+        }
+        for sub in ["events", "blobs"] {
             ensure_dir(&root.join(sub))?;
         }
         ensure_line(&root.join(".gitattributes"), GITATTRIBUTES_LINE)?;
@@ -224,15 +248,7 @@ impl Tracker {
 
     /// Takes the exclusive tracker lock, blocking until it is free.
     pub fn lock(&self) -> Result<LockGuard> {
-        let path = self.local_dir()?.join("lock");
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .map_err(Error::io(&path))?;
-        file.lock().map_err(Error::io(&path))?;
-        Ok(LockGuard { file })
+        lock_in(&self.local_dir()?)
     }
 
     /// This clone's actor id. With `create`, a missing id is generated and
