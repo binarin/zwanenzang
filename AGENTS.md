@@ -7,7 +7,7 @@ design decisions.
 
 ## Repository and conventions
 
-- `main` is integrated through pull requests on the forge
+- `master` is integrated through pull requests on the forge
   (`forgejo.lynx-lizard.ts.net/binarin/zwanenzang`). It mirrors to GitHub, so
   nothing private goes in this repository. This project's own tracker data is
   in the separate private repository `zwanenzang-tracker`.
@@ -56,7 +56,21 @@ contract.
 
 ## Testing
 
-Unit tests on the event core against temporary directories. Git integration
-tests create throwaway repositories and a bare remote on disk; never touch a
-real tracker. Fixture-based tests import the frozen tracker and assert on
-derived state.
+Unit tests on the event core run against temporary directories.
+
+Git integration tests create everything they touch: a bare repository acting
+as the remote and one or more clones acting as machines or agents, all inside
+one temporary directory that is deleted afterwards. They drive the CLI against
+those clones and assert on derived state, union merge, numbering and retry.
+They never touch a real tracker.
+
+That rule is enforced, not assumed. A repository is only eligible for tests if
+it carries clear markers of being disposable: its path is under the system
+temporary directory and the directory name ends in `-test-repo`. Any test
+helper that opens, writes to or pushes from a repository checks both markers
+first and refuses otherwise. The CLI itself keeps no test mode and no
+environment variable that bypasses the check; a test that needs a repository
+creates one that satisfies the markers.
+
+Fixture-based tests import the frozen tracker into such a repository and
+assert on what replay produces.
