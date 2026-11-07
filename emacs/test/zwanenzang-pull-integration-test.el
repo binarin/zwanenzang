@@ -366,6 +366,21 @@
         (should (get-buffer "*zwanenzang ZZ-0001 status*"))
         (kill-buffer "*zwanenzang ZZ-0001 status*")))))
 
+(ert-deftest zwanenzang-pull-never-hides-the-description ()
+  (zwanenzang-test-with-scope (trk buf (replace-regexp-in-string
+                                        ":ZWANENZANG_HIDE_DOCS: status"
+                                        ":ZWANENZANG_HIDE_DOCS: status description"
+                                        zwanenzang-test--org t t))
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-set-doc trk id "description" "Shown\n")
+      (zwanenzang-test-clear-report)
+      (zwanenzang-test-pull)
+      (let ((entry (zwanenzang-test-entry id)))
+        (should-not (string-match-p "ZWANENZANG_HIDDEN\\|zwanenzang:" entry))
+        (should (string-match-p "\nShown\n\\'" entry)))
+      (should (string-match-p "the description cannot be hidden; ignored"
+                              (zwanenzang-test-report))))))
+
 (ert-deftest zwanenzang-pull-after-reset-compares-in-full-without-duplicate-comments ()
   ;; An event that sorts before one already pulled arrives later, as a
   ;; merge from another clone would deliver it.

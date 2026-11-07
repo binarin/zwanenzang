@@ -1069,10 +1069,15 @@ and the buffer is not saved."
                                               org-todo-keywords-1)))
              (setf (zwanenzang--pull-map pull) (car km)
                    (zwanenzang--pull-hidden pull)
-                   (split-string (or (org-entry-get root "ZWANENZANG_HIDE_DOCS") ""))
+                   (remove "description"
+                           (split-string (or (org-entry-get root "ZWANENZANG_HIDE_DOCS") "")))
                    (zwanenzang--pull-actors pull) (alist-get 'actors tracker)
                    (zwanenzang--pull-tracker-dir pull) dir)
-             (dolist (p (cdr km)) (zwanenzang--pull-line pull "%s" p)))
+             (dolist (p (cdr km)) (zwanenzang--pull-line pull "%s" p))
+             (when (member "description"
+                           (split-string (or (org-entry-get root "ZWANENZANG_HIDE_DOCS") "")))
+               (zwanenzang--pull-line
+                pull "ZWANENZANG_HIDE_DOCS: the description cannot be hidden; ignored")))
            (when (eq (alist-get 'reset result) t)
              (zwanenzang--pull-line
               pull "history changed under the scope cursor: compared in full"))

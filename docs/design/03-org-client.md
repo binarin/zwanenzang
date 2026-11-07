@@ -339,7 +339,8 @@ Every property the client owns starts with `ZWANENZANG`.
   in a `:ZWANENZANG_HIDDEN:` drawer next to the comments drawer,
   `[[zwanenzang:<id>/<doc>][<doc> (hidden)]]` for each hidden document the
   ticket has, rewritten from tracker state. Being a drawer, it is not part
-  of the description.
+  of the description. `description` in `ZWANENZANG_HIDE_DOCS` is
+  reported and ignored.
 - A comment's actor is its display name from `read`'s `tracker.actors`,
   or the first ten characters of its id when it declared none.
 
