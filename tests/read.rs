@@ -149,6 +149,34 @@ fn late_earlier_event_resets_cursors_instead_of_silently_missing_it() {
 }
 
 #[test]
+fn tracker_lists_declared_actor_names_only() {
+    let d = tracker();
+    let p = d.path();
+    let a = id(&ok(p, &["create", "named"]));
+    let writer = actor_of(p);
+    // An actor with an accepted event but no declaration has no name.
+    let undeclared = "00000000000000000000000001";
+    let base = ok(p, &["show", &a])["last_event"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let next =
+        zwanenzang::ulid::Ulid(zwanenzang::ulid::Ulid::parse_canonical(&base).unwrap().0 + 1);
+    append_raw(
+        p,
+        undeclared,
+        &[
+            json!({"id": next.to_canonical(), "actor": undeclared, "parent": base,
+        "ts": "2026-11-07T00:00:00Z", "entity": a, "op": "tag", "data": {"tag": "x"}})
+            .to_string(),
+        ],
+    );
+    let out = scope(p, json!({}));
+    assert_eq!(out["tracker"]["actors"], json!({&writer: "tester"}));
+    assert_eq!(entry(&out, &a)["ticket"]["tags"], json!(["x"]));
+}
+
+#[test]
 fn invalid_requests_fail_without_writing_and_read_needs_no_git() {
     let d = tracker();
     let p = d.path();

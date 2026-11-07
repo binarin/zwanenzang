@@ -211,8 +211,9 @@ Known tickets are returned even when archived or tombstoned, so the client
 can handle their removal. Absent tickets are discovered only when live and
 affected by events since `since`; null discovers all live tickets. Each
 result holds the full ticket, current document text, accepted events after
-its cursor, and the next cursor. A scope read also returns tracker identity
-and the replayed vocabularies, so a client can validate its keyword map.
+its cursor, and the next cursor. A scope read also returns tracker identity,
+the replayed vocabularies, so a client can validate its keyword map, and
+the declared actor names, so it can name comment authors.
 The exact JSON is in [cli-json](../cli-json.md).
 
 Per-ticket history includes events that affect its visible state from the
