@@ -14,7 +14,7 @@ pub enum Error {
     },
     #[error("no zwanenzang.toml found in {0} or any parent directory")]
     NotATracker(PathBuf),
-    #[error("{0} already holds a tracker")]
+    #[error("a tracker already exists at {0}")]
     AlreadyInitialized(PathBuf),
     #[error("{path}: {message}")]
     Config { path: PathBuf, message: String },

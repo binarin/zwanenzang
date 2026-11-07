@@ -66,6 +66,18 @@ pub fn find_root(start: &Path) -> Result<PathBuf> {
     }
 }
 
+/// The tracker holding `dir` or its nearest existing ancestor, if any.
+fn enclosing_tracker(dir: &Path) -> Option<PathBuf> {
+    let mut probe = dir;
+    while !probe.exists() {
+        probe = match probe.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+    }
+    find_root(probe).ok()
+}
+
 /// Appends `line` to a text file unless the file already has it.
 fn ensure_line(path: &Path, line: &str) -> Result<()> {
     let existing = match fs::read_to_string(path) {
@@ -118,8 +130,13 @@ fn write_file_synced(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 impl Tracker {
-    /// Creates a tracker in `dir`, which is created if missing.
+    /// Creates a tracker in `dir`, which is created if missing. Refused when
+    /// `dir` is a tracker or lies inside one: a nested tracker would capture
+    /// the upward search of every command run below it.
     pub fn init(dir: &Path, name: &str, prefix: &str, clock: &mut dyn Clock) -> Result<Tracker> {
+        if let Some(existing) = enclosing_tracker(dir) {
+            return Err(Error::AlreadyInitialized(existing));
+        }
         fs::create_dir_all(dir).map_err(Error::io(dir))?;
         let root = fs::canonicalize(dir).map_err(Error::io(dir))?;
         let config_path = root.join(CONFIG_FILE);

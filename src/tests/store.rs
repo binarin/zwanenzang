@@ -45,6 +45,26 @@ fn init_twice_refused() {
 }
 
 #[test]
+fn init_inside_a_tracker_refused() {
+    let dir = disposable_dir();
+    let t = new_tracker(&dir);
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    for target in [sub.clone(), t.events_dir(), sub.join("not/yet/there")] {
+        let err = Tracker::init(&target, "x", "QQ", &mut init_clock()).unwrap_err();
+        match err {
+            Error::AlreadyInitialized(found) => assert_eq!(found, t.root, "{target:?}"),
+            e => panic!("{target:?}: {e}"),
+        }
+    }
+    // Nothing was created by the refused attempts.
+    assert!(!sub.join("not").exists());
+    assert_eq!(fs::read_dir(&sub).unwrap().count(), 0);
+    assert!(log_snapshot(&t).is_empty());
+    assert!(!t.events_dir().join(CONFIG_FILE).exists());
+}
+
+#[test]
 fn init_keeps_existing_gitattributes() {
     let dir = disposable_dir();
     assert_disposable(dir.path());

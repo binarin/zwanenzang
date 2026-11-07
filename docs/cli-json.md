@@ -13,7 +13,8 @@ zwanenzang [-C DIR | --tracker DIR] [--actor-name NAME] <command> ...
 
 - `-C DIR`: start the tracker search in `DIR` instead of the current
   directory. The tracker is the nearest directory, upward, that holds
-  `zwanenzang.toml`. For `init`, `DIR` is where the tracker is created.
+  `zwanenzang.toml`. For `init`, `DIR` is where the tracker is created;
+  it must not be in or below an existing tracker.
 - `--actor-name NAME`: display name declared by this clone's first write.
   Defaults to `$USER`, then `unknown`. Ignored once the actor is declared.
 
@@ -211,7 +212,7 @@ Command errors:
 | code | meaning |
 |---|---|
 | `not-a-tracker` | no `zwanenzang.toml` here or above |
-| `already-initialized` | `init` in an existing tracker |
+| `already-initialized` | `init` in an existing tracker or anywhere inside one |
 | `config` | `zwanenzang.toml` or the actor id file is invalid, or `init` got a bad prefix or name |
 | `unknown-ticket`, `ambiguous-ticket` | a ticket reference did not resolve to one ticket |
 | `unknown-document` | `doc get` of a document the ticket does not have |

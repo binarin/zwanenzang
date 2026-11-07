@@ -31,6 +31,11 @@ fn init_writes_tracker_files() {
     assert!(d.path().join("events").is_dir());
     assert!(d.path().join("blobs").is_dir());
     err(d.path(), &["init", "--prefix", "ZZ"], "already-initialized");
+    // Nor anywhere inside the tracker.
+    let sub = d.path().join("sub-test-repo");
+    std::fs::create_dir(&sub).unwrap();
+    err(&sub, &["init", "--prefix", "QQ"], "already-initialized");
+    assert!(!sub.join("zwanenzang.toml").exists());
     let e = disposable_dir();
     err(e.path(), &["init", "--prefix", "zz"], "config");
 }
