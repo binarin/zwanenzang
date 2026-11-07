@@ -32,11 +32,9 @@
           runHook postBuild
         '';
         doCheck = false;
-        dontCargoInstall = true;
         installPhase = ''
           touch $out
         '';
-        postInstall = "";
         dontFixup = true;
       });
     };
