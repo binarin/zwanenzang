@@ -293,6 +293,19 @@ fn comments_inline_and_as_blob() {
     assert_eq!(comments[1]["text"], long.as_str());
     assert_eq!(comments[1]["blob"], blob.as_str());
     err(p, &["comment", &a, "   "], "invalid-comment");
+    // Whitespace long enough to go to a blob is refused the same way, and
+    // nothing is stored.
+    let before = logs(p);
+    let blobs_before = std::fs::read_dir(p.join("blobs")).unwrap().count();
+    let spaces = " ".repeat(3000);
+    let o = run_in(p, &["comment", &a], &spaces);
+    assert_eq!(o.code, 1, "{}", o.json);
+    assert_eq!(o.json["error"]["code"], "invalid-comment");
+    assert_eq!(logs(p), before);
+    assert_eq!(
+        std::fs::read_dir(p.join("blobs")).unwrap().count(),
+        blobs_before
+    );
 }
 
 #[test]

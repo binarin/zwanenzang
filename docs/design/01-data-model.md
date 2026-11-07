@@ -210,7 +210,10 @@ none changes a decision above.
   timestamp part). The CLI accepts a full ULID, any unique prefix of at least
   4 characters (case-insensitive), or a number.
 - **Inline comment limit.** The CLI stores comment text inline up to 2048
-  bytes and as a blob above that.
+  bytes and as a blob above that. The storage form does not change what is
+  accepted: a live write refuses empty or whitespace-only text with
+  `invalid-comment` in both forms. Replay checks inline text only, since it
+  does not read blobs.
 - **Documents.** The first version of a document has `base: null`. The CLI's
   `doc set` requires the caller to state the base it read, including
   `null`, so an agent cannot overwrite without naming a version.

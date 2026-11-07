@@ -66,8 +66,9 @@ them; any change to them fails with `tombstoned`.
 | `lint` | nothing | lint report |
 
 `comment` reads its text from the argument, from `--file`, or from stdin.
-Text up to 2048 bytes is stored inline; longer text goes to a blob. `doc set`
-reads the new text from `--file` or stdin.
+Text up to 2048 bytes is stored inline; longer text goes to a blob. Text that
+is empty or only whitespace is refused with `invalid-comment` whichever way it
+would be stored. `doc set` reads the new text from `--file` or stdin.
 
 `list` shows tickets that are neither archived nor tombstoned unless `--all`
 is given. Repeated `--status` and `--kind` match any of the values; repeated

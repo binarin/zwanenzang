@@ -15,6 +15,7 @@ use crate::event::{
 };
 use crate::lint::lint;
 use crate::replay::Replay;
+use crate::state::{RejectCode, Rejection};
 use crate::store::{Tracker, blob_name, find_root};
 use crate::ulid::Ulid;
 use crate::view::View;
@@ -413,6 +414,15 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 None => read_text(file.as_deref(), stdin)?,
             };
             ctx.mutate(&ticket, |_, id| {
+                // Checked here as well as in `apply`, which cannot read a
+                // blob's text: whether text is stored inline or as a blob
+                // must not change what is accepted.
+                if text.trim().is_empty() {
+                    return Err(Error::Rejected(Rejection {
+                        code: RejectCode::InvalidComment,
+                        message: "comment text is empty".into(),
+                    }));
+                }
                 if text.len() > INLINE_COMMENT_LIMIT {
                     let blob = blob_name(&text);
                     Ok(Plan {
