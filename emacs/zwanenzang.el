@@ -829,9 +829,10 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
         ;; draft until the keyword changes.
         (let* ((remote (cdr (assoc status map)))
                (base (zwanenzang--sync-get sync 'status))
-               (decision (zwanenzang--merge keyword
-                                            (if (eq base :unknown) base (cdr (assoc base map)))
-                                            remote)))
+               ;; A synced status the map no longer shows says nothing
+               ;; about which keyword Org had then.
+               (base-kw (if fresh keyword (or (cdr (assoc base map)) :unknown)))
+               (decision (zwanenzang--merge keyword base-kw remote)))
           (when (settle "status" decision (format "tracker has %s (%s); Org keyword kept"
                                                   status remote)
                         nil 'status status)

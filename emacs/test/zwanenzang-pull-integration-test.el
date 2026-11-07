@@ -197,6 +197,26 @@
       (should (string-match-p (format "- parent: tracker parent is %s; Org nesting kept" p2)
                               (zwanenzang-test-entry child))))))
 
+(ert-deftest zwanenzang-pull-conflicts-when-the-map-lost-the-synced-status ()
+  ;; The human removed the keyword; the map no longer shows the synced
+  ;; status, so nothing says Org still has it: no keyword reappears.
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((id (zwanenzang-test-create trk "Draft")))
+      (zwanenzang-test-pull)
+      (should (string-match-p "status=draft " (zwanenzang-test-property id "ZWANENZANG_SYNC")))
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (zwanenzang--set-heading nil "Draft" nil)
+        (goto-char (point-min))
+        (outline-next-heading)
+        (org-entry-put nil "ZWANENZANG_KEYWORDS"
+                       "TODO=todo NEXT=doing,review WAIT=blocked DONE=done CNCL=cancelled"))
+      (zwanenzang-test-cli trk "status" id "todo")
+      (zwanenzang-test-pull)
+      (should (string-match-p "\\`\\*\\*\\* Draft +:zz_conflict:\\'" (zwanenzang-test-heading id)))
+      (should (string-match-p "- status: tracker has todo (TODO); Org keyword kept"
+                              (zwanenzang-test-entry id))))))
+
 (ert-deftest zwanenzang-pull-leaves-archived-and-flags-tombstoned ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let ((archived (zwanenzang-test-create trk "Archived"))

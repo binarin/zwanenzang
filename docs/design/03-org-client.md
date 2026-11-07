@@ -370,7 +370,8 @@ tracker.
   the skipped remote value goes in the conflict drawer. A field with no
   recorded sync state counts as changed on both sides unless the values
   agree. Status is compared as keywords, through the map, so a draft
-  shown as TODO stays draft. Tags exclude `zz_conflict` and Org's
+  shown as TODO stays draft; a synced status the map no longer covers
+  counts as unknown. Tags exclude `zz_conflict` and Org's
   `ARCHIVE`, which are never tracker tags.
 - The conflict drawer and tag are recomputed by every pull: they hold
   what this pull could not apply, and disappear once Org agrees with the
