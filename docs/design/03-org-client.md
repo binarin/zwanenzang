@@ -35,7 +35,7 @@ Mapping between heading and ticket:
 
 | Org | Tracker |
 |-----|---------|
-| TODO keyword | status, via a per-tracker keyword map |
+| TODO keyword | status, via the scope's keyword map |
 | heading title | title |
 | nesting under another ticket heading | parent |
 | nesting under a non-ticket heading | nothing |
@@ -44,6 +44,51 @@ Mapping between heading and ticket:
 | subheadings marked with a document property | named documents |
 | a read-only drawer or subtree | comments, newest last |
 | properties | number, relations, branches, MRs, repo links |
+
+## Keyword map
+
+The map between TODO keywords and statuses lives in org, on the scope root,
+because the keywords are the human's: `#+TODO` lines and `org-todo-keywords`
+differ between people and files, and the tracker's vocabulary does not.
+
+```
+:ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing,review WAIT=blocked DONE=done CNCL=cancelled
+```
+
+- Each entry is `KEYWORD=status[,status...]`. The first status is what a
+  push writes when the human sets that keyword; every listed status is
+  shown with that keyword on pull. So several statuses can share a
+  keyword, and every status in the tracker's vocabulary must appear exactly
+  once; doctor reports a status with no keyword or with two.
+- A status is pushed only when the keyword changed since the heading's sync
+  state. A ticket pulled as `draft` shows TODO and stays `draft` until the
+  human actually changes its keyword.
+- Without the property, a keyword maps to the status of the same name,
+  ignoring case, and nothing else is mapped.
+- An unmapped keyword blocks that heading's push: the heading gets the
+  conflict tag and a note naming the keyword, and nothing is written for it
+  until the map or the keyword changes. A fallback status would record
+  something the human did not choose. Removing the keyword from a ticket
+  heading counts as unmapped too.
+- A pulled status the map does not cover (the vocabulary grew, say) is
+  treated the same way, on that heading only.
+
+Terminal statuses are the ones mapped from org's done-state keywords (those
+after `|`), so the tracker needs no list of its own.
+
+## Hidden documents
+
+Agents may keep documents the human does not want in org, such as a
+running status summary. The scope root lists them:
+
+```
+:ZWANENZANG_HIDE_DOCS: status plan
+```
+
+A hidden document is never pulled or pushed and has no sync state, so it
+cannot conflict. The heading shows a single link line in place of each
+hidden document, which opens it through the CLI, so nothing disappears
+without trace. The description cannot be hidden.
 
 ## Sync state per heading
 
@@ -87,10 +132,12 @@ collision; the agent's change stays in history.
 
 ## Create
 
-A heading inside a scope with no identity property is a new ticket on push.
-The client writes the identity property immediately and the number property
-after publish. Capturing with org-capture into any scope is therefore ticket
-creation.
+A heading inside a scope with a TODO keyword and no identity property is a
+new ticket on push. Headings without a keyword are the human's structure and
+never become tickets, so grouping headings inside a scope are safe. The
+client writes the identity property immediately and the number property
+after publish. Capturing a TODO with org-capture into any scope is
+therefore ticket creation.
 
 A heading inside a scope with an identity property the tracker does not know
 is **not** created. It is reported as foreign or stale, and the client offers
@@ -117,6 +164,12 @@ archived ticket is simply absent. Rules:
 - When a heading is archived with org-archive, an archive hook may emit an
   `archive` event so the tracker knows. If the hook did not run, the tracker
   still learns nothing and the ticket stays as it was, which is safe.
+- Archiving an open ticket also closes it. If the heading's keyword is a
+  done state (DONE, CNCL) its status is pushed first; otherwise the hook
+  sets the status mapped from the first done-state keyword (DONE), so
+  archiving never prompts for a note. Then it emits `archive`. Status and
+  the archived flag stay separate: the flag is what takes a ticket out of
+  default views (`list`, `query` without `--all`), whatever its status.
 - The re-insertion rule in Pull is what brings an archived-but-active ticket
   back when it changes.
 
@@ -141,16 +194,14 @@ the foreign-id rule above. History does not travel, which is accepted.
 Pull one heading, pull scope, pull all scopes; push one heading, push scope,
 push all scopes; sync (pull then push then pull); create from heading; open a
 linked file or the forge page; doctor (duplicate ids, foreign ids, orphaned
-sync properties, scope roots pointing at the same tracker).
+sync properties, scope roots pointing at the same tracker, keyword maps that
+leave a status without a keyword or give it two).
 
 The elisp stays thin. The CLI exposes batched JSON operations so one tramp
 round trip serves a whole scope.
 
 ## Open questions
 
-- Keyword map defaults, and whether unmapped keywords block push or map to a
-  fallback status.
-- Where documents that the human never wants to see in org should go. A
-  per-scope exclusion list is probably enough.
-- Whether the archive hook should also set a terminal status when the
-  archived ticket is still open, or leave that to the human.
+None at present. The keyword map, unmapped keywords, ticket headings needing
+a keyword, hidden documents and closing on archive were decided 2026-11-07
+(sections above).

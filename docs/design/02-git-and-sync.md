@@ -94,11 +94,32 @@ branch matches the log.
 The forge wiki repository is an alternative target for the same output if
 sidebar navigation turns out to matter.
 
+## Human checkouts
+
+A human may keep a separate checkout of the tracker to read or edit by hand,
+for instance to browse `docs/` or the logs. The CLI's clone keeps it current:
+
+- The clone lists such checkouts in its local git configuration,
+  `zwanenzang.checkout` (one value per path, `git config --add`). Nothing
+  outside the clone records them.
+- After every sync, each listed checkout is fast-forwarded to what has been
+  published: the upstream branch as just fetched or pushed, or the clone's
+  `HEAD` when it has no upstream. Unpushed commits are never handed out,
+  because a later rebase rewrites them and the checkout could then no
+  longer fast-forward.
+- Only when it is safe: the checkout is a repository, on the same branch,
+  with a clean work tree and index, and its `HEAD` is an ancestor of the
+  target. The commits come from the clone's own repository by path, so no
+  network is needed. Anything else leaves the checkout untouched and is
+  reported in the sync result with the reason; it is never an error and
+  never blocks the write.
+
+Decided 2026-11-07, replacing the earlier open question (leaning "no such
+checkout"). Not implemented yet.
+
 ## Open questions
 
-- Whether `sync` should also fast-forward a human convenience checkout of the
-  tracker. Current leaning: no such checkout exists; humans read the rendered
-  branch or org.
+None at present.
 
 ### Choices made while implementing milestone 3
 

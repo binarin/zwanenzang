@@ -41,6 +41,7 @@ open questions that block milestone 2 are answered; the rest stay listed.
 
 - Owned clone, flock, commit per mutation, fetch, rebase, push, bounded retry.
 - Number assignment at publish; offline behaviour; actor id in clone config.
+- Fast-forward the human checkouts a clone lists after each sync.
 - Batched JSON operations for clients: read a scope's worth of tickets and
   events after cursors in one call; apply a list of changes in one call.
   Milestone 2's `query` covers the ticket half; the per-ticket event
