@@ -1,0 +1,154 @@
+# Data model
+
+## Repository layout
+
+```
+zwanenzang.toml          tracker configuration (prefix, name, vocabularies, repos)
+.gitattributes           events/*.jsonl merge=union
+events/<actor>.jsonl     one append-only log per actor
+blobs/<sha256>           content-addressed text of document versions
+docs/                    optional bulky supporting files, linked from tickets
+```
+
+Nothing else is a source. Derived state is computed in memory on every
+invocation; thousands of events replay in milliseconds in Rust, so no cache
+is planned. If one becomes necessary it lives in a gitignored directory inside
+the clone, never outside it.
+
+## Events
+
+One JSON object per line. Lines are never edited, reordered, deduplicated or
+deleted once published. One id is one byte sequence; union merge depends on it.
+
+```json
+{"id":"01JC3V7K9QZ8M4R2T6W0XNPB5A",
+ "actor":"01JC3TZZ0R5F6G7H8J9KMNPQRS",
+ "parent":"01JC3V6H2ABCDEFGHJKMNPQRST",
+ "ts":"2026-11-07T12:34:56Z",
+ "entity":"01JC3V5N0TICKETULIDXXXXXXX",
+ "op":"status",
+ "data":{"to":"doing"}}
+```
+
+- **id**: ULID, also a hybrid logical clock. A new id must sort after the
+  highest id this writer has seen; if the wall clock lags, the clock part is
+  bumped. Wall-clock time is a display value, never an ordering input.
+- **actor**: the writer. Matches the log file name. Carries nothing else.
+- **parent**: the last event this writer had seen when it wrote. Used to
+  detect concurrency, not to order.
+- **ts**: wall clock, informational.
+- **entity**: the ticket, or the tracker root entity.
+- **op** and **data**: the operation. The format grows by adding operations
+  and optional fields, never by changing the meaning of existing ones.
+
+## Ordering and replay
+
+Order is the ULID sort of all events across all logs. Same event set, same
+order, same state. The causal parent is consulted only to classify two events
+as concurrent, which drives conflict reporting and document compare-and-set.
+
+Replay is total. An event that fails validation at replay (unknown entity,
+stale document parent, unknown operation from a newer build) is skipped and
+reported by lint, never fatal. The same failure on a live write is an error
+returned to the caller.
+
+## Operations
+
+Ticket lifecycle and metadata:
+
+- `create` — title; entity id is the event's entity id. Numberless until published.
+- `number` — assigns the human-facing number. Written by the publish step only.
+- `title`, `status`, `kind` — scalar fields. Status must be in the tracker's
+  configured vocabulary.
+- `parent` — set or clear the parent ticket. Cycles are rejected.
+- `relate` / `unrelate` — undirected relation to another ticket.
+- `branch`, `mr` — repository-scoped references: `{repo, name}` or `{repo, url}`.
+  `repo` is an alias from `zwanenzang.toml`, so one tracker can span several
+  code repositories.
+- `tag` / `untag`.
+- `archive` — the tracker's notion of "out of the active set". Distinct from
+  status; see the org client notes.
+- `tombstone` — hides an entity created by mistake. Nothing is hard-deleted.
+
+Prose:
+
+- `comment` — append-only note, `{text}` inline or `{blob}` for long text,
+  with optional `{link}` to a file or URL. Never edited; a correction is a
+  new comment.
+- `doc` — sets a named document to a new version:
+  `{name, blob, base}` where `base` is the version event id the writer read.
+  Refused on a live write if `base` is not the current version.
+
+Actors:
+
+- `actor` — on the tracker root entity, declares a display name for an actor
+  id. Written once by each actor on first use.
+
+Tracker-level (entity = tracker root): `config` changes that must be
+historical, such as adding a status to the vocabulary.
+
+## Identity and numbers
+
+Entity identity is the ULID of its `create` event. Numbers are aliases:
+`<prefix>-<zero-padded>` where the prefix is tracker configuration. The
+publish step assigns `max + 1` after a fetch and retries on push rejection,
+dropping its own unpublished `number` events before retrying. Unpublished
+tail of an actor's own log is the only thing ever rewritten, because nobody
+has seen it. Gaps are never reused.
+
+Until published, a ticket displays as its short ULID prefix. Prose should not
+cite a number before publish.
+
+## Documents
+
+Each document version is a blob plus a `doc` event. The current version is
+the latest `doc` event for that name whose `base` was current at the time,
+in replay order. A `doc` whose base was stale is kept in history, reported as
+a lost concurrent edit, and does not become current.
+
+Compare-and-set means: an agent must name the version it read; if a human has
+written since, the agent re-reads, merges, and writes again. The human side
+always wins at the org client; see [org client](03-org-client.md).
+
+Blob text is UTF-8, stored once per distinct content. Blobs are not garbage
+collected.
+
+## Validation rules
+
+Applied on live writes (error) and on replay (skip and report):
+
+- Status in vocabulary. Kind in vocabulary. Tag format.
+- Parent and relation targets exist and are not tombstoned. No parent cycles.
+- `doc.base` is the current version.
+- `number` is unique and greater than any existing number.
+- Event id greater than its parent's id.
+
+Lint additionally reports: concurrent changes to the same scalar field of one
+entity (the later ULID won; a human should know), lost document edits,
+dangling repo aliases, actors without a declared name.
+
+## Prose ownership
+
+Four kinds of text, four rules:
+
+| Kind | Example | Storage | Writers |
+|------|---------|---------|---------|
+| Description | the ticket body the human writes | document `description` | human; agents read only |
+| Current summaries | overview, current status, roadmap | named documents | human and agents, compare-and-set |
+| Records | decisions, evidence summaries, review verdicts | comments | anyone, append-only |
+| Bulky material | plans, full reviews, research | files in `docs/`, linked | anyone, git-merged like any file |
+
+Whether `description` stays human-only or becomes co-edited is an open
+question; start human-only.
+
+## Open questions
+
+- Default status vocabulary. Predecessors used draft, in-progress,
+  ready-for-review, needs-human-input, done. The org client maps TODO
+  keywords to statuses per tracker, so the default matters less than the
+  mapping.
+- Whether `archive` is an operation or a derived property of terminal
+  statuses. Current leaning: an operation, because the human archives for
+  reasons unrelated to status.
+- Attachments (images). Probably blobs with a size cap, as in epiq, but not
+  needed for the first milestones.

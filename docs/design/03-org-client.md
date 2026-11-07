@@ -1,0 +1,156 @@
+# Org client
+
+Emacs is a peer client of a tracker, not a renderer of it. The human's org
+files are the authority for the human's edits; the event log is the authority
+for everything else. The client's job is to move changes between the two
+without losing either.
+
+## Scope: the subtree property is the registry
+
+Any org heading may carry a property naming a tracker location, for example
+`:ZWANENZANG: /ssh:devbox:~/trackers/zwanenzang-tracker` or a local path.
+That heading is the scope root. Everything beneath it syncs with that tracker.
+
+- The mapping is one-to-one across all of the human's org files: one tracker
+  appears in exactly one scope. The doctor command reports violations.
+- There is no other registry. Which trackers exist, where they are and which
+  file they sync with is answered by scanning the configured org files for
+  scope roots.
+- The location doubles as the execution host. A tramp path means the CLI runs
+  on that machine with `process-file`; a local path means it runs locally.
+  The desktop never needs a clone of a tracker it reaches over tramp.
+- Headings above the scope root and non-ticket headings inside it are the
+  human's own structure. The tracker never sees them.
+
+## Ticket headings
+
+A ticket is a heading inside a scope that carries the client's own identity
+property, for example `:ZZ_ID:` holding the ticket ULID. The org `:ID:`
+property is not used for tracker identity and org-id is never consulted;
+headings are located by scanning the scope. This is deliberate: org-id tooling
+and subtree copies touch `:ID:` freely, and the predecessor saw duplicated and
+arbitrarily reassigned ids.
+
+Mapping between heading and ticket:
+
+| Org | Tracker |
+|-----|---------|
+| TODO keyword | status, via a per-tracker keyword map |
+| heading title | title |
+| nesting under another ticket heading | parent |
+| nesting under a non-ticket heading | nothing |
+| tags | tags, optionally filtered by a per-tracker allowlist |
+| body text before the first subheading | document `description` |
+| subheadings marked with a document property | named documents |
+| a read-only drawer or subtree | comments, newest last |
+| properties | number, relations, branches, MRs, repo links |
+
+## Sync state per heading
+
+Following org-caldav, but at finer granularity. Each ticket heading stores in
+properties:
+
+- the event cursor: the id of the last event for this ticket the client has
+  applied
+- a hash of the description text as last synced
+- per named document: its synced version id and a hash of its text
+
+State travels with the org file, so files on different machines never share
+or leak state, and a refiled heading carries its state with it.
+
+## Pull
+
+For every ticket in scope, fetch events after the cursor. For every field and
+document:
+
+- unchanged locally since the cursor: apply the remote change
+- changed locally: keep the local value, apply nothing, add a conflict tag to
+  the heading, and record the skipped remote value in a drawer so it can be
+  seen. The remote change remains in history regardless.
+
+Tickets in the tracker but absent from the scope are inserted under the
+scope's inbox heading only if they are not archived, not tombstoned, and have
+events newer than the scope's last pull. An archived ticket never reappears
+on its own; an open ticket that was archived in org reappears exactly when
+something happens to it.
+
+## Push
+
+For every ticket in scope, compare the heading with its sync state and emit
+events for what differs: keyword to `status`, title, parent from nesting,
+tags, description and documents as new versions with the synced version as
+`base`. Then publish and pull once more so numbers and cursors land.
+
+Push always succeeds for the human. If an agent changed the same field in
+between, the human's event is later in ULID order and wins; lint reports the
+collision; the agent's change stays in history.
+
+## Create
+
+A heading inside a scope with no identity property is a new ticket on push.
+The client writes the identity property immediately and the number property
+after publish. Capturing with org-capture into any scope is therefore ticket
+creation.
+
+A heading inside a scope with an identity property the tracker does not know
+is **not** created. It is reported as foreign or stale, and the client offers
+one action: create here as a new ticket, which strips the old identity and
+sync properties and records the old id as free text in the description. This
+single rule covers both an accidentally reassigned id and a refile from
+another tracker's scope.
+
+## Duplicate ids
+
+Two headings in one scope with the same identity property block that ticket's
+sync and are reported with both locations. The copy whose description and
+document hashes still match the sync state is proposed as the original; the
+other becomes plain text when the human confirms. If both copies were edited,
+the client asks and never guesses.
+
+## Archive, not delete
+
+The human archives headings rather than deleting them. Archiving moves the
+subtree to an archive file where it is outside any scope, so to the client an
+archived ticket is simply absent. Rules:
+
+- Absence from scope is never a deletion. No prompt, no event.
+- When a heading is archived with org-archive, an archive hook may emit an
+  `archive` event so the tracker knows. If the hook did not run, the tracker
+  still learns nothing and the ticket stays as it was, which is safe.
+- The re-insertion rule in Pull is what brings an archived-but-active ticket
+  back when it changes.
+
+Refile from a personal inbox scope into a client tracker's scope is handled by
+the foreign-id rule above. History does not travel, which is accepted.
+
+## Prose in org
+
+- The description is the human's. Pull overwrites it only when the local text
+  is unchanged since the cursor. Agents cannot write it.
+- Named documents render as subheadings carrying a document property. The
+  human edits them freely; push sends a new version. Pull applies an agent's
+  new version only when the local text is unchanged; otherwise conflict tag,
+  the agent's text in a drawer, and the agent will have to rebase on its next
+  write anyway.
+- Comments render read-only, newest last, each with a link to any file or URL
+  it names. Removing them from the buffer changes nothing.
+- Bulky files are links, opened over tramp.
+
+## Commands
+
+Pull one heading, pull scope, pull all scopes; push one heading, push scope,
+push all scopes; sync (pull then push then pull); create from heading; open a
+linked file or the forge page; doctor (duplicate ids, foreign ids, orphaned
+sync properties, scope roots pointing at the same tracker).
+
+The elisp stays thin. The CLI exposes batched JSON operations so one tramp
+round trip serves a whole scope.
+
+## Open questions
+
+- Keyword map defaults, and whether unmapped keywords block push or map to a
+  fallback status.
+- Where documents that the human never wants to see in org should go. A
+  per-scope exclusion list is probably enough.
+- Whether the archive hook should also set a terminal status when the
+  archived ticket is still open, or leave that to the human.
