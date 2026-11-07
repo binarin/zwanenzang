@@ -38,5 +38,21 @@
                              :type 'user-error)))
       (should (string-prefix-p "zwanenzang: not-a-tracker: " (cadr err))))))
 
+(ert-deftest zwanenzang-integration-failed-publication-returns-sync-json ()
+  ;; A clone whose bare remote is gone: `sync' exits 1 with its result,
+  ;; which the client reports rather than treating as a failure.
+  (zwanenzang-test-with-dir net
+    (let ((remote (expand-file-name "remote-test-repo" net))
+          (clone (expand-file-name "a-test-repo" net)))
+      (zwanenzang-test-git net "init" "--quiet" "--bare" "remote-test-repo")
+      (zwanenzang-test-git net "clone" "--quiet" "remote-test-repo" "a-test-repo")
+      (let ((init (zwanenzang-test-call clone '("init" "--prefix" "ZZ" "--name" "Test"))))
+        (should (eq (alist-get 'pushed (alist-get 'sync init)) t)))
+      (zwanenzang-test-delete-dir remote)
+      (should (eql (plist-get (zwanenzang-test-run clone '("sync")) :exit) 1))
+      (let ((sync (alist-get 'sync (zwanenzang-test-call clone '("sync")))))
+        (should (eq (alist-get 'pushed sync) :false))
+        (should (equal (alist-get 'code (alist-get 'error sync)) "fetch-failed"))))))
+
 (provide 'zwanenzang-integration-test)
 ;;; zwanenzang-integration-test.el ends here

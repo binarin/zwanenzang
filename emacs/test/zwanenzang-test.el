@@ -38,6 +38,13 @@ The script sees the arguments it was given in \"$@\" and its stdin."
 
 ;;;; Calling the CLI
 
+(ert-deftest zwanenzang-json-encode-refuses-unencodable-requests ()
+  ;; A unibyte string with a raw byte has no JSON form.
+  (let ((err (should-error (zwanenzang--json-encode `((title . ,(string-to-unibyte "\377"))))
+                           :type 'user-error)))
+    (should (string-prefix-p "zwanenzang: cannot encode the request as JSON: "
+                             (cadr err)))))
+
 (ert-deftest zwanenzang-call-passes-directory-arguments-and-stdin ()
   (zwanenzang-test-with-dir dir
     (let ((zwanenzang-program
@@ -48,6 +55,16 @@ The script sees the arguments it was given in \"$@\" and its stdin."
                        (concat "-C " (file-name-as-directory dir)
                                " --actor-name tester read")))
         (should (equal (alist-get 'stdin v) '((since . :null))))))))
+
+(ert-deftest zwanenzang-call-refuses-unencodable-input-before-running ()
+  (zwanenzang-test-with-dir dir
+    (let* ((ran (expand-file-name "ran" dir))
+           (zwanenzang-program
+            (zwanenzang-test--fake-program dir (format "touch '%s'; echo '{}'" ran))))
+      (should-error (zwanenzang-test-call dir '("apply")
+                                          `((title . ,(string-to-unibyte "\377"))))
+                    :type 'user-error)
+      (should-not (file-exists-p ran)))))
 
 (ert-deftest zwanenzang-call-signals-user-error-on-error-object ()
   (zwanenzang-test-with-dir dir
@@ -61,6 +78,26 @@ The script sees the arguments it was given in \"$@\" and its stdin."
         (should (equal (alist-get 'code (zwanenzang--error-object (plist-get r :json)))
                        "not-a-tracker"))))))
 
+(ert-deftest zwanenzang-call-returns-json-of-failed-publication ()
+  ;; `sync' exits 1 when it cannot publish, with a full result; that is a
+  ;; report for the caller, not a command failure.
+  (zwanenzang-test-with-dir dir
+    (let ((zwanenzang-program
+           (zwanenzang-test--fake-program
+            dir (concat "echo '{\"sync\": {\"upstream\": \"origin/main\", \"pushed\": false,"
+                        " \"numbered\": [], \"error\": {\"code\": \"fetch-failed\","
+                        " \"message\": \"cannot reach origin\"}}}'; exit 1"))))
+      (let ((v (zwanenzang-test-call dir '("sync"))))
+        (should (eq (alist-get 'pushed (alist-get 'sync v)) :false))
+        (should (equal (alist-get 'code (alist-get 'error (alist-get 'sync v)))
+                       "fetch-failed"))))))
+
+(ert-deftest zwanenzang-call-returns-empty-json-values ()
+  ;; `{}' parses to nil but is still a result, not missing output.
+  (zwanenzang-test-with-dir dir
+    (let ((zwanenzang-program (zwanenzang-test--fake-program dir "echo '{}'")))
+      (should (null (zwanenzang-test-call dir '("read") '((cursors))))))))
+
 (ert-deftest zwanenzang-call-signals-user-error-on-usage-error ()
   (zwanenzang-test-with-dir dir
     (let ((zwanenzang-program
@@ -70,12 +107,35 @@ The script sees the arguments it was given in \"$@\" and its stdin."
         (should (equal (cadr err)
                        "zwanenzang: usage: error: unrecognized subcommand 'frob'"))))))
 
-(ert-deftest zwanenzang-call-signals-user-error-on-missing-or-silent-program ()
+(ert-deftest zwanenzang-call-signals-user-error-on-failure-without-json ()
+  (zwanenzang-test-with-dir dir
+    (let ((zwanenzang-program
+           (zwanenzang-test--fake-program dir "echo 'it broke' >&2; exit 3")))
+      (let ((err (should-error (zwanenzang-test-call dir '("sync")) :type 'user-error)))
+        (should (equal (cadr err) "zwanenzang: sync exited with 3: it broke"))))
+    (let ((zwanenzang-program
+           (zwanenzang-test--fake-program dir "echo 'not json'; exit 1")))
+      (let ((err (should-error (zwanenzang-test-call dir '("sync")) :type 'user-error)))
+        (should (string-prefix-p "zwanenzang: sync exited with 1" (cadr err)))))
+    (let ((zwanenzang-program (zwanenzang-test--fake-program dir "exit 0")))
+      (let ((err (should-error (zwanenzang-test-call dir '("read")) :type 'user-error)))
+        (should (equal (cadr err) "zwanenzang: read printed no JSON"))))))
+
+(ert-deftest zwanenzang-call-signals-user-error-when-program-cannot-run ()
   (zwanenzang-test-with-dir dir
     (let ((zwanenzang-program (expand-file-name "no-such-program" dir)))
-      (should-error (zwanenzang-test-call dir '("read")) :type 'user-error))
-    (let ((zwanenzang-program (zwanenzang-test--fake-program dir "exit 0")))
-      (should-error (zwanenzang-test-call dir '("read")) :type 'user-error))))
+      (let ((err (should-error (zwanenzang-test-call dir '("read")) :type 'user-error)))
+        (should (string-prefix-p "zwanenzang: cannot run " (cadr err)))))
+    (let ((zwanenzang-program (zwanenzang-test--fake-program dir "echo '{}'")))
+      (set-file-modes zwanenzang-program #o644)
+      (let ((err (should-error (zwanenzang-test-call dir '("read")) :type 'user-error)))
+        (should (string-prefix-p "zwanenzang: cannot run " (cadr err)))))))
+
+(ert-deftest zwanenzang-command-name-skips-global-options ()
+  (should (equal (zwanenzang--command-name '("--actor-name" "tester" "sync")) "sync"))
+  (should (equal (zwanenzang--command-name '("-C" "/x" "--tracker" "/y" "doc" "get")) "doc"))
+  (should (equal (zwanenzang--command-name '("--actor-name=tester" "read")) "read"))
+  (should (equal (zwanenzang--command-name nil) "zwanenzang")))
 
 ;;;; Configuration and reports
 
