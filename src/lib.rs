@@ -13,6 +13,7 @@ pub mod clock;
 pub mod config;
 pub mod error;
 pub mod event;
+pub mod frontmatter;
 pub mod lint;
 pub mod names;
 pub mod replay;
