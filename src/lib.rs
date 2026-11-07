@@ -22,3 +22,5 @@ pub mod ulid;
 pub mod view;
 pub mod write;
 
+#[cfg(test)]
+mod tests;

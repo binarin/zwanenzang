@@ -50,8 +50,10 @@ pub fn next_id(clock: &mut dyn Clock, highest_seen: Option<Ulid>) -> Ulid {
         Ulid::from_parts(seen_t, seen.random() + 1)
     } else {
         // The random part is exhausted within this millisecond; move to the
-        // next one. Practically unreachable.
-        Ulid::from_parts(seen_t + 1, clock.random80())
+        // next one. Practically unreachable. At the very last millisecond
+        // there is no later id; the result then fails validation as not
+        // sorting after its parent instead of overflowing.
+        Ulid::from_parts((seen_t + 1).min(TIME_MAX), clock.random80())
     }
 }
 
