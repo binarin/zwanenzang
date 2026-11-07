@@ -147,8 +147,62 @@ question; start human-only.
   ready-for-review, needs-human-input, done. The org client maps TODO
   keywords to statuses per tracker, so the default matters less than the
   mapping.
+  **Chosen for milestone 2:** `draft, todo, doing, blocked, review, done,
+  cancelled`, written into `zwanenzang.toml` by `init` and editable there.
+  `create` records the initial status in its own data (`{title, status,
+  kind?}`, status defaulting to the first vocabulary entry), so derived state
+  never depends on the configuration file's current defaults. The default
+  kind vocabulary is `task, bug, feature`; kind is optional.
 - Whether `archive` is an operation or a derived property of terminal
   statuses. Current leaning: an operation, because the human archives for
   reasons unrelated to status.
+  **Chosen for milestone 2:** an operation, `archive` with `{}` data. No
+  `unarchive` yet; it is added as a new operation if the org client needs it.
 - Attachments (images). Probably blobs with a size cap, as in epiq, but not
   needed for the first milestones.
+
+### Choices made while implementing milestone 2
+
+Recorded here because the notes above left them open. Each may be revisited;
+none changes a decision above.
+
+- **Tracker root entity.** `init` generates a ULID for the tracker root and
+  stores it as `id` in `zwanenzang.toml`. `actor` and `config` events must
+  name that entity; ticket operations must not.
+- **Vocabulary growth.** Replay validates status and kind against the
+  configuration file's vocabulary plus every name added by earlier `config`
+  events (`{add_statuses?, add_kinds?}`). Vocabularies are expected only to
+  grow; removing a name from the file makes old events that use it fail
+  replay validation, which lint reports.
+- **Tag format.** Org-compatible: one or more of `A-Z a-z 0-9 _ @ # %`, at
+  most 64 characters.
+- **Titles.** Non-empty after trimming, a single line, at most 512 bytes.
+- **Hybrid clock.** A new id takes `max(now, highest seen id's time)` in
+  milliseconds. If that equals the highest seen id's time, the random part is
+  the highest seen id's random part plus one; otherwise it is fresh random.
+  "Seen" means every event in every log of the clone at write time.
+- **Parent.** The highest event id in the clone at write time, or `null` for
+  the first event of a tracker.
+- **Concurrency rule.** For two events A < B in ULID order from different
+  actors, B is concurrent with A when `B.parent < A.id` (B's writer had not
+  seen A). Events of one actor are never concurrent with each other.
+- **Duplicate ids at replay.** Byte-identical duplicate lines (which union
+  merge can produce) count once. Different lines with the same id are all
+  skipped and reported.
+- **Envelope checks at replay.** A malformed line, an event whose `actor`
+  does not match its log file name, an unknown operation, or invalid data is
+  skipped and reported, never fatal.
+- **Tombstones.** Any further operation on a tombstoned entity is rejected.
+  Tombstoned tickets are excluded from `list` unless asked for.
+- **No-op writes.** A live write that would not change derived state (the
+  same status again, an existing tag or relation) is not written; the CLI
+  reports `"written": false`. Replay accepts such events if they exist.
+- **Short ids.** An unpublished ticket displays as the shortest unique
+  prefix of its ULID among all entities, at least 10 characters (the
+  timestamp part). The CLI accepts a full ULID, any unique prefix of at least
+  4 characters (case-insensitive), or a number.
+- **Inline comment limit.** The CLI stores comment text inline up to 2048
+  bytes and as a blob above that.
+- **Documents.** The first version of a document has `base: null`. The CLI's
+  `doc set` requires the caller to state the base it read, including
+  `null`, so an agent cannot overwrite without naming a version.

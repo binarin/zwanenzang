@@ -102,3 +102,17 @@ sidebar navigation turns out to matter.
   tracker. Current leaning: no such checkout exists; humans read the rendered
   branch or org.
 - Retry bound and backoff for push rejection.
+
+### Interim choices for the local-only slice of milestone 2
+
+Milestone 2 has no git integration, so two things that live in the git
+directory above need a temporary home. Both move there in milestone 3.
+
+- **Actor id.** Stored in `.zwanenzang/actor` inside the tracker directory.
+  `init` writes `.gitignore` with `/.zwanenzang/` so it never enters history.
+  It is per clone, as the design requires; nothing goes in the home
+  directory. The first write by an actor also emits its `actor` event, with
+  the display name from `--actor-name` or `$USER`.
+- **Lock.** Mutating commands take an exclusive lock on
+  `.zwanenzang/lock` for the whole tracker, which is also the answer chosen
+  for the lock-scope question above.
