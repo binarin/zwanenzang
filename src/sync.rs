@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::checkout::{self, CheckoutUpdates};
 use crate::clock::Clock;
 use crate::error::{Error, Result};
 use crate::event::{NumberData, Op};
@@ -57,6 +58,7 @@ pub struct SyncReport {
     /// Numbers assigned and, with an upstream, pushed.
     pub numbered: Vec<Numbered>,
     pub error: Option<SyncError>,
+    pub checkouts: CheckoutUpdates,
 }
 
 impl SyncReport {
@@ -104,6 +106,19 @@ impl Tracker {
         clock: &mut dyn Clock,
         actor_name: Option<&str>,
     ) -> Result<SyncReport> {
+        let mut target = None;
+        let mut report = self.publish_locked(repo, clock, actor_name, &mut target)?;
+        report.checkouts = checkout::update(repo, target);
+        Ok(report)
+    }
+
+    fn publish_locked(
+        &self,
+        repo: &Repo,
+        clock: &mut dyn Clock,
+        actor_name: Option<&str>,
+        target: &mut Option<String>,
+    ) -> Result<SyncReport> {
         // Lines an interrupted command appended but did not commit.
         let id = self.clone_identity(repo, clock)?;
         repo.commit(
@@ -115,6 +130,7 @@ impl Tracker {
         let mut report = SyncReport::default();
         let Some(up) = repo.upstream()? else {
             report.numbered = self.publish_numbers(repo, clock, actor_name)?;
+            *target = Some(repo.head()?);
             return Ok(report);
         };
         report.upstream = Some(up.display());
@@ -126,12 +142,16 @@ impl Tracker {
                 Ok(f) => f,
                 Err(m) => return report.fail("fetch-failed", m),
             };
+            // Keep the last successful observation across retries, even if
+            // a later fetch fails. Never substitute a rebased local HEAD.
+            *target = fetched.clone();
             if let Some(commit) = fetched
                 && let Err(m) = repo.rebase(&commit, &id)?
             {
                 return report.fail("rebase-conflict", m);
             }
             let numbered = self.publish_numbers(repo, clock, actor_name)?;
+            let pushing = repo.head()?;
             let push = repo.push(&up)?;
             if !matches!(push, Push::Done) && !numbered.is_empty() {
                 // Unpushed numbers would collide with whatever the remote
@@ -141,6 +161,7 @@ impl Tracker {
             }
             match push {
                 Push::Done => {
+                    *target = Some(pushing);
                     report.pushed = true;
                     report.numbered = numbered;
                     return Ok(report);

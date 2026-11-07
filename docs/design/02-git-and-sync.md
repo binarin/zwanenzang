@@ -115,7 +115,57 @@ for instance to browse `docs/` or the logs. The CLI's clone keeps it current:
   never blocks the write.
 
 Decided 2026-11-07, replacing the earlier open question (leaning "no such
-checkout"). Not implemented yet.
+checkout"). Implemented in milestone 3 with these concrete boundaries:
+
+- **Configuration.** Read only clone-local `zwanenzang.checkout` values,
+  in order, including duplicates. Relative paths resolve against the owned
+  clone root, regardless of the CLI's starting directory. Paths are not
+  shell-expanded; absolute paths are recommended. Canonicalize before
+  opening: symlink aliases of a checkout work, but a subdirectory of a
+  repository, a bare repository, an empty path or a missing path is skipped.
+  The source clone, its aliases, and all linked worktrees sharing its common
+  git directory are skipped, since moving a shared ref could leave the
+  source's work tree behind.
+- **Published target.** Carry an immutable commit id through the sync.
+  A successful push selects the pushed commit. Otherwise use the last
+  successful fetch's commit from this sync, even after an aborted rebase,
+  failed push, exhausted retries, or a later failed fetch. A successful
+  fetch that finds no upstream branch clears the target; a later successful
+  push can establish it. If no target was observed (including an initial
+  fetch failure), skip all checkouts. Cached remote refs and `FETCH_HEAD`
+  from earlier invocations are never used as substitutes. Without an
+  upstream, select owned `HEAD` after numbering. A detached source has no
+  branch to match and skips its checkouts, even in this local case.
+- **Safety.** Compare full branch refs, not ambiguous short names. Refuse
+  an unborn or detached checkout, a different branch, or a git operation
+  in progress (merge, rebase, cherry-pick, revert, sequencer or bisect).
+  Clean means no staged, tracked, untracked, ignored or submodule changes;
+  these checks apply even when `HEAD` already equals the target. Ignored
+  files are included conservatively so a future tracked path cannot
+  overwrite them. Fetch only the selected commit from the owned clone's
+  absolute local path, without updating remote refs, tags or `FETCH_HEAD`,
+  and without submodule recursion or automatic maintenance. Checkout commands
+  disable lazy object fetching and allow only the file transport, so a URL
+  rewrite cannot turn the local transfer into a network fetch. Check ancestry,
+  then run `merge --ff-only --no-autostash`, with hooks and submodule
+  recursion disabled. Disable fsmonitor hooks during inspection too. Do not
+  stash, reset, commit, rebase or push human work.
+  Git supplies normal index/ref locking and its overwrite checks. These are
+  optimistic checks, not an exclusive lock against a human switching
+  branches or editing concurrently; serialize such operations with sync.
+- **Reporting.** Every returned sync report includes `checkouts` with the
+  selected target, an inspection error if configuration/source inspection
+  failed, and one ordered result per configured value otherwise. Results
+  are `updated`, `up-to-date`, or `skipped` with a stable reason and a human
+  message. A failed local transfer or merge is also a skip; continue with
+  the other checkouts. A transfer may leave fetched objects behind, but
+  routine prerequisite/ancestry skips leave work trees, indices and refs
+  alone. There is no human lock to wait for. Checkout skips and inspection
+  failures never set the publication error or change exit status. A fatal
+  owned-clone/disk error that prevents a sync report still fails as before;
+  no checkout phase runs in that case. No-op writes still skip sync entirely.
+
+The exact result and reason vocabulary is in [cli-json](../cli-json.md).
 
 ## Open questions
 

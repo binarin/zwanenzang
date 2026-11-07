@@ -51,8 +51,46 @@ pub fn tracker_above(dir: &Path) -> Option<PathBuf> {
 /// Checks `dir` and whatever tracker the binary would open from it.
 pub fn assert_opens_disposable(dir: &Path) {
     assert_disposable(dir);
-    if let Some(why) = tracker_above(dir).and_then(|root| not_disposable(&root)) {
+    let root = tracker_above(dir).unwrap_or_else(|| dir.to_path_buf());
+    if let Some(why) = not_disposable(&root) {
         panic!("refusing to run in {dir:?}: the binary would open the tracker at {why}");
+    }
+    if root.join(".git").exists() {
+        // Sync can also write configured human checkouts. Check those before
+        // launching the binary, including aliases and paths not created yet.
+        let out = git_command(&root)
+            .args([
+                "config",
+                "--local",
+                "--null",
+                "--get-all",
+                "zwanenzang.checkout",
+            ])
+            .output()
+            .expect("read checkout configuration");
+        assert!(
+            matches!(out.status.code(), Some(0 | 1)),
+            "cannot inspect checkout configuration"
+        );
+        for value in out.stdout.split(|&b| b == 0).filter(|b| !b.is_empty()) {
+            let path = root.join(std::str::from_utf8(value).expect("UTF-8 checkout path"));
+            if path.exists() {
+                assert_disposable(&path);
+            } else {
+                assert!(
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .ends_with(MARKER),
+                    "unmarked checkout path: {path:?}"
+                );
+                let ancestor = path
+                    .ancestors()
+                    .find(|p| p.exists())
+                    .expect("existing ancestor");
+                assert_disposable(ancestor);
+            }
+        }
     }
 }
 
@@ -234,7 +272,19 @@ pub fn copy_tree(src: &Path, dst: &Path) {
 /// user or system configuration, and returns its stdout.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     assert_disposable(dir);
-    let out = Command::new("git")
+    let out = git_command(dir).args(args).output().expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+fn git_command(dir: &Path) -> Command {
+    assert_disposable(dir);
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(dir)
         .args([
@@ -247,17 +297,9 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
             "-c",
             "commit.gpgsign=false",
         ])
-        .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap()
+        .env_remove("GIT_WORK_TREE");
+    command
 }

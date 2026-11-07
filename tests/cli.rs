@@ -691,6 +691,7 @@ fn numbers_resolve_and_display() {
     assert_eq!(
         first["sync"],
         json!({"upstream": null, "pushed": false, "error": null,
+               "checkouts": {"target": git(p, &["rev-parse", "HEAD"]).trim(), "error": null, "results": []},
                "numbered": [{"id": a, "number": 1, "display": "ZZ-0001", "event": n_event}]})
     );
     assert_eq!(first["ticket"]["last_event"], n_event);
@@ -730,4 +731,26 @@ fn numbers_resolve_and_display() {
         )
     );
     assert_eq!(git(p, &["status", "--porcelain"]), "");
+}
+
+#[test]
+#[should_panic(expected = "directory name does not end in -test-repo")]
+fn helper_refuses_an_unmarked_configured_checkout() {
+    let source = tracker();
+    let unmarked = tempfile::Builder::new()
+        .prefix("zwanenzang-guard-")
+        .tempdir_in(std::env::temp_dir())
+        .unwrap();
+    git(
+        source.path(),
+        &[
+            "config",
+            "--local",
+            "--add",
+            "zwanenzang.checkout",
+            unmarked.path().to_str().unwrap(),
+        ],
+    );
+    // The guard must stop this before the CLI opens a configured checkout.
+    run_in(source.path(), &["sync"], "");
 }

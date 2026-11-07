@@ -296,7 +296,16 @@ No actor is allocated; no git repository is needed.
 {"upstream": "origin/main" | null, "pushed": true,
  "numbered": [{"id": "<ticket ULID>", "number": 42, "display": "ZZ-0042",
                "event": "<number event ULID>"}],
- "error": null | {"code": "fetch-failed", "message": "..."}}
+ "error": null | {"code": "fetch-failed", "message": "..."},
+ "checkouts": {
+   "target": "<commit object id>" | null,
+   "error": null | {"code": "checkout-inspection-failed", "message": "..."},
+   "results": [
+     {"path": "/configured/checkout", "status": "updated"},
+     {"path": "../other-checkout", "status": "up-to-date"},
+     {"path": "/dirty/checkout", "status": "skipped",
+      "reason": "dirty", "message": "..."}
+   ]}}
 ```
 
 - `upstream` is `null` when the branch has none; nothing is fetched or
@@ -308,6 +317,70 @@ No actor is allocated; no git repository is needed.
   `rebase-conflict` (rebasing onto the remote conflicted, which only
   `docs/` can; the rebase was aborted), `push-failed`, `push-rejected`
   (the remote kept moving; gave up after five attempts).
+
+`checkouts` is present on every returned sync object, including sync after
+mutations, batches and init. Configure paths in the **owned clone** with:
+
+```sh
+git -C /owned/clone config --local --add zwanenzang.checkout /human/checkout
+```
+
+Only local values are read; there is no global registry. Values must be
+UTF-8; an undecodable list is an inspection failure. Relative paths
+resolve against the owned clone root, without shell or `~` expansion.
+`results` follows configuration order, including duplicates, with `path`
+exactly as configured. With no configured paths it is `[]`. Each result has
+`status`: `updated` (fast-forwarded), `up-to-date` (already at target and
+passed safety checks), or `skipped`. Only `skipped` has `reason` and
+`message`; messages are for humans, not parsing. All these fields are
+returned even when publication failed, and never change the mutation's
+success or `sync` exit status; only the outer `error` does that.
+
+`target` is the commit successfully pushed, or, if push did not succeed,
+the commit from the last successful fetch **during this sync**. A failed
+retry fetch retains an earlier successful observation; a fetch finding no
+upstream branch clears it. An initial fetch failure or an absent branch
+with no successful push leaves `target: null`, and checkouts are skipped.
+Cached remote refs and earlier `FETCH_HEAD` values are never fallbacks.
+Without an upstream, `target` is owned `HEAD` after numbering. It is
+reported even with no configured checkouts. Unpushed commits are never used
+when an upstream exists. The target is an observation, not a claim that
+the remote has stopped moving since it was fetched/pushed.
+
+`checkouts.error` is normally null. Failure to read the list or inspect the
+source sets `checkout-inspection-failed` and leaves `results: []`, without
+changing the outer publication error. A fatal owned-clone error that prevents
+a sync report also prevents checkout updates. Empty/all-no-op writes do
+not sync, so still return `sync: null`.
+
+Skip reasons (stable strings):
+
+| reason | Meaning |
+|---|---|
+| `no-published-target` | No commit safely observed during this sync; no checkout inspection attempted. |
+| `source-detached` | Owned clone has no current branch to match. |
+| `not-a-repository` | Empty/missing/inaccessible path, bare repository, or path not at a work tree root. |
+| `source-repository` | Source itself, an alias, or a linked worktree sharing its common git directory. |
+| `detached-head` | Human checkout has no current branch. |
+| `wrong-branch` | Full branch ref differs from the owned clone's current branch, regardless of upstream branch names. |
+| `operation-in-progress` | Human checkout has an unfinished merge, rebase, cherry-pick, revert, sequencer or bisect. |
+| `dirty` | Work tree/index has staged, tracked, untracked, ignored or submodule changes. |
+| `unborn-head` | Checkout has a branch but no HEAD commit. |
+| `not-fast-forward` | Human HEAD is ahead of, divergent from, or unrelated to the target. |
+| `update-failed` | Other checkout inspection, local transfer, ancestry check or fast-forward failure (e.g. an index lock); remaining paths are still attempted. |
+
+When several checks fail, the first applicable reason in the table is
+reported. Checkouts are canonicalized before opening, so aliases cannot
+evade the source check. Commits are fetched only from the owned clone by
+local path; human remote refs, tags and `FETCH_HEAD` are left alone. A
+transfer can add objects even if ancestry or fast-forward later fails.
+Checkout commands allow only the file transport (including after URL
+rewrites) and disable lazy object fetching, so a missing object or rewritten
+network URL yields `update-failed` rather than contacting a human remote.
+The update uses Git's normal ref/index locks and overwrite checks, disables
+autostash, hooks, fsmonitor and submodule recursion, and never resets or stashes human
+work. Safety checks are optimistic; human branch changes and edits should
+be serialized with sync.
 
 ### Mutation object
 

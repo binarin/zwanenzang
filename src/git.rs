@@ -137,8 +137,8 @@ impl Repo {
 
     fn run(&self, args: &[&str], identity: Option<&Identity>) -> Result<Output> {
         let mut c = command(&self.root);
-        // Owned clone: no signing prompt and no hooks may stand between a
-        // write and its commit.
+        // No signing prompt. Individual write/update operations disable
+        // hooks explicitly as needed.
         c.args(["-c", "commit.gpgsign=false"]).args(args);
         if let Some(id) = identity {
             c.env("GIT_AUTHOR_NAME", &id.name)
@@ -149,8 +149,26 @@ impl Repo {
         output(&self.root, args, &mut c)
     }
 
+    /// Human checkout operations cannot invoke hooks, lazy object fetching,
+    /// or a network transport (including through a configured URL rewrite).
+    pub(crate) fn run_checkout(&self, args: &[&str]) -> Result<Output> {
+        let mut c = command(&self.root);
+        c.env("GIT_ALLOW_PROTOCOL", "file")
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "submodule.recurse=false",
+            ])
+            .args(args);
+        output(&self.root, args, &mut c)
+    }
+
     /// Runs and returns trimmed stdout, failing on a non-zero exit.
-    fn read(&self, args: &[&str]) -> Result<String> {
+    pub(crate) fn read(&self, args: &[&str]) -> Result<String> {
         let out = self.run(args, None)?;
         if !out.status.success() {
             return Err(failure(args, &out));
@@ -182,6 +200,37 @@ impl Repo {
 
     pub fn config_set(&self, key: &str, value: &str) -> Result<()> {
         self.ok(&["config", "--local", key, value], None)
+    }
+
+    /// Clone-local values, preserving spaces, newlines and empty paths.
+    pub(crate) fn config_get_all(&self, key: &str) -> Result<Vec<String>> {
+        let args = ["config", "--local", "--null", "--get-all", key];
+        let out = self.run(&args, None)?;
+        match out.status.code() {
+            Some(0) => Ok(out
+                .stdout
+                .strip_suffix(&[0])
+                .unwrap_or(&out.stdout)
+                .split(|&b| b == 0)
+                .map(|b| {
+                    String::from_utf8(b.to_vec())
+                        .map_err(|_| Error::Git(format!("{key} values must be UTF-8")))
+                })
+                .collect::<Result<Vec<_>>>()?),
+            Some(1) => Ok(Vec::new()),
+            _ => Err(failure(&args, &out)),
+        }
+    }
+
+    /// Full branch ref, or `None` for a detached HEAD.
+    pub(crate) fn branch(&self) -> Result<Option<String>> {
+        let args = ["symbolic-ref", "--quiet", "HEAD"];
+        let out = self.run(&args, None)?;
+        match out.status.code() {
+            Some(0) => Ok(Some(String::from_utf8_lossy(&out.stdout).trim().into())),
+            Some(1) => Ok(None),
+            _ => Err(failure(&args, &out)),
+        }
     }
 
     /// Commits the current content of `paths` (relative to the root) and
@@ -234,11 +283,10 @@ impl Repo {
     /// The current branch's upstream, if it has one. A detached head has
     /// none.
     pub fn upstream(&self) -> Result<Option<Upstream>> {
-        let out = self.run(&["symbolic-ref", "--quiet", "--short", "HEAD"], None)?;
-        if !out.status.success() {
+        let Some(branch) = self.branch()? else {
             return Ok(None);
-        }
-        let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        };
+        let branch = branch.strip_prefix("refs/heads/").unwrap_or(&branch);
         let remote = self.config_get(&format!("branch.{branch}.remote"))?;
         let merge = self.config_get(&format!("branch.{branch}.merge"))?;
         Ok(match (remote, merge) {

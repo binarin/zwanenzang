@@ -10,6 +10,7 @@
 //! - [`view`], [`lint`], [`cli`]: JSON output and the command line.
 
 pub mod batch;
+pub mod checkout;
 pub mod cli;
 pub mod clock;
 pub mod config;
