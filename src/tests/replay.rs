@@ -332,6 +332,10 @@ pub fn invalid_ticket_ops(root: Ulid) -> Vec<(Ulid, Op, &'static str)> {
         (t1, Op::Unrelate(RelateData { to: u(99) }), "unknown-target"),
         (t3, status("doing"), "tombstoned"),
         (t3, Op::Tombstone(crate::event::Empty {}), "tombstoned"),
+        (t3, Op::Archive(crate::event::Empty {}), "tombstoned"),
+        (t3, Op::Unarchive(crate::event::Empty {}), "tombstoned"),
+        (root, Op::Archive(crate::event::Empty {}), "wrong-entity"),
+        (root, Op::Unarchive(crate::event::Empty {}), "wrong-entity"),
         (u(99), status("doing"), "unknown-entity"),
         (root, status("doing"), "wrong-entity"),
         (
@@ -566,6 +570,78 @@ fn concurrency_rule() {
     assert!(!is_concurrent(&a, &c(21, ACTOR_B, Some(20))));
     // Same actor: never concurrent, even with a stale parent.
     assert!(!is_concurrent(&a, &c(21, ACTOR_A, Some(10))));
+}
+
+#[test]
+fn unarchive_clears_the_flag_and_leaves_status_alone() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let archive = || Op::Archive(crate::event::Empty {});
+    let unarchive = || Op::Unarchive(crate::event::Empty {});
+    append_events(
+        &t,
+        &[
+            // Replay accepts what a live write would not have written.
+            ev(u(20), ACTOR_A, Some(u(BASE_LAST)), u(T1), unarchive()),
+            ev(u(21), ACTOR_A, Some(u(20)), u(T1), status("done")),
+            ev(u(22), ACTOR_A, Some(u(21)), u(T1), archive()),
+            ev(u(23), ACTOR_A, Some(u(22)), u(T1), archive()),
+        ],
+    );
+    let rp = load(&t);
+    assert!(rp.skipped.is_empty(), "{:?}", rp.skipped);
+    assert!(rp.state.tickets[&u(T1)].archived);
+    append_events(&t, &[ev(u(24), ACTOR_A, Some(u(23)), u(T1), unarchive())]);
+    let rp = load(&t);
+    assert!(rp.skipped.is_empty(), "{:?}", rp.skipped);
+    let ticket = &rp.state.tickets[&u(T1)];
+    assert!(!ticket.archived);
+    assert_eq!(ticket.status, "done");
+    assert_eq!(ticket.last_event, u(24));
+}
+
+#[test]
+fn concurrent_archive_and_unarchive_take_the_later_id_unreported() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let p = Some(u(BASE_LAST));
+    append_events(
+        &t,
+        &[
+            ev(
+                u(20),
+                ACTOR_A,
+                p,
+                u(T1),
+                Op::Archive(crate::event::Empty {}),
+            ),
+            ev(
+                u(21),
+                ACTOR_B,
+                p,
+                u(T1),
+                Op::Unarchive(crate::event::Empty {}),
+            ),
+            ev(
+                u(22),
+                ACTOR_A,
+                Some(u(21)),
+                u(T2),
+                Op::Unarchive(crate::event::Empty {}),
+            ),
+            ev(
+                u(23),
+                ACTOR_B,
+                Some(u(21)),
+                u(T2),
+                Op::Archive(crate::event::Empty {}),
+            ),
+        ],
+    );
+    let rp = load(&t);
+    assert!(!rp.state.tickets[&u(T1)].archived);
+    assert!(rp.state.tickets[&u(T2)].archived);
+    assert!(rp.state.concurrent.is_empty());
 }
 
 #[test]

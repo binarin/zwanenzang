@@ -685,6 +685,12 @@ fn apply_ticket_op(state: &mut State, ev: &Event) -> Result<(bool, Option<LostDo
             t.archived = true;
             changed
         }
+        Op::Unarchive(_) => {
+            let t = state.tickets.get_mut(&id).unwrap();
+            let changed = t.archived;
+            t.archived = false;
+            changed
+        }
         Op::Tombstone(_) => {
             state.tickets.get_mut(&id).unwrap().tombstoned = true;
             true

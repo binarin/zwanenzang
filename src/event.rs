@@ -114,6 +114,7 @@ pub enum Op {
     Tag(TagData),
     Untag(TagData),
     Archive(Empty),
+    Unarchive(Empty),
     Tombstone(Empty),
     Comment(CommentData),
     Doc(DocData),
@@ -136,6 +137,7 @@ pub const OP_NAMES: &[&str] = &[
     "tag",
     "untag",
     "archive",
+    "unarchive",
     "tombstone",
     "comment",
     "doc",
@@ -165,6 +167,7 @@ impl Op {
             Op::Tag(_) => "tag",
             Op::Untag(_) => "untag",
             Op::Archive(_) => "archive",
+            Op::Unarchive(_) => "unarchive",
             Op::Tombstone(_) => "tombstone",
             Op::Comment(_) => "comment",
             Op::Doc(_) => "doc",
@@ -213,6 +216,7 @@ impl Op {
             "tag" => Op::Tag(p(data)?),
             "untag" => Op::Untag(p(data)?),
             "archive" => Op::Archive(p(data)?),
+            "unarchive" => Op::Unarchive(p(data)?),
             "tombstone" => Op::Tombstone(p(data)?),
             "comment" => Op::Comment(p(data)?),
             "doc" => {
@@ -239,7 +243,7 @@ impl Serialize for Op {
             Op::Branch(d) => d.serialize(s),
             Op::Mr(d) => d.serialize(s),
             Op::Tag(d) | Op::Untag(d) => d.serialize(s),
-            Op::Archive(d) | Op::Tombstone(d) => d.serialize(s),
+            Op::Archive(d) | Op::Unarchive(d) | Op::Tombstone(d) => d.serialize(s),
             Op::Comment(d) => d.serialize(s),
             Op::Doc(d) => d.serialize(s),
             Op::Actor(d) => d.serialize(s),
@@ -381,6 +385,7 @@ mod tests {
             Op::Tag(TagData { tag: "a".into() }),
             Op::Untag(TagData { tag: "a".into() }),
             Op::Archive(Empty {}),
+            Op::Unarchive(Empty {}),
             Op::Tombstone(Empty {}),
             Op::Comment(CommentData {
                 text: Some("hi".into()),
@@ -440,6 +445,10 @@ mod tests {
         ));
         assert!(matches!(
             Op::from_parts("archive", serde_json::json!([])),
+            Err(OpError::Invalid(_))
+        ));
+        assert!(matches!(
+            Op::from_parts("unarchive", serde_json::json!([])),
             Err(OpError::Invalid(_))
         ));
     }
