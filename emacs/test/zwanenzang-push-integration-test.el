@@ -22,6 +22,11 @@
           ":END:\n")
   "An Org file with one scope; %s is the tracker.  WAIT has no status.")
 
+(defun zwanenzang-test--on-disk ()
+  "The text of the visited file on disk."
+  (let ((file buffer-file-name))
+    (with-temp-buffer (insert-file-contents file) (buffer-string))))
+
 (defun zwanenzang-test--doc-versions (dir id name)
   "The versions of document NAME of ticket ID in DIR."
   (alist-get 'versions (alist-get (intern name)
@@ -105,6 +110,55 @@
     ;; The retry creates nothing more.
     (zwanenzang-test-at-root #'zwanenzang-push)
     (should (= 1 (length (alist-get 'tickets (zwanenzang-test-cli trk "list")))))))
+
+(ert-deftest zwanenzang-push-saves-the-file-only-when-it-created-tickets ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((existing (zwanenzang-test-create trk "Existing")))
+      ;; Pull, and a push that creates nothing, do not save.
+      (let ((on-disk (zwanenzang-test--on-disk)))
+        (zwanenzang-test-pull)
+        (zwanenzang-test--edit-title existing "Edited")
+        (zwanenzang-test-at-root #'zwanenzang-push)
+        (should (equal (alist-get 'title (zwanenzang-test-show trk existing)) "Edited"))
+        (should (equal (zwanenzang-test--on-disk) on-disk)))
+      (zwanenzang-test-append "** TODO New one\n** TODO New two\n")
+      (zwanenzang-test-clear-report)
+      (should (string-match-p "2 created, file saved" (zwanenzang-test-at-root #'zwanenzang-push)))
+      (should (string-match-p "saved .*scope.org: it holds the ids" (zwanenzang-test-report)))
+      (let ((one (zwanenzang-test-id-of "New one"))
+            (two (zwanenzang-test-id-of "New two"))
+            (on-disk (zwanenzang-test--on-disk)))
+        (should (string-match-p (concat ":ZWANENZANG_ID: " one) on-disk))
+        (should (string-match-p (concat ":ZWANENZANG_ID: " two) on-disk))
+        ;; Emacs killed, unsaved edits gone: the next push creates nothing.
+        (let ((file buffer-file-name))
+          (revert-buffer t t)
+          (should (equal buffer-file-name file)))
+        (zwanenzang-test-at-root #'zwanenzang-push)
+        (should (= 3 (length (alist-get 'tickets (zwanenzang-test-cli trk "list")))))))))
+
+(ert-deftest zwanenzang-push-refuses-a-read-only-buffer-before-sending ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append "** TODO New\n")
+    (let ((head (zwanenzang-test-head trk))
+          (before (buffer-string)))
+      (setq buffer-read-only t)
+      (let ((err (should-error (zwanenzang-test-at-root #'zwanenzang-push) :type 'user-error)))
+        (should (string-match-p "read-only; nothing was sent" (cadr err))))
+      (setq buffer-read-only nil)
+      (should (equal (buffer-string) before))
+      (should (equal (zwanenzang-test-head trk) head))
+      (should-not (alist-get 'tickets (zwanenzang-test-cli trk "list"))))))
+
+(ert-deftest zwanenzang-push-failing-to-write-back-names-what-it-created ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append "** TODO New\n")
+    (let ((err (cl-letf (((symbol-function 'save-buffer)
+                          (lambda (&rest _) (error "Disk full"))))
+                 (should-error (zwanenzang-test-at-root #'zwanenzang-push) :type 'user-error)))
+          (id (alist-get 'id (car (alist-get 'tickets (zwanenzang-test-cli trk "list"))))))
+      (should (string-match-p "the tracker took the push.*Disk full" (cadr err)))
+      (should (string-match-p (format "created ZZ-0001 New (%s)" id) (cadr err))))))
 
 (ert-deftest zwanenzang-push-refused-apply-changes-nothing ()
   ;; A tag the CLI refuses refuses the batch: no identity is written.

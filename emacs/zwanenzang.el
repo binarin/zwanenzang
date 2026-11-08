@@ -1295,6 +1295,7 @@ and the buffer is not saved."
   pull                                  ; the last pull: its conflicts still stand
   problems info                         ; lines, newest first
   pulled (new 0) (moved 0) (created 0) (pushed 0)
+  saved                                 ; the file was saved for new identities
   refused)
 
 (defun zwanenzang--pull-into (outcome root)
@@ -1341,18 +1342,20 @@ Publication errors and skipped checkouts are not failures, but need a look."
     (if (zwanenzang--outcome-refused outcome)
         (zwanenzang-report (zwanenzang--outcome-refused outcome))
       (let* ((pull (zwanenzang--outcome-pull outcome))
-             (parts (delq nil
-                          (cl-mapcar
-                           (lambda (n label) (and (> n 0) (format "%d %s" n label)))
-                           (list (length (zwanenzang--outcome-pulled outcome))
-                                 (zwanenzang--outcome-new outcome)
-                                 (zwanenzang--outcome-moved outcome)
-                                 (zwanenzang--outcome-created outcome)
-                                 (zwanenzang--outcome-pushed outcome)
-                                 (length (zwanenzang--pull-conflicted pull))
-                                 (zwanenzang--pull-blocked pull))
-                           '("pulled" "new" "moved" "created" "pushed"
-                             "with conflicts" "blocked")))))
+             (parts (append
+                     (delq nil
+                           (cl-mapcar
+                            (lambda (n label) (and (> n 0) (format "%d %s" n label)))
+                            (list (length (zwanenzang--outcome-pulled outcome))
+                                  (zwanenzang--outcome-new outcome)
+                                  (zwanenzang--outcome-moved outcome)
+                                  (zwanenzang--outcome-created outcome)
+                                  (zwanenzang--outcome-pushed outcome)
+                                  (length (zwanenzang--pull-conflicted pull))
+                                  (zwanenzang--pull-blocked pull))
+                            '("pulled" "new" "moved" "created" "pushed"
+                              "with conflicts" "blocked")))
+                     (and (zwanenzang--outcome-saved outcome) '("file saved")))))
         (zwanenzang-report
          (format "zwanenzang: %s %s: %s" verb
                  (org-with-wide-buffer (zwanenzang--scope-name root))
@@ -1603,29 +1606,63 @@ so a reshuffled nesting has no moment with a parent cycle."
     (when (string-prefix-p "ARCHIVE_" (car property))
       (org-entry-delete nil (car property)))))
 
+(defun zwanenzang--write-back (plan created outcome)
+  "Write what `apply' returned for PLAN to the buffer, saving it if it must.
+CREATED is the result's map of create positions to ids.  The identity of
+a new ticket lives only in the buffer until saved, and without it the next
+push would create the ticket again, so a push that created one saves the
+file; nothing else does."
+  (pcase-dolist (`(,marker . ,index) (reverse (zwanenzang--plan-news plan)))
+    (org-entry-put marker "ZWANENZANG_ID"
+                   (alist-get (intern (number-to-string index)) created)))
+  (dolist (marker (zwanenzang--plan-revived plan))
+    (save-excursion
+      (goto-char marker)
+      (zwanenzang--drop-archive-properties)))
+  (when (zwanenzang--plan-news plan)
+    (if buffer-file-name
+        (progn
+          (save-buffer)
+          (setf (zwanenzang--outcome-saved outcome) t)
+          (push (format "saved %s: it holds the ids of the new tickets" buffer-file-name)
+                (zwanenzang--outcome-info outcome)))
+      (push "not saved: the buffer visits no file, and the new tickets' ids are only in it"
+            (zwanenzang--outcome-problems outcome)))))
+
 (defun zwanenzang--send-plan (plan dir outcome)
   "Send PLAN to the tracker at DIR and write back what it returns to Org.
-The identity of a new ticket is written right away, whatever fails after
-this: without it the next push would create the ticket again.  An empty
-plan sends nothing.  OUTCOME collects the report."
+An empty plan sends nothing.  A read-only buffer is refused first, so
+identities cannot fail to land for that reason.  If writing back fails
+anyway, the tickets exist, so the error lists them for the human to
+recover.  OUTCOME collects the report."
   (let ((changes (reverse (zwanenzang--plan-changes plan))))
     (when changes
+      (when buffer-read-only
+        (user-error "zwanenzang: %s is read-only; nothing was sent" (buffer-name)))
       (let* ((result (funcall zwanenzang--call dir '("apply")
                               `((changes . ,(vconcat changes)))))
              (created (alist-get 'created result))
              (labels (mapcar (lambda (ticket) (cons (alist-get 'id ticket)
                                                     (zwanenzang--label ticket)))
-                             (alist-get 'tickets result))))
-        (pcase-dolist (`(,marker . ,index) (reverse (zwanenzang--plan-news plan)))
-          (let ((id (alist-get (intern (number-to-string index)) created)))
-            (org-entry-put marker "ZWANENZANG_ID" id)
-            (cl-incf (zwanenzang--outcome-created outcome))
-            (push (format "created %s" (cdr (assoc id labels)))
-                  (zwanenzang--outcome-info outcome))))
-        (dolist (marker (zwanenzang--plan-revived plan))
-          (save-excursion
-            (goto-char marker)
-            (zwanenzang--drop-archive-properties)))
+                             (alist-get 'tickets result)))
+             (new-ids (mapcar (lambda (news)
+                                (alist-get (intern (number-to-string (cdr news))) created))
+                              (reverse (zwanenzang--plan-news plan)))))
+        (condition-case err
+            (zwanenzang--write-back plan created outcome)
+          (error
+           (user-error "zwanenzang: the tracker took the push, but writing it to Org failed: %s; %s"
+                       (error-message-string err)
+                       (if new-ids
+                           (format "created %s"
+                                   (mapconcat (lambda (id)
+                                                (format "%s (%s)" (cdr (assoc id labels)) id))
+                                              new-ids ", "))
+                         "no tickets were created"))))
+        (dolist (id new-ids)
+          (cl-incf (zwanenzang--outcome-created outcome))
+          (push (format "created %s" (cdr (assoc id labels)))
+                (zwanenzang--outcome-info outcome)))
         (pcase-dolist (`(,id . ,what) (reverse (zwanenzang--plan-touched plan)))
           (cl-incf (zwanenzang--outcome-pushed outcome))
           (push (format "pushed %s: %s" (cdr (assoc id labels)) (string-join what ", "))
@@ -1662,7 +1699,9 @@ A failed apply signals, having written nothing to the tracker or the buffer."
   "Push the human's edits in the scope containing point to the tracker.
 Whatever differs from the last sync is sent, new tickets included, and
 Org's value wins.  A pull follows, so numbers and cursors land.  The
-buffer is edited but not saved; a report goes to the `*zwanenzang*' buffer."
+buffer is saved only when new tickets were created, right after their ids
+are written, since losing those would create them again.  A report goes
+to the `*zwanenzang*' buffer."
   (interactive)
   (let ((root (zwanenzang--root-at-point))
         (outcome (zwanenzang--outcome-create)))

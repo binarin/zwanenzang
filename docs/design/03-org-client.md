@@ -482,10 +482,15 @@ does.
   document is not created either.
 - Creates come first in the batch, then each heading's changes in buffer
   order, ancestors first, so a reshuffled nesting has no moment with a
-  parent cycle. `ZWANENZANG_ID` is written right after `apply` returns,
-  before anything else can fail: without it the next push would create the
-  ticket again. A refused batch changes nothing, in the tracker or the
+  parent cycle. A refused batch changes nothing, in the tracker or the
   buffer, and the error names no heading, as the CLI's does not.
+- Identity must survive: without `ZWANENZANG_ID` the next push would create
+  the ticket again. So it is written right after `apply` returns, and a push
+  that created at least one ticket saves the file right then, and says so in
+  the report. Everything else leaves buffers unsaved: pull, pushes that
+  created nothing, and the pull ending a push. A read-only buffer is refused
+  before `apply`. If writing back still fails after `apply` succeeded, the
+  error lists the created numbers and ids so the human can recover.
 - Parent comes from nesting: the nearest ticket heading above, new ones
   included. Grouping headings are transparent; the inbox or scope root
   means no ancestor. `parent` is sent only when the nesting changed since
@@ -509,8 +514,7 @@ does.
 - `zwanenzang-sync` is CLI `sync`, pull, push, the push ending in a pull. An
   unreachable remote is reported and the rest works on the local clone.
   `zwanenzang-sync-all` does that for every scope in `zwanenzang-org-files`;
-  a scope that fails is reported and the others still run. Buffers are
-  edited, not saved.
+  a scope that fails is reported and the others still run.
 
 ### Errors and reports
 
