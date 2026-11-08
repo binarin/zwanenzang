@@ -476,7 +476,9 @@ does.
   the human's text goes on top of whatever an agent wrote. When an edit
   sits unfetched on the remote, the human's version can still end up lost
   at replay: the final pull then shows a conflict with the text kept in Org,
-  and the next push settles it.
+  and the next push settles it. If the clone moves between the read and the
+  apply, so the base is stale, push reads again, rebuilds and applies once
+  more; a second stale base is a `user-error`, with the buffer untouched.
 - No sync state means no wiping: a field with nothing recorded is sent
   when Org has a value, but an empty one is left alone. An empty new
   document is not created either.

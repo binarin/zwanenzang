@@ -572,6 +572,98 @@
                 (with-current-buffer b (set-buffer-modified-p nil))
                 (kill-buffer b)))))))))
 
+(defun zwanenzang-test--writing-before-apply (dir id times)
+  "A CLI call that writes a new plan of ticket ID in DIR before TIMES applies.
+Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
+  (let ((applies (list 0)))
+    (cons (lambda (d args &optional input)
+            (when (member "apply" args)
+              (when (< (car applies) times)
+                (zwanenzang-test-set-doc dir id "plan"
+                                         (format "Agent plan %d\n" (car applies))))
+              (cl-incf (car applies)))
+            (zwanenzang-test-call d args input))
+          applies)))
+
+(ert-deftest zwanenzang-push-retries-once-on-a-stale-document-base ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-set-doc trk id "plan" "Base plan\n")
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (search-forward "Base plan") (replace-match "My plan"))
+      (zwanenzang-test-append "** TODO Also new\n")
+      (pcase-let ((`(,call . ,applies) (zwanenzang-test--writing-before-apply trk id 1)))
+        (let ((zwanenzang--call call))
+          (should (string-match-p "1 created, 1 pushed"
+                                  (zwanenzang-test-at-root #'zwanenzang-push))))
+        (should (= (car applies) 2)))
+      (should (equal (zwanenzang-test--doc-text trk id "plan") "My plan\n"))
+      (should (= 3 (length (zwanenzang-test--doc-versions trk id "plan"))))
+      (should (= 2 (length (alist-get 'tickets (zwanenzang-test-cli trk "list")))))
+      (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id))))))
+
+(ert-deftest zwanenzang-push-fails-after-a-second-stale-base-leaving-the-buffer ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-set-doc trk id "plan" "Base plan\n")
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (search-forward "Base plan") (replace-match "My plan"))
+      (zwanenzang-test-append "** TODO Also new\n")
+      (let ((before (buffer-string))
+            (on-disk (zwanenzang-test--on-disk)))
+        (pcase-let ((`(,call . ,applies) (zwanenzang-test--writing-before-apply trk id 2)))
+          (let* ((zwanenzang--call call)
+                 (err (should-error (zwanenzang-test-at-root #'zwanenzang-push)
+                                    :type 'user-error)))
+            (should (string-match-p "stale-doc-base" (cadr err))))
+          (should (= (car applies) 2)))
+        (should (equal (buffer-string) before))
+        (should (equal (zwanenzang-test--on-disk) on-disk))
+        (should (= 1 (length (alist-get 'tickets (zwanenzang-test-cli trk "list")))))))))
+
+(ert-deftest zwanenzang-push-reports-keyword-map-problems ()
+  (zwanenzang-test-with-remote-scope (net trk buf
+                                          (concat "#+TODO: TODO | DONE\n"
+                                                  "* Project\n:PROPERTIES:\n:ZWANENZANG: %s\n"
+                                                  ":ZWANENZANG_KEYWORDS: TODO=todo,draft DONE=done\n"
+                                                  ":END:\n"))
+    (zwanenzang-test-clear-report)
+    (should (string-match-p "see \\*zwanenzang\\*" (zwanenzang-test-at-root #'zwanenzang-push)))
+    (with-temp-buffer
+      (insert (zwanenzang-test-report))
+      (should (= 1 (how-many "keyword map: status doing has no keyword"
+                             (point-min) (point-max)))))))
+
+(ert-deftest zwanenzang-push-sends-nothing-for-a-file-with-the-old-escaping ()
+  ;; Earlier versions put a comma on `#+' and drawer-like lines.
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((id (zwanenzang-test-create trk "Ticket"))
+          (applied nil))
+      (zwanenzang-test-set-doc trk id "description"
+                               "Text\n#+begin_src sh\nls\n#+end_src\n#+TITLE: x\n")
+      (zwanenzang-test-set-doc trk id "plan" "Plan\n#+begin_quote\nq\n#+end_quote\n")
+      (zwanenzang-test-pull)
+      (save-excursion
+        (goto-char (point-min))
+        (outline-next-heading)
+        (while (re-search-forward "^#\\+" nil t)
+          (replace-match ",#+")))
+      (should (string-match-p ",#\\+begin_src" (zwanenzang-test-entry id)))
+      (let ((head (zwanenzang-test-head trk))
+            (zwanenzang--call (lambda (dir args &optional input)
+                                (when (member "apply" args) (setq applied t))
+                                (zwanenzang-test-call dir args input))))
+        (should (string-match-p ": nothing changed\\'"
+                                (zwanenzang-test-at-root #'zwanenzang-push)))
+        (should-not applied)
+        (should (equal (zwanenzang-test-head trk) head)))
+      (should (equal (zwanenzang-test--doc-text trk id "description")
+                     "Text\n#+begin_src sh\nls\n#+end_src\n#+TITLE: x\n")))))
+
 (ert-deftest zwanenzang-sync-all-goes-on-past-any-error-in-a-scope ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
     (zwanenzang-test-with-tracker other

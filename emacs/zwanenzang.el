@@ -125,11 +125,15 @@ for `zwanenzang-call' to judge."
 Not an option: the test suite binds it to a wrapper that checks every
 tracker it touches is disposable.")
 
+(define-error 'zwanenzang-stale-doc-base "Stale document base" 'user-error)
+
 (defun zwanenzang-call (directory args &optional input)
   "Run the CLI on the tracker at or above DIRECTORY with ARGS; return its JSON.
 INPUT, when non-nil, is encoded as JSON on stdin.  A failed command
 signals `user-error' naming the error code and message: a JSON error
 object, a usage error (exit status 2), or a non-zero exit with no JSON.
+The code `stale-doc-base' is the subtype `zwanenzang-stale-doc-base', which
+a caller can retry.
 Any other JSON is returned whatever the exit status, because some
 commands exit 1 with a full result: `sync' when publication failed,
 `lint' when it found issues.  Callers judge those from the JSON."
@@ -140,8 +144,11 @@ commands exit 1 with a full result: `sync' when publication failed,
          (command (zwanenzang--command-name args)))
     (cond
      (err
-      (user-error "zwanenzang: %s: %s"
-                  (alist-get 'code err) (alist-get 'message err)))
+      (signal (if (equal (alist-get 'code err) "stale-doc-base")
+                  'zwanenzang-stale-doc-base
+                'user-error)
+              (list (format "zwanenzang: %s: %s"
+                            (alist-get 'code err) (alist-get 'message err)))))
      ((eql exit 2)
       (user-error "zwanenzang: usage: %s" (plist-get result :stderr)))
      ((plist-get result :parsed) json)
@@ -1669,30 +1676,41 @@ recover.  OUTCOME collects the report."
                 (zwanenzang--outcome-info outcome)))
         (zwanenzang--note-sync outcome (alist-get 'sync result))))))
 
+(defun zwanenzang--push-attempt (root dir outcome)
+  "Read the scope at ROOT from the tracker at DIR, and apply what differs.
+Refusing the scope, or failing, adds nothing to OUTCOME's lines."
+  (let* ((headings (plist-get (zwanenzang--scan-all root) :headings))
+         (tickets (seq-filter (lambda (h) (plist-get h :id)) headings))
+         (blocked (zwanenzang--blocked-headings tickets (zwanenzang--known-tickets dir)))
+         (result (zwanenzang--read-scope root dir tickets blocked))
+         (refused (zwanenzang--tracker-mismatch "push" root dir result)))
+    (if refused
+        (setf (zwanenzang--outcome-refused outcome) refused)
+      (let ((plan (zwanenzang--plan-push
+                   headings blocked (alist-get 'tickets result)
+                   (car (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
+                                                 (alist-get 'statuses (alist-get 'tracker result))
+                                                 org-todo-keywords-1))
+                   (remove "description" (zwanenzang--hide-docs root)))))
+        (zwanenzang--send-plan plan dir outcome)
+        (setf (zwanenzang--outcome-problems outcome)
+              (append (zwanenzang--plan-lines plan) (zwanenzang--outcome-problems outcome)))))))
+
 (defun zwanenzang--push-scope (root outcome)
   "Push the scope at ROOT and pull again, adding the result to OUTCOME.
-A failed apply signals, having written nothing to the tracker or the buffer."
+A failed apply signals, having written nothing to the tracker or the
+buffer.  A document version landing between the read and the apply, which
+only another writer in this clone can cause, gets one more try."
   (with-current-buffer (marker-buffer root)
     (org-with-wide-buffer
-     (let* ((case-fold-search nil)
-            (dir (zwanenzang--scope-directory root))
-            (headings (plist-get (zwanenzang--scan-all root) :headings))
-            (tickets (seq-filter (lambda (h) (plist-get h :id)) headings))
-            (blocked (zwanenzang--blocked-headings tickets (zwanenzang--known-tickets dir)))
-            (result (zwanenzang--read-scope root dir tickets blocked))
-            (refused (zwanenzang--tracker-mismatch "push" root dir result)))
-       (if refused
-           (setf (zwanenzang--outcome-refused outcome) refused)
-         (let ((plan (zwanenzang--plan-push
-                      headings blocked (alist-get 'tickets result)
-                      (car (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
-                                                    (alist-get 'statuses (alist-get 'tracker result))
-                                                    org-todo-keywords-1))
-                      (remove "description" (zwanenzang--hide-docs root)))))
-           (setf (zwanenzang--outcome-problems outcome)
-                 (append (zwanenzang--plan-lines plan) (zwanenzang--outcome-problems outcome)))
-           (zwanenzang--send-plan plan dir outcome)
-           (zwanenzang--pull-into outcome root)))))))
+     (let ((case-fold-search nil)
+           (dir (zwanenzang--scope-directory root)))
+       (condition-case nil
+           (zwanenzang--push-attempt root dir outcome)
+         (zwanenzang-stale-doc-base
+          (zwanenzang--push-attempt root dir outcome)))
+       (unless (zwanenzang--outcome-refused outcome)
+         (zwanenzang--pull-into outcome root))))))
 
 ;;;###autoload
 (defun zwanenzang-push ()
