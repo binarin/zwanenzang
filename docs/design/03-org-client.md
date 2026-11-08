@@ -527,7 +527,7 @@ does.
   skips are not failures: the client echoes a one-line summary and appends
   a readable report to the `*zwanenzang*` buffer.
 - The report lists per ticket, by number and title, what was pulled, moved,
-  pushed and created, then conflicts and checkout results from the sync
+  pushed (changes the tracker wrote, not its no-ops) and created, then conflicts and checkout results from the sync
   object. Conflict lines show both Org's title and the tracker's. A command
   of several steps makes one report; the conflicts in it are the last
   pull's, so ones a push settled are gone. The echo points at the buffer

@@ -279,5 +279,18 @@ A ticket without an entry is foreign to the tracker."
                             (list (zwanenzang-test--entry "A" "T" :status "done" :archived t))))
                    '("status")))))
 
+(ert-deftest zwanenzang-written-fields-leave-out-no-ops-and-new-tickets ()
+  (should (equal (zwanenzang--written-fields
+                  '(((op . "create") (data (title . "N")))
+                    ((op . "tag") (ticket (created . 0)) (data (tag . "x")))
+                    ((op . "title") (ticket . "A") (data (to . "T")))
+                    ((op . "tag") (ticket . "A") (data (tag . "x")))
+                    ((op . "untag") (ticket . "A") (data (tag . "y")))
+                    ((op . "status") (ticket . "A") (data (to . "done")))
+                    ((op . "title") (ticket . "B") (data (to . "T"))))
+                  '(((written . t)) ((written . t)) ((written . t)) ((written . t))
+                    ((written . t)) ((written . :false)) ((written . :false))))
+                 '(("A" "title" "tags")))))
+
 (provide 'zwanenzang-push-test)
 ;;; zwanenzang-push-test.el ends here

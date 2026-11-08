@@ -1402,7 +1402,6 @@ report appended to the `*zwanenzang*' buffer."
   "The changes one scope's push will send."
   changes                               ; newest first
   news                                  ; (MARKER . CHANGE INDEX) of creates
-  touched                               ; (ID . what changed) of tickets
   revived                               ; markers of headings being unarchived
   lines)                                ; report lines, newest first
 
@@ -1587,7 +1586,6 @@ so a reshuffled nesting has no moment with a parent cycle."
         (let* ((id (plist-get h :id))
                (entry (and id (gethash id read)))
                (new (assq (plist-get h :marker) (zwanenzang--plan-news plan)))
-               (before (length (zwanenzang--plan-changes plan)))
                (shown (zwanenzang--heading)))
           (cond
            (new
@@ -1598,14 +1596,25 @@ so a reshuffled nesting has no moment with a parent cycle."
            ((string-empty-p (plist-get shown :title))
             (zwanenzang--plan-line plan "%s: not pushed: the heading has no title" id))
            (t
-            (zwanenzang--plan-fields plan h id entry map hidden targets)
-            (let ((added (- (length (zwanenzang--plan-changes plan)) before)))
-              (when (> added 0)
-                (push (cons id (delete-dups
-                                (mapcar #'zwanenzang--plan-label
-                                        (reverse (seq-take (zwanenzang--plan-changes plan) added)))))
-                      (zwanenzang--plan-touched plan)))))))))
+            (zwanenzang--plan-fields plan h id entry map hidden targets))))))
     plan))
+
+(defun zwanenzang--written-fields (changes results)
+  "What `apply' changed on existing tickets, as an alist of id and field labels.
+CHANGES is the request's list and RESULTS the result's, position by
+position.  A change the tracker took as a no-op is left out, and so are
+new tickets, which the report names as created."
+  (let (fields)
+    (cl-mapc (lambda (change result)
+               (let ((id (alist-get 'ticket change)))
+                 (when (and (stringp id) (eq (alist-get 'written result) t))
+                   (let ((label (zwanenzang--plan-label change))
+                         (cell (assoc id fields)))
+                     (cond ((null cell) (push (list id label) fields))
+                           ((not (member label (cdr cell)))
+                            (setcdr cell (append (cdr cell) (list label)))))))))
+             changes results)
+    (nreverse fields)))
 
 (defun zwanenzang--drop-archive-properties ()
   "Remove what `org-archive-subtree' left on the entry at point."
@@ -1670,7 +1679,8 @@ recover.  OUTCOME collects the report."
           (cl-incf (zwanenzang--outcome-created outcome))
           (push (format "created %s" (cdr (assoc id labels)))
                 (zwanenzang--outcome-info outcome)))
-        (pcase-dolist (`(,id . ,what) (reverse (zwanenzang--plan-touched plan)))
+        (pcase-dolist (`(,id . ,what)
+                       (zwanenzang--written-fields changes (alist-get 'results result)))
           (cl-incf (zwanenzang--outcome-pushed outcome))
           (push (format "pushed %s: %s" (cdr (assoc id labels)) (string-join what ", "))
                 (zwanenzang--outcome-info outcome)))
@@ -1823,8 +1833,7 @@ pulls the scope."
                       (eq (alist-get 'archived summary) t)
                       (not (eq (alist-get 'tombstoned summary) t)))
              (zwanenzang--plan-add plan "unarchive" id nil)
-             (push marker (zwanenzang--plan-revived plan))
-             (push (list id "unarchive") (zwanenzang--plan-touched plan)))))
+             (push marker (zwanenzang--plan-revived plan)))))
        (unless (zwanenzang--plan-changes plan)
          (push "no archived ticket here" (zwanenzang--outcome-problems outcome)))
        (zwanenzang--send-plan plan dir outcome)
