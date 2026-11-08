@@ -21,15 +21,30 @@
 
 ;;;; Text
 
-(ert-deftest zwanenzang-escape-keeps-structure-out-of-text ()
-  (let ((text (concat "* heading\n** deeper\n*bold* stays\n#+TODO: X\n"
-                      ":END:\n  :PROPERTIES:\n,* already\nplain\n*\n")))
+(ert-deftest zwanenzang-escape-keeps-headings-out-and-org-verbatim ()
+  (let ((text (concat "* heading\n** deeper\n*bold* stays\n#+begin_src sh\nls\n#+end_src\n"
+                      "[[https://example.invalid][link]]\n,* already\nplain\n*\n")))
     (should (equal (zwanenzang--escape-text text)
-                   (concat ",* heading\n,** deeper\n*bold* stays\n,#+TODO: X\n"
-                           ",:END:\n,  :PROPERTIES:\n,,* already\nplain\n,*\n")))
+                   (concat ",* heading\n,** deeper\n*bold* stays\n#+begin_src sh\nls\n#+end_src\n"
+                           "[[https://example.invalid][link]]\n,,* already\nplain\n,*\n")))
     (should (equal (zwanenzang--unescape-text (zwanenzang--escape-text text)) text))
     ;; A comma that escapes nothing is the human's and stays.
     (should (equal (zwanenzang--unescape-text ",plain\n") ",plain\n"))))
+
+(ert-deftest zwanenzang-escape-covers-every-drawer-like-line ()
+  ;; Whatever follows: a human may add a drawer below it later.
+  (let ((text ":wip:\ntext\n  :NOTE:\nkept\n:END:\n:end:\n:ZWANENZANG_COMMENTS:\n"))
+    (should (equal (zwanenzang--escape-text text)
+                   ",:wip:\ntext\n,  :NOTE:\nkept\n,:END:\n,:end:\n,:ZWANENZANG_COMMENTS:\n"))
+    (should (equal (zwanenzang--body-description (zwanenzang--escape-text text)) text)))
+  ;; `#+' lines escaped by an earlier version read back without the comma.
+  (should (equal (zwanenzang--unescape-text ",#+begin_src\n,,#+x\n") "#+begin_src\n,#+x\n"))
+  (should (equal (zwanenzang--escape-text ",#+x\n") ",,#+x\n")))
+
+(ert-deftest zwanenzang-comment-text-escapes-headings-and-drawer-ends ()
+  (should (equal (zwanenzang--comment-text "one\n* two\n:END:\n  :end:\n#+begin_src\n:x:\n\n")
+                 "one\n,* two\n,:END:\n,  :end:\n#+begin_src\n:x:\n"))
+  (should (equal (zwanenzang--comment-text "\n") "")))
 
 (ert-deftest zwanenzang-normalize-text-ignores-surrounding-blank-lines ()
   (should (equal (zwanenzang--normalize-text "\n  \nText\n\nmore  \n\n") "Text\n\nmore\n"))
@@ -48,7 +63,7 @@
           ":PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"
           ":LOGBOOK:\n- note\n:END:\n"
           "First line\n"
-          ":ZWANENZANG_COMMENTS:\n[ts] a:\n  : hi\n:END:\n"
+          ":ZWANENZANG_COMMENTS:\n[ts] a:\nhi\n:END:\n"
           ",* escaped\n"
           ":UNCLOSED:\n"
           "last\n"))
@@ -70,7 +85,29 @@
   ;; Planning keywords stay case-sensitive.
   (should (equal (caar (zwanenzang--body-segments "scheduled: soon\n")) 'text))
   ;; Tracker text with such a line cannot close a drawer either.
-  (should (equal (zwanenzang--escape-text ":end:\n") ",:end:\n")))
+  (should (equal (zwanenzang--comment-text ":end:\n") ",:end:\n")))
+
+(ert-deftest zwanenzang-body-segments-keep-a-lone-drawer-line-out-of-own-drawers ()
+  ;; Text in front of the client's drawers: :lone: must not reach their :END:.
+  (let ((body ":lone:\nText\n:ZWANENZANG_COMMENTS:\n[ts] a:\n:lone:\n:END:\n"))
+    (should (equal (mapcar (lambda (s) (if (eq (car s) 'drawer) (nth 2 s) (car s)))
+                           (zwanenzang--body-segments body))
+                   '(text text "ZWANENZANG_COMMENTS")))
+    (should (equal (zwanenzang--body-description body) ":lone:\nText\n"))))
+
+(ert-deftest zwanenzang-body-segments-read-an-old-bare-line-before-a-drawer-as-text ()
+  ;; As an earlier version wrote it, with a human's drawer added below.
+  (let ((body ":PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\ntext\n:B:\ntail\n:NOTES:\nmine\n:END:\n"))
+    (should (equal (zwanenzang--body-description body) "text\n:B:\ntail\n"))
+    ;; Writing the body keeps all of it, and it still reads the same.
+    (let ((new (zwanenzang--compose-body body nil)))
+      (should (equal (zwanenzang--body-description new) "text\n:B:\ntail\n"))
+      (should (string-match-p ":NOTES:\nmine\n:END:\n" new))))
+  ;; An empty property, and a line like it in the logbook, do not end those.
+  (let ((body ":PROPERTIES:\n:EMPTY:\n:END:\n:LOGBOOK:\n:odd:\n:END:\nText\n"))
+    (should (equal (mapcar (lambda (s) (if (eq (car s) 'drawer) (nth 2 s) (car s)))
+                           (zwanenzang--body-segments body))
+                   '("PROPERTIES" "LOGBOOK" text)))))
 
 (ert-deftest zwanenzang-description-excludes-drawers-and-planning ()
   (should (equal (zwanenzang--body-description zwanenzang-test--body)
@@ -81,15 +118,16 @@
 (ert-deftest zwanenzang-compose-body-replaces-own-drawers-and-description ()
   (should (equal (zwanenzang--compose-body
                   zwanenzang-test--body
-                  '(("ZWANENZANG_COMMENTS" . "[ts] b:\n  : new\n")
+                  '(("ZWANENZANG_COMMENTS" . "[ts] b:\nnew\n")
                     ("ZWANENZANG_HIDDEN" . nil)
-                    ("ZWANENZANG_CONFLICT" . ""))
+                    ("ZWANENZANG_CONFLICT" . "- x\n"))
                   "* new text\n")
                  (concat "SCHEDULED: <2026-11-07 Sat>\n"
                          ":PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"
                          ":LOGBOOK:\n- note\n:END:\n"
-                         ":ZWANENZANG_COMMENTS:\n[ts] b:\n  : new\n:END:\n"
-                         ",* new text\n")))
+                         ":ZWANENZANG_CONFLICT:\n- x\n:END:\n"
+                         ",* new text\n"
+                         ":ZWANENZANG_COMMENTS:\n[ts] b:\nnew\n:END:\n")))
   ;; Without a description the text stays exactly as it was.
   (let ((kept (zwanenzang--compose-body zwanenzang-test--body
                                         '(("ZWANENZANG_COMMENTS" . nil)))))
@@ -100,8 +138,23 @@
     (should (equal (zwanenzang--body-description kept)
                    (zwanenzang--body-description zwanenzang-test--body)))))
 
+(ert-deftest zwanenzang-compose-body-moves-old-position-drawers-to-the-end ()
+  ;; The layout of earlier versions: the client's drawers above the text.
+  (let ((old (concat ":PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"
+                     ":ZWANENZANG_COMMENTS:\n[ts] a:\n  : hi\n:END:\n"
+                     ":ZWANENZANG_HIDDEN:\n[[zwanenzang:X/s][s (hidden)]]\n:END:\n"
+                     "Text\n")))
+    (should (equal (zwanenzang--body-description old) "Text\n"))
+    ;; Even when only another drawer is being written.
+    (should (equal (zwanenzang--compose-body old '(("ZWANENZANG_CONFLICT" . "- x\n")))
+                   (concat ":PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"
+                           ":ZWANENZANG_CONFLICT:\n- x\n:END:\n"
+                           "Text\n"
+                           ":ZWANENZANG_COMMENTS:\n[ts] a:\n  : hi\n:END:\n"
+                           ":ZWANENZANG_HIDDEN:\n[[zwanenzang:X/s][s (hidden)]]\n:END:\n")))))
+
 (ert-deftest zwanenzang-written-description-reads-back-unchanged ()
-  (let* ((text "Intro\n* not a heading\n:END:\n#+TITLE: no\n\nend\n")
+  (let* ((text "Intro\n* not a heading\n:END:\n#+TITLE: no\n:DRAWER:\nx\n:END:\n\nend\n")
          (body (zwanenzang--compose-body ":PROPERTIES:\n:END:\n" nil text)))
     (should (equal (zwanenzang--body-description body) text))
     (zwanenzang-test-with-org (concat "* T\n" body "* Next\n")
@@ -264,7 +317,7 @@
 
 ;;;; Rendering tracker state
 
-(ert-deftest zwanenzang-comments-render-names-links-and-quoted-text ()
+(ert-deftest zwanenzang-comments-render-names-links-and-org-text ()
   (let ((pull (zwanenzang--pull-create
                :tracker-dir "/trk/"
                :actors '((A1 . "Alice")))))
@@ -276,11 +329,11 @@
                                  (text . "second") (link . "docs/x.md"))
                                 ((actor . "A1") (ts . "2026-11-07T12:00:00Z")
                                  (text . "third") (link . "https://example.invalid/mr/1")))))
-                   (concat "[2026-11-07T10:00:00Z] Alice:\n  : first\n  : * line\n"
-                           "[2026-11-07T11:00:00Z] 01UNDECLAR:\n  : second\n"
-                           "  [[file:/trk/docs/x.md]]\n"
-                           "[2026-11-07T12:00:00Z] Alice:\n  : third\n"
-                           "  [[https://example.invalid/mr/1]]\n")))))
+                   (concat "[2026-11-07T10:00:00Z] Alice:\nfirst\n,* line\n"
+                           "[2026-11-07T11:00:00Z] 01UNDECLAR:\nsecond\n"
+                           "[[file:/trk/docs/x.md]]\n"
+                           "[2026-11-07T12:00:00Z] Alice:\nthird\n"
+                           "[[https://example.invalid/mr/1]]\n")))))
 
 (ert-deftest zwanenzang-hidden-documents-render-as-links ()
   (let ((pull (zwanenzang--pull-create :hidden '("status" "plan" "absent"))))

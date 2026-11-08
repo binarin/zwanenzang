@@ -62,13 +62,14 @@
         (should (org-entry-get (line-beginning-position 2) "ZWANENZANG_CURSOR")))
       (let ((entry (zwanenzang-test-entry parent)))
         (should (string-match-p
-                 (concat ":ZWANENZANG_COMMENTS:\n"
-                         "\\[[-0-9T:Z]+\\] tester:\n  : first\n  : \\* starred\n  : :END:\n"
-                         "\\[[-0-9T:Z]+\\] tester:\n  : second\n:END:\n"
+                 (concat ":END:\n"
+                         "Intro\n,\\* not a heading\n"
+                         ":ZWANENZANG_COMMENTS:\n"
+                         "\\[[-0-9T:Z]+\\] tester:\nfirst\n,\\* starred\n,:END:\n"
+                         "\\[[-0-9T:Z]+\\] tester:\nsecond\n:END:\n"
                          ":ZWANENZANG_HIDDEN:\n"
                          (regexp-quote (format "[[zwanenzang:%s/status][status (hidden)]]" parent))
-                         "\n:END:\n"
-                         "Intro\n,\\* not a heading\n\\'")
+                         "\n:END:\n\\'")
                  entry)))
       (save-excursion
         (zwanenzang-test-goto parent)
@@ -98,12 +99,93 @@
       (zwanenzang-test-pull)
       (should (string-match-p "\\`\\*\\*\\* DONE New +:b:\\'" (zwanenzang-test-heading id)))
       (should (string-match-p "status=done " (zwanenzang-test-property id "ZWANENZANG_SYNC")))
-      (should (string-match-p "  : later\n:END:\nNew text\n\\'" (zwanenzang-test-entry id)))
+      (should (string-match-p "New text\n:ZWANENZANG_COMMENTS:\n.*\nlater\n:END:\n\\'"
+                              (zwanenzang-test-entry id)))
       (save-excursion
         (zwanenzang-test-goto id)
         (goto-char (cdar (zwanenzang--doc-headings)))
         (should (equal (zwanenzang--body-description (zwanenzang--body)) "New plan\n")))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id))))))
+
+(ert-deftest zwanenzang-pull-writes-org-prose-verbatim-and-below-it-the-comments ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((id (zwanenzang-test-create trk "Prose"))
+          (prose "See [[https://example.invalid][this]]:\n#+begin_src sh\nls\n#+end_src\n"))
+      (zwanenzang-test-set-doc trk id "description" prose)
+      (zwanenzang-test-cli trk "comment" id "[[https://example.invalid][there]]\n#+begin_quote\nq\n#+end_quote")
+      (zwanenzang-test-pull)
+      (let ((entry (zwanenzang-test-entry id)))
+        (should (string-match-p (concat (regexp-quote prose) ":ZWANENZANG_COMMENTS:\n") entry))
+        (should (string-match-p
+                 "tester:\n\\[\\[https://example.invalid\\]\\[there\\]\\]\n#\\+begin_quote\n"
+                 entry)))
+      (let ((before (buffer-string)))
+        (zwanenzang-test-pull)
+        (should (equal (buffer-string) before))))))
+
+(ert-deftest zwanenzang-pull-moves-a-comments-drawer-from-the-old-position ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((id (zwanenzang-test-create trk "Old layout")))
+      (zwanenzang-test-set-doc trk id "description" "Text\n,#+begin_src\n")
+      (zwanenzang-test-cli trk "comment" id "note")
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (zwanenzang--write-body
+         (concat ":PROPERTIES:\n"
+                 (mapconcat (lambda (p) (format ":%s: %s\n" (car p) (cdr p)))
+                            (seq-filter (lambda (p) (string-prefix-p "ZWANENZANG" (car p)))
+                                        (org-entry-properties nil 'standard))
+                            "")
+                 ":END:\n"
+                 ":ZWANENZANG_COMMENTS:\n[old] tester:\n  : note\n:END:\n"
+                 "Text\n,,#+begin_src\n")))
+      (let ((sync (zwanenzang-test-property id "ZWANENZANG_DESC_HASH")))
+        (zwanenzang-test-pull)
+        (should (equal (zwanenzang-test-property id "ZWANENZANG_DESC_HASH") sync)))
+      (let ((entry (zwanenzang-test-entry id)))
+        (should (string-match-p "Text\n,,#\\+begin_src\n:ZWANENZANG_COMMENTS:\n.*tester:\nnote\n:END:\n\\'"
+                                entry))
+        (with-temp-buffer
+          (insert entry)
+          (should (= 1 (how-many ":ZWANENZANG_COMMENTS:" (point-min) (point-max))))))
+      (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id))))))
+
+(ert-deftest zwanenzang-pull-counts-a-heading-with-two-conflicts-once ()
+  ;; Field conflict and a skipped move on one heading.
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((x (zwanenzang-test-create trk "X"))
+          (y (zwanenzang-test-create trk "Y")))
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto y)
+        (org-cut-subtree)
+        (zwanenzang-test-goto x)
+        (org-end-of-subtree t t)
+        (org-paste-subtree 4)
+        (zwanenzang-test-goto x)
+        (org-edit-headline "X mine"))
+      (zwanenzang-test-cli trk "title" x "X theirs")
+      (zwanenzang-test-cli trk "parent" x y)
+      (zwanenzang-test-clear-report)
+      (should (string-match-p "1 with conflicts" (zwanenzang-test-pull)))
+      (should (string-match-p "ZZ-0001 Org \"X mine\", tracker \"X theirs\": conflict in title"
+                              (zwanenzang-test-report))))))
+
+(ert-deftest zwanenzang-pull-reports-what-changed-per-ticket ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((a (zwanenzang-test-create trk "A")))
+      (zwanenzang-test-create trk "B")
+      (zwanenzang-test-clear-report)
+      (zwanenzang-test-pull)
+      (should (string-match-p "new ZZ-0001 A\n  new ZZ-0002 B" (zwanenzang-test-report)))
+      (zwanenzang-test-cli trk "title" a "A2")
+      (zwanenzang-test-clear-report)
+      (should (string-match-p "1 pulled\\'" (zwanenzang-test-pull)))
+      (should (string-match-p "pulled ZZ-0001 A2" (zwanenzang-test-report)))
+      (should-not (string-match-p "ZZ-0002" (zwanenzang-test-report)))
+      ;; A clean run: the echo stays one line and points nowhere.
+      (should (string-match-p ": nothing changed\\'" (zwanenzang-test-pull))))))
 
 (ert-deftest zwanenzang-pull-keeps-local-edits-and-records-conflicts ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
@@ -223,7 +305,10 @@
                               (zwanenzang-test-entry b)))
       ;; The sync state still has the nesting before the skipped move.
       (should (string-match-p "parent=- nest=-\\'" (zwanenzang-test-property b "ZWANENZANG_SYNC")))
-      (should (string-match-p "B: conflict in parent" (zwanenzang-test-report)))
+      (should (string-match-p "Org \"B\", tracker \"B\": conflict in parent"
+                              (zwanenzang-test-report)))
+      ;; One heading, one count, however many reasons.
+      (should (string-match-p "1 with conflicts" (zwanenzang-test-pull)))
       ;; The next pull reaches the same verdict.
       (zwanenzang-test-pull)
       (should (equal (zwanenzang-test-parent-heading b) "Inbox"))
@@ -448,6 +533,7 @@
         (unwind-protect
             (with-current-buffer shown
               (should (equal (buffer-string) "Agent summary\n"))
+              (should (derived-mode-p 'org-mode))
               (should buffer-read-only))
           (kill-buffer shown)))
       ;; Following the link through Org works too.

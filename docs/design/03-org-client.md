@@ -172,11 +172,22 @@ archived ticket is simply absent. Rules:
   default views (`list`, `query` without `--all`), whatever its status.
 - The re-insertion rule in Pull is what brings an archived-but-active ticket
   back when it changes.
+- Emitting `unarchive`: a heading in scope that carries `ARCHIVE_TIME` and
+  whose ticket is archived in the tracker has been restored by the human, so
+  push sends `unarchive` and removes the `ARCHIVE_*` properties once `apply`
+  succeeds. Its status follows the keyword as for any edit. A heading with
+  `ARCHIVE_TIME` whose ticket is not archived sends nothing, and keeps the
+  properties. `zwanenzang-unarchive` does the same for the ticket heading at
+  point on demand; with a prefix argument, also every archived ticket
+  heading in its subtree. It leaves status alone, as the operation does.
 
 Refile from a personal inbox scope into a client tracker's scope is handled by
 the foreign-id rule above. History does not travel, which is accepted.
 
 ## Prose in org
+
+Tracker prose (descriptions, named documents, comments) is Org, not Markdown.
+The CLI stays format-blind and nothing converts it.
 
 - The description is the human's. Pull overwrites it only when the local text
   is unchanged since the cursor. Agents cannot write it.
@@ -301,8 +312,8 @@ Decided 2026-11-07 for the first Emacs implementation.
   `zwanenzang-sync` act on the scope at point (sync is CLI `sync`, pull,
   push, pull); `zwanenzang-sync-all` syncs every scope in
   `zwanenzang-org-files`, which defaults to `org-agenda-files`;
-  `zwanenzang-adopt-foreign`, `zwanenzang-resolve-duplicate` and
-  `zwanenzang-open`.
+  `zwanenzang-unarchive`, `zwanenzang-adopt-foreign`,
+  `zwanenzang-resolve-duplicate` and `zwanenzang-open`.
 - Deferred to milestone 5: per-heading operations, doctor across files,
   the archive hook, tramp.
 
@@ -329,18 +340,20 @@ Every property the client owns starts with `ZWANENZANG`.
 
 - The description is the body before the first subheading, excluding
   drawers and planning lines.
-- Comments go in a `:ZWANENZANG_COMMENTS:` drawer, newest last, each
-  `[timestamp] actor:` followed by the text. The drawer is rewritten from
+- Comments go in a `:ZWANENZANG_COMMENTS:` drawer at the end of the body,
+  below the description, newest last, each `[timestamp] actor:` followed by
+  the text as plain Org, so its links work. The drawer is rewritten from
   tracker state and never read back.
 - Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The
   conflict tag is `zz_conflict`; it is never pushed as a tracker tag.
 - Each hidden document is one link line using a `zwanenzang:` Org link
   type, which opens the document read-only through the CLI. The lines go
-  in a `:ZWANENZANG_HIDDEN:` drawer next to the comments drawer,
+  in a `:ZWANENZANG_HIDDEN:` drawer after the comments drawer,
   `[[zwanenzang:<id>/<doc>][<doc> (hidden)]]` for each hidden document the
   ticket has, rewritten from tracker state. Being a drawer, it is not part
   of the description. `description` in `ZWANENZANG_HIDE_DOCS` is
-  reported and ignored.
+  reported and ignored. `zwanenzang-open` shows the document in a read-only
+  `org-mode` buffer.
 - A comment's actor is its display name from `read`'s `tracker.actors`,
   or the first ten characters of its id when it declared none.
 
@@ -354,7 +367,8 @@ tracker.
   the tracker knows. A heading whose id the tracker does not know is
   foreign; two headings in the scope with one id are duplicates. Both
   block only those headings: they get `zz_conflict`, a note in
-  `:ZWANENZANG_CONFLICT:` and a report line, and are never sent to
+  `:ZWANENZANG_CONFLICT:` and a report line with the heading's line
+  number (not in the note, which would move it), and are never sent to
   `read`. Everything else pulls. Adopting a foreign heading and
   resolving a duplicate are separate commands, not part of pull.
 - Tracker identity: the first pull records `ZWANENZANG_TRACKER`; a read
@@ -406,15 +420,32 @@ tracker.
   mapped. Pull never adds the tag, keeps it where the human set it, and
   `archived` is not part of `ZWANENZANG_SYNC`.
 - Prose: the description and named documents are compared normalized,
-  without leading blank lines or trailing whitespace. A line Org would
-  read as a heading, a drawer boundary or a `#+` keyword is written with
-  a leading comma, which reading strips again, so tracker text cannot
-  change the outline. Comment text and skipped values are written as
+  without leading blank lines or trailing whitespace. They are written
+  verbatim (`#+begin_src`, links and other Org included) except for what
+  would break the body. A heading line and every drawer-like line (`:word:`
+  alone on a line, `:END:` too) get a leading comma, whatever follows them,
+  which reading strips again. Escaping those only when an `:END:` followed
+  in the text was not enough: a human can add a drawer below later, the line
+  then read as its opening, and the push truncated the description. The
+  cost is a comma on `:wip:`-shaped lines of prose. In comments, heading
+  lines and `:END:` lines get the comma. Heading lines in named documents
+  stay escaped for now; levels are not shifted. Skipped values are
   fixed-width `: ` lines. Drawers end at `:END:` in any case, as in Org.
+- Reading is lenient about files earlier versions wrote. Drawers do not
+  nest, so a drawer-like line with another one before its `:END:` is text;
+  only the property drawer, the logbook and the client's own drawers run
+  through such lines. Org itself would still fold that text as a drawer. Two
+  cases stay ambiguous: a bare `:B:` with a lone `:END:` typed below it is a
+  drawer (it is one, to Org too), and a human's own `:NOTES:` drawer holding
+  a `:word:` line leaks its opening line into the description. Reading also
+  strips the comma an earlier version put on `#+` lines, so files written
+  then do not read as edited.
 - Writing a body keeps planning lines first and the other drawers in
-  their order, then the client's drawers, then the text. Human text
-  interleaved between drawers therefore moves, verbatim, after them; the
-  description it forms is unchanged.
+  their order, then `:ZWANENZANG_CONFLICT:`, then the text, then the
+  comments and hidden drawers. A comments drawer in the old position above
+  the text moves down the next time the body is written. Human text around
+  drawers moves, verbatim, in front of the tail drawers; the description it
+  forms is unchanged.
 - Named documents are the ticket heading's direct children with
   `ZWANENZANG_DOC`, titled with the document name. A tracker document
   without such a subheading gets one, including one the human deleted:
@@ -426,6 +457,67 @@ tracker.
   One scope's pull is a single undo step and works whatever the folding.
   A CLI failure before or during the edit leaves the buffer as it was.
 
+### Push
+
+Decided 2026-11-08 with the first `zwanenzang-push`, which acts on the scope
+containing point: its own `read`, one `apply`, then a pull so numbers,
+cursors and sync state land. It never fetches first; `zwanenzang-sync`
+does.
+
+- What is sent: for each field where Org differs from the sync state, Org's
+  value, whatever the tracker has now. The agent's value stays in history.
+  A field the tracker already agrees with is not sent, and neither is one
+  only the tracker changed: the pull applies that.
+- Status goes by keyword, only when it changed, as the first status of
+  that keyword. If the tracker already has a status of that keyword, the
+  two agree. Tags are sent as the difference between Org's set and the
+  tracker's; `zz_conflict` and `ARCHIVE` are never among them.
+- Documents use the current version from push's own read as `base`, so
+  the human's text goes on top of whatever an agent wrote. When an edit
+  sits unfetched on the remote, the human's version can still end up lost
+  at replay: the final pull then shows a conflict with the text kept in Org,
+  and the next push settles it. If the clone moves between the read and the
+  apply, so the base is stale, push reads again, rebuilds and applies once
+  more; a second stale base is a `user-error`, with the buffer untouched.
+- No sync state means no wiping: a field with nothing recorded is sent
+  when Org has a value, but an empty one is left alone. An empty new
+  document is not created either.
+- Creates come first in the batch, then each heading's changes in buffer
+  order, ancestors first, so a reshuffled nesting has no moment with a
+  parent cycle. A refused batch changes nothing, in the tracker or the
+  buffer, and the error names no heading, as the CLI's does not.
+- Identity must survive: without `ZWANENZANG_ID` the next push would create
+  the ticket again. So it is written right after `apply` returns, and a push
+  that created at least one ticket saves the file right then, and says so in
+  the report. Everything else leaves buffers unsaved: pull, pushes that
+  created nothing, and the pull ending a push. A read-only buffer is refused
+  before `apply`. If writing back still fails after `apply` succeeded, the
+  error lists the created numbers and ids so the human can recover.
+- Parent comes from nesting: the nearest ticket heading above, new ones
+  included. Grouping headings are transparent; the inbox or scope root
+  means no ancestor. `parent` is sent only when the nesting changed since
+  `nest=`, so a ticket parked in the inbox keeps its tracker parent.
+- New documents: a direct child with `ZWANENZANG_DOC` and no recorded hash.
+  A name in `ZWANENZANG_HIDE_DOCS`, the name `description` and a second
+  heading for a name already seen are refused with a report line.
+- Blocked and skipped: foreign and duplicate ids, a tombstoned ticket, an
+  Org keyword with no status or no keyword at all, a tracker status with no
+  keyword, an empty title. The final pull writes the tag and note, because
+  pull recomputes that drawer: an unmapped or missing Org keyword now gets
+  its note there too. A tracker id mismatch skips the whole scope. Headings
+  tagged `zz_conflict` for field conflicts are pushed like any other, and
+  the final pull clears their tag and drawer once the fields agree.
+- A new heading that cannot be created (unmapped keyword, no title, a
+  blocked ticket heading above it) is only reported; it is not a ticket, so
+  no note is written on it. A ticket moved under a blocked heading keeps
+  its parent, reported, and the nesting's sync state, so it retries.
+- An invalid tag, or a document name the CLI refuses, refuses the batch
+  with the CLI's error, which names it. Nothing is lost.
+- `zwanenzang-sync` is CLI `sync`, pull, push, the push ending in a pull. An
+  unreachable remote is reported and the rest works on the local clone.
+  `zwanenzang-sync-all` does that for every scope in `zwanenzang-org-files`;
+  a scope that fails is reported and the others still run.
+
 ### Errors and reports
 
 - A command failure (a JSON error object, or a usage error with exit
@@ -434,6 +526,12 @@ tracker.
 - Publication errors (`fetch-failed`, `push-rejected`, ...) and checkout
   skips are not failures: the client echoes a one-line summary and appends
   a readable report to the `*zwanenzang*` buffer.
+- The report lists per ticket, by number and title, what was pulled, moved,
+  pushed (changes the tracker wrote, not its no-ops) and created, then conflicts and checkout results from the sync
+  object. Conflict lines show both Org's title and the tracker's. A command
+  of several steps makes one report; the conflicts in it are the last
+  pull's, so ones a push settled are gone. The echo points at the buffer
+  only when something needs a look; a clean run is one line.
 
 ### Bootstrap and tests
 

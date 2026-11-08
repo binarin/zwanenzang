@@ -146,6 +146,10 @@ Four kinds of text, four rules:
 Whether `description` stays human-only or becomes co-edited is an open
 question; start human-only.
 
+Prose is Org, not Markdown: descriptions, named documents and comments are
+written and read as Org text. The event core and the CLI stay format-blind;
+they store UTF-8 text and never parse or convert it.
+
 ## Open questions
 
 - Default status vocabulary. Predecessors used draft, in-progress,
