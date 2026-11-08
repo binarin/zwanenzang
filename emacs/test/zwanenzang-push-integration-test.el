@@ -572,5 +572,23 @@
                 (with-current-buffer b (set-buffer-modified-p nil))
                 (kill-buffer b)))))))))
 
+(ert-deftest zwanenzang-sync-all-goes-on-past-any-error-in-a-scope ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-with-tracker other
+      (zwanenzang-test-create other "Has to land in a read-only buffer")
+      (let* ((stuck (expand-file-name "stuck.org" net))
+             (zwanenzang-org-files (list stuck buffer-file-name)))
+        (with-temp-file stuck (insert (format zwanenzang-test--push-org other)))
+        (with-current-buffer (find-file-noselect stuck) (setq buffer-read-only t))
+        (zwanenzang-test-append "** TODO Over here\n")
+        (unwind-protect
+            (progn
+              (zwanenzang-test-clear-report)
+              (should (string-match-p "synced 1 scopes, 1 failed" (zwanenzang-sync-all)))
+              (should (zwanenzang-test-id-of "Over here"))
+              (should (string-match-p "stuck.org: Project: .*read-only"
+                                      (zwanenzang-test-report))))
+          (kill-buffer (find-buffer-visiting stuck)))))))
+
 (provide 'zwanenzang-push-integration-test)
 ;;; zwanenzang-push-integration-test.el ends here

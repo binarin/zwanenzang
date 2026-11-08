@@ -1743,22 +1743,25 @@ against the local clone."
 ;;;###autoload
 (defun zwanenzang-sync-all ()
   "Sync every scope in `zwanenzang-org-files', each like `zwanenzang-sync'.
-A scope that fails is reported and the others still run."
+A scope or file that fails, in any way, is reported and the others run."
   (interactive)
   (let ((done 0) failures)
     (dolist (file (zwanenzang--org-files))
-      (if (not (file-exists-p file))
-          (push (format "%s: no such file" file) failures)
-        (with-current-buffer (find-file-noselect file)
-          (dolist (root (zwanenzang--scope-roots))
-            (condition-case err
-                (progn (zwanenzang--sync-scope root)
-                       (cl-incf done))
-              (user-error
-               (push (format "%s: %s: %s" file
-                             (org-with-wide-buffer (zwanenzang--scope-name root))
-                             (error-message-string err))
-                     failures)))))))
+      (condition-case err
+          (if (not (file-exists-p file))
+              (push (format "%s: no such file" file) failures)
+            (with-current-buffer (find-file-noselect file)
+              (dolist (root (zwanenzang--scope-roots))
+                (condition-case err
+                    (progn (zwanenzang--sync-scope root)
+                           (cl-incf done))
+                  (error
+                   (push (format "%s: %s: %s" file
+                                 (org-with-wide-buffer (zwanenzang--scope-name root))
+                                 (error-message-string err))
+                         failures))))))
+        (error
+         (push (format "%s: %s" file (error-message-string err)) failures))))
     (zwanenzang-report (format "zwanenzang: synced %d scopes, %d failed" done (length failures))
                        (reverse failures))))
 
