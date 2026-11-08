@@ -163,5 +163,119 @@ it lists."
      (zwanenzang-test-call ,var '("init" "--prefix" "ZZ" "--name" "Test"))
      ,@body))
 
+;;;; Trackers and Org scopes for pull tests
+
+(defun zwanenzang-test-cli (dir &rest args)
+  "Run the CLI with ARGS on the disposable tracker DIR; return its JSON."
+  (zwanenzang-test-call dir args))
+
+(defun zwanenzang-test-create (dir title &rest args)
+  "Create a ticket TITLE with extra ARGS in DIR; return its id."
+  (alist-get 'id (alist-get 'ticket (apply #'zwanenzang-test-cli dir "create" title args))))
+
+(defun zwanenzang-test-show (dir ref)
+  "The ticket object REF in DIR."
+  (zwanenzang-test-cli dir "show" ref))
+
+(defun zwanenzang-test-set-doc (dir ref name text)
+  "Write TEXT as the next version of document NAME of REF in DIR."
+  (let* ((doc (alist-get (intern name) (alist-get 'documents (zwanenzang-test-show dir ref))))
+         (base (or (and doc (stringp (alist-get 'current doc)) (alist-get 'current doc)) "none"))
+         (file (make-temp-file (expand-file-name "doc-" (zwanenzang-test--temp-root)))))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert text))
+          (zwanenzang-test-cli dir "doc" "set" ref name "--base" base "--file" file))
+      (delete-file file))))
+
+(defun zwanenzang-test-append-raw (dir actor line)
+  "Append the raw event LINE to ACTOR's log in the disposable tracker DIR."
+  (zwanenzang-test-assert-disposable dir)
+  (let ((file (expand-file-name (format "events/%s.jsonl" actor) dir)))
+    (write-region (concat line "\n") nil file t 'silent)))
+
+(defconst zwanenzang-test--crockford "0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+
+(defun zwanenzang-test-ulid-next (ulid)
+  "The ULID right after ULID."
+  (let ((chars (copy-sequence ulid))
+        (i (1- (length ulid)))
+        (carry t))
+    (while (and carry (>= i 0))
+      (let ((v (1+ (seq-position zwanenzang-test--crockford (aref chars i)))))
+        (setq carry (= v 32))
+        (aset chars i (aref zwanenzang-test--crockford (% v 32)))
+        (cl-decf i)))
+    chars))
+
+(defmacro zwanenzang-test-with-scope (spec &rest body)
+  "Run BODY with a disposable tracker and an Org file scoped to it.
+SPEC is (TRACKER BUFFER ORG-TEXT).  ORG-TEXT is the file's text, with
+%s where the tracker location goes.  BUFFER visits the file, and the
+client runs the CLI only through the guarded `zwanenzang-test-call'."
+  (declare (indent 1) (debug ((symbolp symbolp form) body)))
+  (let ((dir (make-symbol "dir")))
+    `(zwanenzang-test-with-tracker ,(nth 0 spec)
+       (zwanenzang-test-with-dir ,dir
+         (let* ((file (expand-file-name "scope.org" ,dir))
+                (zwanenzang--call #'zwanenzang-test-call)
+                ,(nth 1 spec))
+           (with-temp-file file (insert (format ,(nth 2 spec) ,(nth 0 spec))))
+           (setq ,(nth 1 spec) (find-file-noselect file))
+           (unwind-protect
+               (with-current-buffer ,(nth 1 spec) ,@body)
+             (with-current-buffer ,(nth 1 spec) (set-buffer-modified-p nil))
+             (kill-buffer ,(nth 1 spec))))))))
+
+(defun zwanenzang-test-pull ()
+  "Pull the scope of the first heading in the current buffer; return the summary."
+  (save-excursion
+    (goto-char (point-min))
+    (outline-next-heading)
+    (zwanenzang-pull)))
+
+(defun zwanenzang-test-goto (id)
+  "Move to the only heading with ZWANENZANG_ID ID and return point."
+  (let ((found (org-find-property "ZWANENZANG_ID" id)))
+    (unless found (error "No heading for %s" id))
+    (goto-char found)))
+
+(defun zwanenzang-test-heading (id)
+  "The heading line of ticket ID, without text properties."
+  (save-excursion
+    (zwanenzang-test-goto id)
+    (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+
+(defun zwanenzang-test-entry (id)
+  "The text of ticket ID's heading and body, up to the next heading."
+  (save-excursion
+    (zwanenzang-test-goto id)
+    (buffer-substring-no-properties (point) (save-excursion (outline-next-heading) (point)))))
+
+(defun zwanenzang-test-property (id property)
+  "PROPERTY of ticket ID's heading."
+  (save-excursion (zwanenzang-test-goto id) (org-entry-get nil property)))
+
+(defun zwanenzang-test-tags (id)
+  "The local tags of ticket ID's heading."
+  (save-excursion (zwanenzang-test-goto id) (org-get-tags nil t)))
+
+(defun zwanenzang-test-parent-heading (id)
+  "The title of the heading directly above ticket ID's heading."
+  (save-excursion
+    (zwanenzang-test-goto id)
+    (org-up-heading-safe)
+    (org-get-heading t t t t)))
+
+(defun zwanenzang-test-report ()
+  "The text of the report buffer."
+  (with-current-buffer (get-buffer-create zwanenzang-report-buffer)
+    (buffer-substring-no-properties (point-min) (point-max))))
+
+(defun zwanenzang-test-clear-report ()
+  "Empty the report buffer."
+  (with-current-buffer (get-buffer-create zwanenzang-report-buffer)
+    (let ((inhibit-read-only t)) (erase-buffer))))
+
 (provide 'zwanenzang-test-helpers)
 ;;; zwanenzang-test-helpers.el ends here

@@ -112,11 +112,12 @@ document:
   the heading, and record the skipped remote value in a drawer so it can be
   seen. The remote change remains in history regardless.
 
-Tickets in the tracker but absent from the scope are inserted under the
-scope's inbox heading only if they are not archived, not tombstoned, and have
-events newer than the scope's last pull. An archived ticket never reappears
-on its own; an open ticket that was archived in org reappears exactly when
-something happens to it.
+Tickets in the tracker but absent from the scope are inserted only if they
+are not archived, not tombstoned, and have events newer than the scope's last
+pull: under their parent's heading when it is in scope, otherwise under the
+scope's inbox heading. An archived ticket never reappears on its own; an
+open ticket that was archived in org reappears exactly when something
+happens to it.
 
 ## Push
 
@@ -211,8 +212,9 @@ Known tickets are returned even when archived or tombstoned, so the client
 can handle their removal. Absent tickets are discovered only when live and
 affected by events since `since`; null discovers all live tickets. Each
 result holds the full ticket, current document text, accepted events after
-its cursor, and the next cursor. A scope read also returns tracker identity
-and the replayed vocabularies, so a client can validate its keyword map.
+its cursor, and the next cursor. A scope read also returns tracker identity,
+the replayed vocabularies, so a client can validate its keyword map, and
+the declared actor names, so it can name comment authors.
 The exact JSON is in [cli-json](../cli-json.md).
 
 Per-ticket history includes events that affect its visible state from the
@@ -317,9 +319,9 @@ Every property the client owns starts with `ZWANENZANG`.
 - Ticket heading: `ZWANENZANG_ID` (ULID), `ZWANENZANG_NUMBER` (display
   form), `ZWANENZANG_CURSOR`, `ZWANENZANG_SYNC`, `ZWANENZANG_DESC_VERSION`
   and `ZWANENZANG_DESC_HASH`. `ZWANENZANG_SYNC` is a compact snapshot of
-  the last synced fields, for example
-  `status=draft title=<hash> tags=<hash> parent=<id>`. It stores the
-  tracker status, so a draft shown as TODO stays draft.
+  the last synced fields, for example `status=draft title=<hash>
+  tags=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
+  stores the tracker status, so a draft shown as TODO stays draft.
 - Named document: a subheading with `ZWANENZANG_DOC: <name>`,
   `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`.
 
@@ -333,7 +335,96 @@ Every property the client owns starts with `ZWANENZANG`.
 - Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The
   conflict tag is `zz_conflict`; it is never pushed as a tracker tag.
 - Each hidden document is one link line using a `zwanenzang:` Org link
-  type, which opens the document read-only through the CLI.
+  type, which opens the document read-only through the CLI. The lines go
+  in a `:ZWANENZANG_HIDDEN:` drawer next to the comments drawer,
+  `[[zwanenzang:<id>/<doc>][<doc> (hidden)]]` for each hidden document the
+  ticket has, rewritten from tracker state. Being a drawer, it is not part
+  of the description. `description` in `ZWANENZANG_HIDE_DOCS` is
+  reported and ignored.
+- A comment's actor is its display name from `read`'s `tracker.actors`,
+  or the first ten characters of its id when it declared none.
+
+### Pull
+
+Decided 2026-11-07 with the first `zwanenzang-pull`. Pull acts on the
+scope containing point; it neither runs CLI `sync` nor writes to the
+tracker.
+
+- Identity: pull runs `list --all` first and sends `read` only the ids
+  the tracker knows. A heading whose id the tracker does not know is
+  foreign; two headings in the scope with one id are duplicates. Both
+  block only those headings: they get `zz_conflict`, a note in
+  `:ZWANENZANG_CONFLICT:` and a report line, and are never sent to
+  `read`. Everything else pulls. Adopting a foreign heading and
+  resolving a duplicate are separate commands, not part of pull.
+- Tracker identity: the first pull records `ZWANENZANG_TRACKER`; a read
+  that returns another id blocks the whole scope and changes nothing.
+- Keyword map: parsed against `read`'s `statuses`. A status with no
+  keyword or with two is reported (the first keyword is used). An entry
+  naming a keyword the buffer does not define, or a status outside the
+  vocabulary, is reported and ignored. Without the property, each TODO
+  keyword maps the status of the same name, ignoring case.
+- Field by field, for status, title, tags, parent, description and each
+  named document: the remote value applies when Org still shows the
+  value as last synced; Org's value stays when only Org changed; when
+  both changed, Org's value stays, the heading gets `zz_conflict` and
+  the skipped remote value goes in the conflict drawer. A field with no
+  recorded sync state counts as changed on both sides unless the values
+  agree. Status is compared as keywords, through the map, so a draft
+  shown as TODO stays draft; a synced status the map no longer covers
+  counts as unknown. Tags exclude `zz_conflict` and Org's
+  `ARCHIVE`, which are never tracker tags.
+- The conflict drawer and tag are recomputed by every pull: they hold
+  what this pull could not apply, and disappear once Org agrees with the
+  tracker (by hand, or after a push).
+- `ZWANENZANG_SYNC` is `status=<status> title=<hash> tags=<hash>
+  parent=<id> nest=<id>`, `-` for none. `nest` is the ticket heading the
+  heading was nested under at that sync; it differs from `parent` when
+  the parent has no heading in scope. Hashes, here and in
+  `ZWANENZANG_DESC_HASH` and `ZWANENZANG_HASH`, are the first 16 hex
+  digits of the SHA-256 of the UTF-8 text; tags are hashed sorted and
+  joined by spaces.
+- Parent: when the tracker parent changed and the nesting did not, the
+  subtree moves under the new parent's heading, or under the inbox when
+  the parent has no heading in scope or was cleared. When the nesting
+  changed too, it is a conflict, as is a move under the heading's own
+  descendant, including one an earlier move in the same pull would
+  cause. A move that does not happen leaves the nesting's sync state as
+  it was.
+- Discovery: a new ticket goes under its parent's heading when that is
+  in scope (parents are inserted before children), otherwise under the
+  inbox.
+- A pulled status the map does not cover blocks that heading: only the
+  tag and a note are written. A discovered ticket with such a status is
+  not inserted, and the scope cursor is not advanced, so it arrives once
+  the map covers it.
+- Archived and tombstoned: the heading stays in place and its other
+  fields still apply. An archived ticket is reported. A tombstoned one
+  also gets `zz_conflict` and a note, since writes to it would be
+  refused.
+- Known limitation: in-place archival with Org's `ARCHIVE` tag is not
+  mapped. Pull never adds the tag, keeps it where the human set it, and
+  `archived` is not part of `ZWANENZANG_SYNC`.
+- Prose: the description and named documents are compared normalized,
+  without leading blank lines or trailing whitespace. A line Org would
+  read as a heading, a drawer boundary or a `#+` keyword is written with
+  a leading comma, which reading strips again, so tracker text cannot
+  change the outline. Comment text and skipped values are written as
+  fixed-width `: ` lines. Drawers end at `:END:` in any case, as in Org.
+- Writing a body keeps planning lines first and the other drawers in
+  their order, then the client's drawers, then the text. Human text
+  interleaved between drawers therefore moves, verbatim, after them; the
+  description it forms is unchanged.
+- Named documents are the ticket heading's direct children with
+  `ZWANENZANG_DOC`, titled with the document name. A tracker document
+  without such a subheading gets one, including one the human deleted:
+  removing it from the buffer is not a deletion.
+- `reset: true` needs nothing special: pull always compares full state
+  with the sync state, and comments are re-rendered from state, so
+  nothing is duplicated. It is reported.
+- The buffer is edited (visiting the file if needed) but never saved.
+  One scope's pull is a single undo step and works whatever the folding.
+  A CLI failure before or during the edit leaves the buffer as it was.
 
 ### Errors and reports
 

@@ -246,7 +246,8 @@ No actor is allocated; no git repository is needed.
 
 ```json
 {"tracker": {"id": "<tracker ULID>", "name": "...", "prefix": "ZZ",
-             "statuses": ["draft", "..."], "kinds": ["task", "..."]},
+             "statuses": ["draft", "..."], "kinds": ["task", "..."],
+             "actors": {"<actor ULID>": "<display name>"}},
  "cursor": "<opaque scope cursor>" | null,
  "reset": false,
  "tickets": [{"ticket": {<full ticket object>},
@@ -263,7 +264,9 @@ No actor is allocated; no git repository is needed.
 - Full state and current document text are returned even when no events
   are newer. `documents` maps names to UTF-8 text, with version ids and
   blob names in `ticket.documents`. Missing document blobs fail the call.
-  Vocabularies include accepted `config` events.
+  Vocabularies include accepted `config` events. `tracker.actors` maps
+  every actor with an accepted declaration to its display name, so a
+  client can name comment authors; undeclared actors are left out.
 - Events are in id order, exclusive of the input cursor. They include
   relations from the other end, child moves on both old and new parents,
   and tombstones that remove visible children or relations. The event's

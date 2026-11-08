@@ -148,6 +148,12 @@ pub fn read(tracker: &Tracker, request: Request) -> Result<Value> {
             "reset": ticket_reset,
         }));
     }
+    let actors: BTreeMap<String, &String> = rp
+        .state
+        .actors
+        .iter()
+        .filter_map(|(id, info)| info.name.as_ref().map(|n| (id.to_string(), n)))
+        .collect();
     Ok(json!({
         "tracker": {
             "id": tracker.config.id,
@@ -155,6 +161,7 @@ pub fn read(tracker: &Tracker, request: Request) -> Result<Value> {
             "prefix": tracker.config.prefix,
             "statuses": rp.state.statuses,
             "kinds": rp.state.kinds,
+            "actors": actors,
         },
         "cursor": cursor(tracker.config.id, &all),
         "reset": reset,
