@@ -172,6 +172,14 @@ archived ticket is simply absent. Rules:
   default views (`list`, `query` without `--all`), whatever its status.
 - The re-insertion rule in Pull is what brings an archived-but-active ticket
   back when it changes.
+- Emitting `unarchive`: a heading in scope that carries `ARCHIVE_TIME` and
+  whose ticket is archived in the tracker has been restored by the human, so
+  push sends `unarchive` and removes the `ARCHIVE_*` properties once `apply`
+  succeeds. Its status follows the keyword as for any edit. A heading with
+  `ARCHIVE_TIME` whose ticket is not archived sends nothing, and keeps the
+  properties. `zwanenzang-unarchive` does the same for the ticket heading at
+  point on demand; with a prefix argument, also every archived ticket
+  heading in its subtree. It leaves status alone, as the operation does.
 
 Refile from a personal inbox scope into a client tracker's scope is handled by
 the foreign-id rule above. History does not travel, which is accepted.
@@ -304,8 +312,8 @@ Decided 2026-11-07 for the first Emacs implementation.
   `zwanenzang-sync` act on the scope at point (sync is CLI `sync`, pull,
   push, pull); `zwanenzang-sync-all` syncs every scope in
   `zwanenzang-org-files`, which defaults to `org-agenda-files`;
-  `zwanenzang-adopt-foreign`, `zwanenzang-resolve-duplicate` and
-  `zwanenzang-open`.
+  `zwanenzang-unarchive`, `zwanenzang-adopt-foreign`,
+  `zwanenzang-resolve-duplicate` and `zwanenzang-open`.
 - Deferred to milestone 5: per-heading operations, doctor across files,
   the archive hook, tramp.
 

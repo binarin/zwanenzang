@@ -1726,6 +1726,54 @@ A scope that fails is reported and the others still run."
     (zwanenzang-report (format "zwanenzang: synced %d scopes, %d failed" done (length failures))
                        (reverse failures))))
 
+;;;; Unarchive
+
+(defun zwanenzang--ticket-heading-at-point (root)
+  "A marker at the ticket heading at or above point in the scope at ROOT."
+  (save-excursion
+    (org-back-to-heading t)
+    (while (and (not (org-entry-get nil "ZWANENZANG_ID"))
+                (not (= (point) root))
+                (org-up-heading-safe)))
+    (unless (and (org-entry-get nil "ZWANENZANG_ID") (not (= (point) root)))
+      (user-error "zwanenzang: point is not on a ticket heading"))
+    (zwanenzang--heading-marker)))
+
+;;;###autoload
+(defun zwanenzang-unarchive (&optional subtree)
+  "Put the ticket heading at point back in the tracker's active set.
+With a prefix argument SUBTREE, also every archived ticket heading below
+it.  Leaves status alone, removes the heading's ARCHIVE_ properties and
+pulls the scope."
+  (interactive "P")
+  (let ((root (zwanenzang--root-at-point))
+        (outcome (zwanenzang--outcome-create)))
+    (org-with-wide-buffer
+     (let* ((case-fold-search nil)
+            (dir (zwanenzang--scope-directory root))
+            (start (zwanenzang--ticket-heading-at-point root))
+            (end (if subtree (zwanenzang--subtree-end start) (1+ start)))
+            (tickets (car (zwanenzang--scan root)))
+            (known (zwanenzang--known-tickets dir))
+            (blocked (zwanenzang--blocked-headings tickets known))
+            (plan (zwanenzang--plan-create)))
+       (dolist (tk tickets)
+         (let* ((marker (plist-get tk :marker))
+                (id (plist-get tk :id))
+                (summary (gethash id known)))
+           (when (and (<= start marker) (< marker end)
+                      (not (assq tk blocked))
+                      (eq (alist-get 'archived summary) t)
+                      (not (eq (alist-get 'tombstoned summary) t)))
+             (zwanenzang--plan-add plan "unarchive" id nil)
+             (push marker (zwanenzang--plan-revived plan))
+             (push (list id "unarchive") (zwanenzang--plan-touched plan)))))
+       (unless (zwanenzang--plan-changes plan)
+         (push "no archived ticket here" (zwanenzang--outcome-problems outcome)))
+       (zwanenzang--send-plan plan dir outcome)
+       (zwanenzang--pull-into outcome root)))
+    (zwanenzang--report-outcome "unarchived in" root outcome)))
+
 ;;;; Hidden documents
 
 (defun zwanenzang--link-follow (path _arg)

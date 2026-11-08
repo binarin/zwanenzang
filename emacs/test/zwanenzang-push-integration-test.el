@@ -396,6 +396,46 @@
         (should-error (zwanenzang-test-at-root #'zwanenzang-push) :type 'user-error))
       (should (zwanenzang-test-property id "ARCHIVE_TIME")))))
 
+(ert-deftest zwanenzang-unarchive-the-heading-at-point-or-its-subtree ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let* ((top (zwanenzang-test-create trk "Top"))
+           (kid (zwanenzang-test-create trk "Kid" "--parent" top))
+           (grand (zwanenzang-test-create trk "Grand" "--parent" kid))
+           (outside (zwanenzang-test-create trk "Outside")))
+      (zwanenzang-test-pull)
+      (dolist (id (list top kid grand outside))
+        (zwanenzang-test-cli trk "archive" id))
+      (zwanenzang-test-pull)
+      (save-excursion (zwanenzang-test-goto kid)
+                      (org-entry-put nil "ARCHIVE_TIME" "2026-11-08 Sun 10:00"))
+      (save-excursion
+        (zwanenzang-test-goto top)
+        (zwanenzang-unarchive))
+      (should (eq (alist-get 'archived (zwanenzang-test-show trk top)) :false))
+      (should (eq (alist-get 'archived (zwanenzang-test-show trk kid)) t))
+      (should (equal (alist-get 'status (zwanenzang-test-show trk top)) "draft"))
+      ;; Point in the body counts; the prefix takes the subtree too.
+      (save-excursion
+        (zwanenzang-test-goto kid)
+        (forward-line 2)
+        (zwanenzang-unarchive '(4)))
+      (should (eq (alist-get 'archived (zwanenzang-test-show trk kid)) :false))
+      (should (eq (alist-get 'archived (zwanenzang-test-show trk grand)) :false))
+      (should (eq (alist-get 'archived (zwanenzang-test-show trk outside)) t))
+      (should-not (zwanenzang-test-property kid "ARCHIVE_TIME"))
+      ;; Nothing there to do is reported, and writes nothing.
+      (let ((head (zwanenzang-test-head trk)))
+        (zwanenzang-test-clear-report)
+        (save-excursion
+          (zwanenzang-test-goto top)
+          (zwanenzang-unarchive))
+        (should (string-match-p "no archived ticket here" (zwanenzang-test-report)))
+        (should (equal (zwanenzang-test-head trk) head)))
+      (save-excursion
+        (goto-char (point-min))
+        (outline-next-heading)
+        (should-error (zwanenzang-unarchive) :type 'user-error)))))
+
 (ert-deftest zwanenzang-repeat-sync-is-stable ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
     (let ((id (zwanenzang-test-create trk "Ticket" "--tag" "a")))
