@@ -1208,12 +1208,10 @@ ticket and a note saying why."
              (note
               (cond
                ((> (gethash id counts) 1)
-                (format "duplicate: ZWANENZANG_ID %s is on %d headings in this scope (lines %s)"
-                        id (gethash id counts)
-                        (mapconcat (lambda (o) (number-to-string
-                                                (line-number-at-pos (plist-get o :marker) t)))
-                                   (seq-filter (lambda (o) (equal (plist-get o :id) id)) tickets)
-                                   ", ")))
+                ;; No line numbers here: the note goes in the buffer and
+                ;; would move them.  The report gives each heading's line.
+                (format "duplicate: ZWANENZANG_ID %s is on %d headings in this scope"
+                        id (gethash id counts)))
                ((not (gethash id known))
                 (format "foreign: the tracker has no ticket %s" id)))))
         (when note (push (cons tk note) blocked))))
@@ -1383,6 +1381,296 @@ report appended to the `*zwanenzang*' buffer."
         (outcome (zwanenzang--outcome-create)))
     (zwanenzang--pull-into outcome root)
     (zwanenzang--report-outcome "pulled" root outcome)))
+
+;;;; Push
+
+;; A push compares each heading with its sync state and sends Org's value
+;; for what differs, whatever the tracker has now: the human wins, and the
+;; agent's value stays in history.  Field conflicts are therefore pushed
+;; like any edit, and the pull that ends the push clears their notes.
+;; Blocked headings send nothing; that pull is also what reports them.
+
+(cl-defstruct (zwanenzang--plan (:constructor zwanenzang--plan-create)
+                                (:copier nil))
+  "The changes one scope's push will send."
+  changes                               ; newest first
+  news                                  ; (MARKER . CHANGE INDEX) of creates
+  touched                               ; (ID . what changed) of tickets
+  revived                               ; markers of headings being unarchived
+  lines)                                ; report lines, newest first
+
+(defun zwanenzang--plan-add (plan op ref data)
+  "Add a change to PLAN: OP on the ticket REF, nil for a create, with DATA."
+  (push `((op . ,op) ,@(and ref `((ticket . ,ref))) (data . ,data))
+        (zwanenzang--plan-changes plan)))
+
+(defun zwanenzang--plan-line (plan format &rest args)
+  "Add a line to PLAN's report, formatted from FORMAT and ARGS."
+  (push (apply #'format format args) (zwanenzang--plan-lines plan)))
+
+(defun zwanenzang--edited-p (hash base empty)
+  "Whether a value hashing to HASH differs from BASE, its hash as last synced.
+BASE is `:unknown' when nothing was recorded; then any value counts as
+edited unless EMPTY, so a heading with no sync state cannot wipe a field."
+  (if (eq base :unknown) (not empty) (not (equal hash base))))
+
+(defun zwanenzang--plan-up-blocked-p (plan up targets)
+  "Whether UP, the :up of a scanned heading, cannot be a parent.
+It is a new ticket PLAN does not create, or an id in the hash set TARGETS."
+  (if (markerp up)
+      (not (assq up (zwanenzang--plan-news plan)))
+    (and up (gethash up targets))))
+
+(defun zwanenzang--plan-ref (plan up)
+  "The reference to UP, the :up of a scanned heading, in PLAN's request."
+  (if (markerp up)
+      `((created . ,(cdr (assq up (zwanenzang--plan-news plan)))))
+    up))
+
+(defun zwanenzang--heading-label ()
+  "How the report names the heading at point, which may have no number yet."
+  (string-join (delq nil (list (or (org-entry-get nil "ZWANENZANG_NUMBER")
+                                   (org-entry-get nil "ZWANENZANG_ID"))
+                               (plist-get (zwanenzang--heading) :title)))
+               " "))
+
+(defun zwanenzang--plan-doc (plan ref name ticket texts)
+  "Add to PLAN the document NAME of ticket REF, the heading at point's text.
+TICKET and TEXTS are the ticket's state and document text, nil when new.
+The base is the current version, so a stale one cannot refuse the batch."
+  (let* ((local (zwanenzang--body-description (zwanenzang--body)))
+         (symbol (intern name))
+         (version (zwanenzang--null (alist-get 'current (alist-get symbol (alist-get 'documents ticket)))))
+         (base (or (org-entry-get nil (if (equal name "description")
+                                          "ZWANENZANG_DESC_HASH"
+                                        "ZWANENZANG_HASH"))
+                   :unknown)))
+    (when (and (zwanenzang--edited-p (zwanenzang--hash local) base (string-empty-p local))
+               (not (equal local (zwanenzang--remote-text texts symbol))))
+      (zwanenzang--plan-add plan "doc" ref
+                            `((name . ,name) (text . ,local) (base . ,(or version :null)))))))
+
+(defun zwanenzang--plan-docs (plan ref ticket texts hidden)
+  "Add to PLAN the named documents of ticket REF, the heading at point.
+TICKET and TEXTS are as in `zwanenzang--plan-doc'; HIDDEN lists the
+names that are never pushed."
+  (let (seen)
+    (dolist (doc (zwanenzang--doc-headings))
+      (let ((name (car doc)))
+        (cond
+         ((equal name "description")
+          (zwanenzang--plan-line plan "%s: document heading \"description\" not pushed: %s"
+                                 (zwanenzang--heading-label)
+                                 "the description is the ticket's body"))
+         ((member name hidden)
+          (zwanenzang--plan-line plan "%s: document %s not pushed: it is in ZWANENZANG_HIDE_DOCS"
+                                 (zwanenzang--heading-label) name))
+         ((member name seen)
+          (zwanenzang--plan-line plan "%s: second heading for document %s not pushed"
+                                 (zwanenzang--heading-label) name))
+         (t
+          (push name seen)
+          (save-excursion
+            (goto-char (cdr doc))
+            (zwanenzang--plan-doc plan ref name ticket texts))))))))
+
+(defun zwanenzang--plan-fields (plan heading ref entry map hidden targets)
+  "Add to PLAN what differs from sync state on HEADING, a scanned heading at point.
+REF names its ticket in the request.  ENTRY is its read result, nil for a
+new ticket.  MAP is the keyword map, HIDDEN the hidden documents and
+TARGETS the ids that cannot be parents."
+  (let* ((ticket (alist-get 'ticket entry))
+         (shown (zwanenzang--heading))
+         (keyword (plist-get shown :keyword))
+         (title (plist-get shown :title))
+         (tags (zwanenzang--tracker-tags (plist-get shown :tags)))
+         (sync (zwanenzang--parse-sync (org-entry-get nil "ZWANENZANG_SYNC")))
+         (up (plist-get heading :up)))
+    (when ticket
+      (when (and (eq (alist-get 'archived ticket) t) (org-entry-get nil "ARCHIVE_TIME"))
+        (zwanenzang--plan-add plan "unarchive" ref nil)
+        (push (plist-get heading :marker) (zwanenzang--plan-revived plan)))
+      ;; Status goes by keyword: a draft shown as TODO stays draft until
+      ;; the keyword changes, and two statuses of one keyword agree.
+      (let ((base (cdr (assoc (zwanenzang--sync-get sync 'status) map)))
+            (remote (cdr (assoc (alist-get 'status ticket) map))))
+        (unless (or (equal keyword base) (equal keyword remote))
+          (zwanenzang--plan-add plan "status" ref `((to . ,(car (rassoc keyword map)))))))
+      (when (and (zwanenzang--edited-p (zwanenzang--hash title)
+                                       (zwanenzang--sync-get sync 'title) nil)
+                 (not (equal title (string-trim (alist-get 'title ticket)))))
+        (zwanenzang--plan-add plan "title" ref `((to . ,title)))))
+    (when (zwanenzang--edited-p (zwanenzang--tags-hash tags)
+                                (zwanenzang--sync-get sync 'tags) (null tags))
+      (let ((remote (alist-get 'tags ticket)))
+        (dolist (tag (seq-difference tags remote))
+          (zwanenzang--plan-add plan "tag" ref `((tag . ,tag))))
+        (dolist (tag (seq-difference remote tags))
+          (zwanenzang--plan-add plan "untag" ref `((tag . ,tag))))))
+    ;; Parent goes by nesting, and only a change in nesting sends it: a
+    ;; ticket parked in the inbox keeps its tracker parent.
+    (let ((base (zwanenzang--sync-get sync 'nest))
+          (remote (zwanenzang--null (alist-get 'parent ticket))))
+      (when (and (if (eq base :unknown) up (not (equal up base)))
+                 (not (equal up remote)))
+        (if (zwanenzang--plan-up-blocked-p plan up targets)
+            (zwanenzang--plan-line plan "%s: parent not pushed: the ticket heading above it is blocked"
+                                   (zwanenzang--heading-label))
+          (zwanenzang--plan-add plan "parent" ref
+                                `((to . ,(or (zwanenzang--plan-ref plan up) :null)))))))
+    (zwanenzang--plan-doc plan ref "description" ticket (alist-get 'documents entry))
+    (zwanenzang--plan-docs plan ref ticket (alist-get 'documents entry) hidden)))
+
+(defun zwanenzang--plan-create-ticket (plan heading map targets)
+  "Add to PLAN the create for HEADING, a scanned new ticket at point.
+Unless something blocks it, which is reported.  MAP and TARGETS are as in
+`zwanenzang--plan-fields'."
+  (let* ((shown (zwanenzang--heading))
+         (keyword (plist-get shown :keyword))
+         (title (plist-get shown :title))
+         (status (car (rassoc keyword map)))
+         (line (line-number-at-pos (point) t)))
+    (cond
+     ((not status)
+      (zwanenzang--plan-line plan "line %d: \"%s\" not created: keyword %s has no status"
+                             line title keyword))
+     ((string-empty-p title)
+      (zwanenzang--plan-line plan "line %d: not created: the heading has no title" line))
+     ((zwanenzang--plan-up-blocked-p plan (plist-get heading :up) targets)
+      (zwanenzang--plan-line plan "line %d: \"%s\" not created: the ticket heading above it is blocked"
+                             line title))
+     (t
+      (push (cons (plist-get heading :marker) (length (zwanenzang--plan-changes plan)))
+            (zwanenzang--plan-news plan))
+      (zwanenzang--plan-add plan "create" nil `((title . ,title) (status . ,status)))))))
+
+(defun zwanenzang--plan-label (change)
+  "What the report calls the field CHANGE touches."
+  (pcase (alist-get 'op change)
+    ((or "tag" "untag") "tags")
+    ("doc" (let ((name (alist-get 'name (alist-get 'data change))))
+             (if (equal name "description") name (format "document %s" name))))
+    (op op)))
+
+(defun zwanenzang--plan-push (headings blocked entries map hidden)
+  "The plan of one push, comparing Org with a read; the buffer is not changed.
+HEADINGS is from `zwanenzang--scan-all', BLOCKED from
+`zwanenzang--blocked-headings', ENTRIES the tickets of the read, MAP the
+keyword map and HIDDEN the hidden documents.  Creates come first, so later
+changes can refer to them.  The rest go in buffer order, ancestors first,
+so a reshuffled nesting has no moment with a parent cycle."
+  (let ((plan (zwanenzang--plan-create))
+        (read (make-hash-table :test #'equal))
+        (targets (make-hash-table :test #'equal)))
+    (dolist (b blocked)
+      (puthash (plist-get (car b) :id) t targets))
+    (dolist (entry entries)
+      (let ((ticket (alist-get 'ticket entry)))
+        (puthash (alist-get 'id ticket) entry read)
+        (when (eq (alist-get 'tombstoned ticket) t)
+          (puthash (alist-get 'id ticket) t targets))))
+    (dolist (h headings)
+      (unless (plist-get h :id)
+        (save-excursion
+          (goto-char (plist-get h :marker))
+          (zwanenzang--plan-create-ticket plan h map targets))))
+    (dolist (h headings)
+      (save-excursion
+        (goto-char (plist-get h :marker))
+        (let* ((id (plist-get h :id))
+               (entry (and id (gethash id read)))
+               (new (assq (plist-get h :marker) (zwanenzang--plan-news plan)))
+               (before (length (zwanenzang--plan-changes plan)))
+               (shown (zwanenzang--heading)))
+          (cond
+           (new
+            (zwanenzang--plan-fields plan h `((created . ,(cdr new))) nil map hidden targets))
+           ((or (not id) (gethash id targets)))
+           ((not (and (rassoc (plist-get shown :keyword) map)
+                      (assoc (alist-get 'status (alist-get 'ticket entry)) map))))
+           ((string-empty-p (plist-get shown :title))
+            (zwanenzang--plan-line plan "%s: not pushed: the heading has no title" id))
+           (t
+            (zwanenzang--plan-fields plan h id entry map hidden targets)
+            (let ((added (- (length (zwanenzang--plan-changes plan)) before)))
+              (when (> added 0)
+                (push (cons id (delete-dups
+                                (mapcar #'zwanenzang--plan-label
+                                        (reverse (seq-take (zwanenzang--plan-changes plan) added)))))
+                      (zwanenzang--plan-touched plan)))))))))
+    plan))
+
+(defun zwanenzang--drop-archive-properties ()
+  "Remove what `org-archive-subtree' left on the entry at point."
+  (dolist (property (org-entry-properties nil 'standard))
+    (when (string-prefix-p "ARCHIVE_" (car property))
+      (org-entry-delete nil (car property)))))
+
+(defun zwanenzang--send-plan (plan dir outcome)
+  "Send PLAN to the tracker at DIR and write back what it returns to Org.
+The identity of a new ticket is written right away, whatever fails after
+this: without it the next push would create the ticket again.  An empty
+plan sends nothing.  OUTCOME collects the report."
+  (let ((changes (reverse (zwanenzang--plan-changes plan))))
+    (when changes
+      (let* ((result (funcall zwanenzang--call dir '("apply")
+                              `((changes . ,(vconcat changes)))))
+             (created (alist-get 'created result))
+             (labels (mapcar (lambda (ticket) (cons (alist-get 'id ticket)
+                                                    (zwanenzang--label ticket)))
+                             (alist-get 'tickets result))))
+        (pcase-dolist (`(,marker . ,index) (reverse (zwanenzang--plan-news plan)))
+          (let ((id (alist-get (intern (number-to-string index)) created)))
+            (org-entry-put marker "ZWANENZANG_ID" id)
+            (cl-incf (zwanenzang--outcome-created outcome))
+            (push (format "created %s" (cdr (assoc id labels)))
+                  (zwanenzang--outcome-info outcome))))
+        (dolist (marker (zwanenzang--plan-revived plan))
+          (save-excursion
+            (goto-char marker)
+            (zwanenzang--drop-archive-properties)))
+        (pcase-dolist (`(,id . ,what) (reverse (zwanenzang--plan-touched plan)))
+          (cl-incf (zwanenzang--outcome-pushed outcome))
+          (push (format "pushed %s: %s" (cdr (assoc id labels)) (string-join what ", "))
+                (zwanenzang--outcome-info outcome)))
+        (zwanenzang--note-sync outcome (alist-get 'sync result))))))
+
+(defun zwanenzang--push-scope (root outcome)
+  "Push the scope at ROOT and pull again, adding the result to OUTCOME.
+A failed apply signals, having written nothing to the tracker or the buffer."
+  (with-current-buffer (marker-buffer root)
+    (org-with-wide-buffer
+     (let* ((case-fold-search nil)
+            (dir (zwanenzang--scope-directory root))
+            (headings (plist-get (zwanenzang--scan-all root) :headings))
+            (tickets (seq-filter (lambda (h) (plist-get h :id)) headings))
+            (blocked (zwanenzang--blocked-headings tickets (zwanenzang--known-tickets dir)))
+            (result (zwanenzang--read-scope root dir tickets blocked))
+            (refused (zwanenzang--tracker-mismatch "push" root dir result)))
+       (if refused
+           (setf (zwanenzang--outcome-refused outcome) refused)
+         (let ((plan (zwanenzang--plan-push
+                      headings blocked (alist-get 'tickets result)
+                      (car (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
+                                                    (alist-get 'statuses (alist-get 'tracker result))
+                                                    org-todo-keywords-1))
+                      (remove "description" (zwanenzang--hide-docs root)))))
+           (setf (zwanenzang--outcome-problems outcome)
+                 (append (zwanenzang--plan-lines plan) (zwanenzang--outcome-problems outcome)))
+           (zwanenzang--send-plan plan dir outcome)
+           (zwanenzang--pull-into outcome root)))))))
+
+;;;###autoload
+(defun zwanenzang-push ()
+  "Push the human's edits in the scope containing point to the tracker.
+Whatever differs from the last sync is sent, new tickets included, and
+Org's value wins.  A pull follows, so numbers and cursors land.  The
+buffer is edited but not saved; a report goes to the `*zwanenzang*' buffer."
+  (interactive)
+  (let ((root (zwanenzang--root-at-point))
+        (outcome (zwanenzang--outcome-create)))
+    (zwanenzang--push-scope root outcome)
+    (zwanenzang--report-outcome "pushed" root outcome)))
 
 ;;;; Hidden documents
 

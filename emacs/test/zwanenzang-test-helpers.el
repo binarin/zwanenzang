@@ -227,12 +227,66 @@ client runs the CLI only through the guarded `zwanenzang-test-call'."
              (with-current-buffer ,(nth 1 spec) (set-buffer-modified-p nil))
              (kill-buffer ,(nth 1 spec))))))))
 
+(defmacro zwanenzang-test-with-remote-scope (spec &rest body)
+  "Run BODY with a clone of a bare remote and an Org file scoped to the clone.
+SPEC is (NET CLONE BUFFER ORG-TEXT), ORG-TEXT as in
+`zwanenzang-test-with-scope'.  NET is the disposable directory holding
+`remote-test-repo', CLONE the initialized tracker clone in it."
+  (declare (indent 1) (debug ((symbolp symbolp symbolp form) body)))
+  (let ((net (nth 0 spec)) (clone (nth 1 spec)) (buffer (nth 2 spec)))
+    `(zwanenzang-test-with-dir ,net
+       (let* ((,clone (expand-file-name "human-test-repo" ,net))
+              (file (expand-file-name "scope.org" ,net))
+              (zwanenzang--call #'zwanenzang-test-call)
+              ,buffer)
+         (zwanenzang-test-git ,net "init" "--quiet" "--bare" "remote-test-repo")
+         (zwanenzang-test-git ,net "clone" "--quiet" "remote-test-repo" "human-test-repo")
+         (zwanenzang-test-call ,clone '("init" "--prefix" "ZZ" "--name" "Test"))
+         (with-temp-file file (insert (format ,(nth 3 spec) ,clone)))
+         (setq ,buffer (find-file-noselect file))
+         (unwind-protect
+             (with-current-buffer ,buffer ,@body)
+           (with-current-buffer ,buffer (set-buffer-modified-p nil))
+           (kill-buffer ,buffer))))))
+
+(defun zwanenzang-test-clone (net name)
+  "Clone `remote-test-repo' in the disposable NET as NAME; return the clone."
+  (zwanenzang-test-git net "clone" "--quiet" "remote-test-repo" name)
+  (expand-file-name name net))
+
+(defun zwanenzang-test-head (dir)
+  "The current commit of the disposable repository DIR."
+  (string-trim (zwanenzang-test-git dir "rev-parse" "HEAD")))
+
 (defun zwanenzang-test-pull ()
   "Pull the scope of the first heading in the current buffer; return the summary."
   (save-excursion
     (goto-char (point-min))
     (outline-next-heading)
     (zwanenzang-pull)))
+
+(defun zwanenzang-test-at-root (command &rest args)
+  "Call COMMAND with ARGS at the first heading of the current buffer."
+  (save-excursion
+    (goto-char (point-min))
+    (outline-next-heading)
+    (apply command args)))
+
+(defun zwanenzang-test-append (text)
+  "Add TEXT at the end of the current buffer."
+  (save-excursion
+    (goto-char (point-max))
+    (unless (bolp) (insert "\n"))
+    (insert text)))
+
+(defun zwanenzang-test-id-of (title)
+  "The ZWANENZANG_ID of the only heading titled TITLE."
+  (save-excursion
+    (goto-char (point-min))
+    (unless (re-search-forward (format org-complex-heading-regexp-format (regexp-quote title))
+                               nil t)
+      (error "No heading %s" title))
+    (org-entry-get nil "ZWANENZANG_ID")))
 
 (defun zwanenzang-test-goto (id)
   "Move to the only heading with ZWANENZANG_ID ID and return point."

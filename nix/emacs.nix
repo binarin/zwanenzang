@@ -44,6 +44,7 @@
             emacs --batch -L . -l ert \
               -l zwanenzang-test -l zwanenzang-integration-test \
               -l zwanenzang-pull-test -l zwanenzang-pull-integration-test \
+              -l zwanenzang-push-test -l zwanenzang-push-integration-test \
               --eval '(unless (file-name-absolute-p zwanenzang-program) (error "zwanenzang-program not substituted: %s" zwanenzang-program))' \
               -f ert-run-tests-batch-and-exit
             touch $out

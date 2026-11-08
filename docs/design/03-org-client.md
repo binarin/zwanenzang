@@ -359,7 +359,8 @@ tracker.
   the tracker knows. A heading whose id the tracker does not know is
   foreign; two headings in the scope with one id are duplicates. Both
   block only those headings: they get `zz_conflict`, a note in
-  `:ZWANENZANG_CONFLICT:` and a report line, and are never sent to
+  `:ZWANENZANG_CONFLICT:` and a report line with the heading's line
+  number (not in the note, which would move it), and are never sent to
   `read`. Everything else pulls. Adopting a foreign heading and
   resolving a duplicate are separate commands, not part of pull.
 - Tracker identity: the first pull records `ZWANENZANG_TRACKER`; a read
@@ -442,6 +443,56 @@ tracker.
   One scope's pull is a single undo step and works whatever the folding.
   A CLI failure before or during the edit leaves the buffer as it was.
 
+### Push
+
+Decided 2026-11-08 with the first `zwanenzang-push`, which acts on the scope
+containing point: its own `read`, one `apply`, then a pull so numbers,
+cursors and sync state land. It never fetches first; `zwanenzang-sync`
+does.
+
+- What is sent: for each field where Org differs from the sync state, Org's
+  value, whatever the tracker has now. The agent's value stays in history.
+  A field the tracker already agrees with is not sent, and neither is one
+  only the tracker changed: the pull applies that.
+- Status goes by keyword, only when it changed, as the first status of
+  that keyword. If the tracker already has a status of that keyword, the
+  two agree. Tags are sent as the difference between Org's set and the
+  tracker's; `zz_conflict` and `ARCHIVE` are never among them.
+- Documents use the current version from push's own read as `base`, so
+  the human's text goes on top of whatever an agent wrote. When an edit
+  sits unfetched on the remote, the human's version can still end up lost
+  at replay: the final pull then shows a conflict with the text kept in Org,
+  and the next push settles it.
+- No sync state means no wiping: a field with nothing recorded is sent
+  when Org has a value, but an empty one is left alone. An empty new
+  document is not created either.
+- Creates come first in the batch, then each heading's changes in buffer
+  order, ancestors first, so a reshuffled nesting has no moment with a
+  parent cycle. `ZWANENZANG_ID` is written right after `apply` returns,
+  before anything else can fail: without it the next push would create the
+  ticket again. A refused batch changes nothing, in the tracker or the
+  buffer, and the error names no heading, as the CLI's does not.
+- Parent comes from nesting: the nearest ticket heading above, new ones
+  included. Grouping headings are transparent; the inbox or scope root
+  means no ancestor. `parent` is sent only when the nesting changed since
+  `nest=`, so a ticket parked in the inbox keeps its tracker parent.
+- New documents: a direct child with `ZWANENZANG_DOC` and no recorded hash.
+  A name in `ZWANENZANG_HIDE_DOCS`, the name `description` and a second
+  heading for a name already seen are refused with a report line.
+- Blocked and skipped: foreign and duplicate ids, a tombstoned ticket, an
+  Org keyword with no status or no keyword at all, a tracker status with no
+  keyword, an empty title. The final pull writes the tag and note, because
+  pull recomputes that drawer: an unmapped or missing Org keyword now gets
+  its note there too. A tracker id mismatch skips the whole scope. Headings
+  tagged `zz_conflict` for field conflicts are pushed like any other, and
+  the final pull clears their tag and drawer once the fields agree.
+- A new heading that cannot be created (unmapped keyword, no title, a
+  blocked ticket heading above it) is only reported; it is not a ticket, so
+  no note is written on it. A ticket moved under a blocked heading keeps
+  its parent, reported, and the nesting's sync state, so it retries.
+- An invalid tag, or a document name the CLI refuses, refuses the batch
+  with the CLI's error, which names it. Nothing is lost.
+
 ### Errors and reports
 
 - A command failure (a JSON error object, or a usage error with exit
@@ -450,6 +501,12 @@ tracker.
 - Publication errors (`fetch-failed`, `push-rejected`, ...) and checkout
   skips are not failures: the client echoes a one-line summary and appends
   a readable report to the `*zwanenzang*` buffer.
+- The report lists per ticket, by number and title, what was pulled, moved,
+  pushed and created, then conflicts and checkout results from the sync
+  object. Conflict lines show both Org's title and the tracker's. A command
+  of several steps makes one report; the conflicts in it are the last
+  pull's, so ones a push settled are gone. The echo points at the buffer
+  only when something needs a look; a clean run is one line.
 
 ### Bootstrap and tests
 
