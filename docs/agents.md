@@ -26,11 +26,16 @@ zwanenzang -C <dir> --actor-name <name> <write command>
 
 Pass `-C <dir>` on every command; without it the tracker is searched for upward
 from the current directory. `--actor-name` names the actor on the clone's first
-write and is ignored after that, so it is safe to pass on every write. Without
-it the name is `$USER`.
+write and is ignored after that, and the CLI has no command to rename an actor.
+Without it the name is `$USER`, or `unknown` if that is unset, so pass
+`--actor-name` on writes.
 
 The actor is the clone: a new clone is a new actor with its own log under
 `events/`. A tracker therefore collects one log per clone over time, by design.
+
+The CLI never prompts for credentials (`GIT_TERMINAL_PROMPT=0`), so the clone's
+remote must work non-interactively. Otherwise every sync reports `fetch-failed`
+while writes keep succeeding locally and tickets never get numbers.
 
 Do not clone a tracker inside a code work tree. The CLI does not refuse it, but
 the clone shows up as untracked there and `git add -A` picks it up.
@@ -69,8 +74,9 @@ status 2.
 - A refused command prints `{"error": {"code": ..., "message": ...}}` and exits
   1. Nothing was written.
 - A write that could not reach the remote still succeeds and exits 0. It is
-  committed locally, `sync.error` says what went wrong, and the next write or
-  `sync` pushes it. Until then it exists only in this clone.
+  committed locally, `sync.error` says what went wrong, and the next write that
+  changes something, or `sync`, pushes it. Until then it exists only in this
+  clone.
 - `sync` itself exits 1 in that case, also reporting it in `sync.error`, with no
   top-level `error`.
 - `"written": false` means the write would change nothing. No event was written
