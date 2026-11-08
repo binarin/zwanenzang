@@ -12,10 +12,218 @@ Still above the scope; only grouping for me.
 :ZWANENZANG: /tmp/zwanenzang-demo-test-repo
 :ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing WAIT=blocked REVIEW=review DONE=done CNCL=cancelled
 :ZWANENZANG_HIDE_DOCS: status
+:ZWANENZANG_TRACKER: 01M6XAJ6BCPQ16CMJYJDYW38JK
+:ZWANENZANG_CURSOR: 01M6XAJ6H46STZW7S6Z2FBG7C0:ecad3abee1e96c0abfc4bd76f483ecee08b5ad1ada012e1028939adaf5be2edc
 :END:
 The scope root. Everything beneath it syncs with the tracker.
 **** Things to look at some day
 A heading with no keyword or id inside the scope: my own structure.
 
+**** Inbox
+:PROPERTIES:
+:ZWANENZANG_INBOX: t
+:END:
+***** DONE Build the sample widget tool
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6DKDHTWH2P0BFERA5FH
+:ZWANENZANG_NUMBER: ZZ-0001
+:ZWANENZANG_CURSOR: 01M6XAJ6GMNZC1TMDXDN6HRSFP:180744151ce97acee2d567db5ccae0a673affd5bfd4c5ce8f639293f7754a764
+:ZWANENZANG_SYNC: status=done title=3c4e13eec54adca7 tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6DNZ5C3316D0YJ5G4PH
+:ZWANENZANG_DESC_HASH: 3ac470afbcd355e6
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0001
+  : Source file: tickets/AIWF-0001-sample-widget-tooling.md
+  : Status there: done (imported as done)
+  :
+  : Frontmatter kept as text:
+  :
+  : handoff:
+  :   stage: ready-for-review
+  :   kind: code-review
+  :   outcome: complete
+  :   proposed-status: done
+  :   checkpoint:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Supporting file linked from the imported description: docs/AIWF-0001-notes.md
+  [[file:/tmp/zwanenzang-demo-test-repo/docs/AIWF-0001-notes.md]]
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Supporting file linked from the imported description: docs/shared.md
+  [[file:/tmp/zwanenzang-demo-test-repo/docs/shared.md]]
+:END:
+## Current
+
+The widget tool counts widgets. See [the notes](../docs/AIWF-0001-notes.md#usage)
+and the [shared glossary](../docs/shared.md). A [lost file](../docs/missing.md)
+is linked too, and so is [a sibling ticket](AIWF-0002-unicode-gadgets.md)
+and [the forge](https://forge.example/owner/app/pulls/1).
+
+[glossary]: ../docs/shared.md
+****** TODO Gadgets für Ünïcode — naïve café 雪
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6E300ST63PXZVZHSTPA
+:ZWANENZANG_NUMBER: ZZ-0002
+:ZWANENZANG_CURSOR: 01M6XAJ6GPE9RVG4QENK2NEYW6:ec74cb051819d06bcc625b7b08b61c85c8869a6c09bde5903b99aff87079a241
+:ZWANENZANG_SYNC: status=todo title=b8021955b183919e tags=e3b0c44298fc1c14 parent=01M6XAJ6DKDHTWH2P0BFERA5FH nest=01M6XAJ6DKDHTWH2P0BFERA5FH
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6E58JG11AC4M3BFWZFY
+:ZWANENZANG_DESC_HASH: 17e5c9065b973a7c
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0002
+  : Source file: tickets/AIWF-0002-unicode-gadgets.md
+  : Status there: needs-triage (imported as todo)
+  : Original ticket: AIWF-0001
+  :
+  : Frontmatter kept as text:
+  :
+  : blocked-by: AIWF-0003
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Supporting file linked from the imported description: docs/shared.md
+  [[file:/tmp/zwanenzang-demo-test-repo/docs/shared.md]]
+:END:
+Text with non-ASCII: Grüße, ½, ✓ and 雪.
+Uses the [glossary](../docs/shared.md) as well.
+***** TODO Sprockets after a fenced block
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6EBEA0F7N8375SY5SXV
+:ZWANENZANG_NUMBER: ZZ-0003
+:ZWANENZANG_CURSOR: 01M6XAJ6H46STZW7S6Z2FBG7C0:bb92f8a38bc7b61fc033ebb228afbd17a999199d59708ccd546dc22985d94887
+:ZWANENZANG_SYNC: status=todo title=a2933dc19ce3af47 tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6EDRH5Q3K3AB2NB8YD4
+:ZWANENZANG_DESC_HASH: cb33482d18ac26d7
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0003
+  : Source file: tickets/AIWF-0003-heading-in-code.md
+  : Status there: needs-plan (imported as todo)
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Supporting file linked from the imported description: docs/AIWF-0003-plan.md
+  [[file:/tmp/zwanenzang-demo-test-repo/docs/AIWF-0003-plan.md]]
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Supporting file linked from the imported description: docs/AIWF-0003-review.md
+  [[file:/tmp/zwanenzang-demo-test-repo/docs/AIWF-0003-review.md]]
+:END:
+:ZWANENZANG_HIDDEN:
+[[zwanenzang:01M6XAJ6EBEA0F7N8375SY5SXV/status][status (hidden)]]
+:END:
+```markdown
+# Not the title, inside a fence
+```
+
+
+Body text after the title. The [plan](../docs/AIWF-0003-plan.md) is worth
+keeping; the [review record](../docs/AIWF-0003-review.md) is the kind of
+file an import may leave out.
+****** plan
+:PROPERTIES:
+:ZWANENZANG_DOC: plan
+:ZWANENZANG_VERSION: 01M6XAJ6H46STZW7S6Z2FBG7BZ
+:ZWANENZANG_HASH: 066c8ee034bbcc8e
+:END:
+First plan: cut the sprockets by hand.
+***** TODO Stage ceremony the tests leave out
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6ENG07DQ8BPXSV0TW1Q
+:ZWANENZANG_NUMBER: ZZ-0004
+:ZWANENZANG_CURSOR: 01M6XAJ6GTYAJD2D7CCWPRYQBP:c487f8201c685de7d24ba138237558ca431fccfcc6b45923b67b72234986bd0a
+:ZWANENZANG_SYNC: status=todo title=88ef80b674fbc0a5 tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6EQK914FAVKGXSA62RH
+:ZWANENZANG_DESC_HASH: dbf54255702d123c
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0004
+  : Source file: tickets/AIWF-0004-process-only-ticket.md
+  : Status there: ready-for-implementation (imported as todo)
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Supporting file linked from the imported description: docs/process-only.md
+  [[file:/tmp/zwanenzang-demo-test-repo/docs/process-only.md]]
+:END:
+Links the [process notes](../docs/process-only.md), which must not be copied
+while this ticket is excluded.
+****** REVIEW References into the excluded ticket
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6F9T8K6MD38GTAPJEHQ
+:ZWANENZANG_NUMBER: ZZ-0007
+:ZWANENZANG_CURSOR: 01M6XAJ6H0ZY1EKJS5GJ75WXBA:d6fd3420d7a6d7a89eda2eb8a782c03ce0808c6b5b8010187541c76c310529a3
+:ZWANENZANG_SYNC: status=review title=572b099b34c5e76d tags=e3b0c44298fc1c14 parent=01M6XAJ6ENG07DQ8BPXSV0TW1Q nest=01M6XAJ6ENG07DQ8BPXSV0TW1Q
+:ZWANENZANG_DESC_HASH: e3b0c44298fc1c14
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0007
+  : Source file: tickets/AIWF-0007-references-everywhere.md
+  : Status there: ready-for-review (imported as review)
+  : Original ticket: AIWF-0004
+:END:
+***** TODO no title heading
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6EXR462EW977MMD0Y41
+:ZWANENZANG_NUMBER: ZZ-0005
+:ZWANENZANG_CURSOR: 01M6XAJ6GW0W24T44QYYQK3512:a69511418eea787cf1907171b44ceef2ccbbeed99022a48dc72df6a3bb382a91
+:ZWANENZANG_SYNC: status=draft title=8111762cac0b5157 tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6EZ9T2933GFMJ2AEQ75
+:ZWANENZANG_DESC_HASH: 96e6a32b0ae36854
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0005
+  : Source file: tickets/AIWF-0005-no-title-heading.md
+  : Status there: in-limbo (imported as draft)
+  : Title: the file has no heading; taken from the file name
+:END:
+A body without any level-one heading.
+
+## Only a subheading
+***** TODO A ticket without frontmatter
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6F37FSQVKDJYVMZ5XN7
+:ZWANENZANG_NUMBER: ZZ-0006
+:ZWANENZANG_CURSOR: 01M6XAJ6GYH7Y3NB5VABZ5X3GS:a61560d936441698ed15c73ca95c0813c6cf944c0a1da6d46b2b9c348c10e15e
+:ZWANENZANG_SYNC: status=draft title=b0b0c981c3d4c7df tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6F5NDTYRG82SZX67VDQ
+:ZWANENZANG_DESC_HASH: df244a965f2cd225
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0006
+  : Source file: tickets/AIWF-0006-no-frontmatter.md
+  : Status there: none (imported as draft)
+:END:
+So it has no status either.
+***** WAIT Change two repositories at once
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6FFS1MZYMC3XWS40W36
+:ZWANENZANG_NUMBER: ZZ-0008
+:ZWANENZANG_CURSOR: 01M6XAJ6H2CQYGH9PRWA8VJP6B:f6920d130ce8f573d1bd264338dc441db6a5ff6d914938e29653178860f68b1a
+:ZWANENZANG_SYNC: status=blocked title=ac5867e63b65b744 tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6FHD90MPDS7RQ3N2GY2
+:ZWANENZANG_DESC_HASH: 8e364ad4bd517a96
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0008
+  : Source file: tickets/AIWF-0008-two-repositories.md
+  : Status there: needs-human-input (imported as blocked)
+:END:
+A ticket whose branches live in two repositories.
+***** TODO Nothing below the title
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6FVE8TD5PDZ1X62YDXP
+:ZWANENZANG_NUMBER: ZZ-0009
+:ZWANENZANG_CURSOR: 01M6XAJ6H46STZW7S6Z2FBG7BY:1beb41a3db4f808e2e5ad04229f4774b088a8acacc3e4982574c96b7ffc6f56e
+:ZWANENZANG_SYNC: status=draft title=ce0a2b75e47aa728 tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_DESC_HASH: e3b0c44298fc1c14
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0010
+  : Source file: tickets/AIWF-0010-empty-body.md
+  : Status there: draft (imported as draft)
+:END:
 * Notes after the scope
 Pull must not touch this either.
