@@ -120,6 +120,8 @@ pub enum Command {
     },
     /// Move a ticket out of the active set.
     Archive { ticket: String },
+    /// Put an archived ticket back in the active set.
+    Unarchive { ticket: String },
     /// Hide a ticket created by mistake.
     Tombstone { ticket: String },
     /// Add a comment; text from the argument, --file, or stdin.
@@ -493,6 +495,9 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
         }
         Command::Archive { ticket } => {
             ctx.mutate(&ticket, |_, id| Ok(one(id, Op::Archive(Empty {}))))
+        }
+        Command::Unarchive { ticket } => {
+            ctx.mutate(&ticket, |_, id| Ok(one(id, Op::Unarchive(Empty {}))))
         }
         Command::Tombstone { ticket } => {
             ctx.mutate(&ticket, |_, id| Ok(one(id, Op::Tombstone(Empty {}))))

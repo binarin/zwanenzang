@@ -61,6 +61,7 @@ them; any change to them fails with `tombstoned`.
 | `branch T REPO NAME` | `branch` | mutation object |
 | `mr T REPO URL` | `mr` | mutation object |
 | `archive T` | `archive` | mutation object |
+| `unarchive T` | `unarchive` | mutation object |
 | `tombstone T` | `tombstone` | mutation object |
 | `comment T [TEXT] [--file PATH] [--link L]` | `comment` | mutation object |
 | `doc set T NAME --base ID\|none [--file PATH]` | `doc` | mutation object |
@@ -78,6 +79,11 @@ them; any change to them fails with `tombstoned`.
 Text up to 2048 bytes is stored inline; longer text goes to a blob. Text that
 is empty or only whitespace is refused with `invalid-comment` whichever way it
 would be stored. `doc set` reads the new text from `--file` or stdin.
+
+`archive` and `unarchive` change only the `archived` flag, never `status`.
+Archiving an archived ticket or unarchiving one that is not archived writes
+nothing and reports `"written": false`. Both are refused on a tombstoned
+ticket with `tombstoned`.
 
 `list` shows tickets that are neither archived nor tombstoned unless `--all`
 is given. Repeated `--status` and `--kind` match any of the values; repeated
@@ -168,7 +174,7 @@ Supported operations and their complete input data fields:
 | `tag`, `untag` | `{tag: string}` |
 | `branch` | `{repo: string, name: string}` |
 | `mr` | `{repo: string, url: string}` |
-| `archive`, `tombstone` | `{}` |
+| `archive`, `unarchive`, `tombstone` | `{}` |
 | `comment` | `{text: string, link?: string or null}` |
 | `doc` | `{name: string, text: string, base: full version ULID or null}` |
 
@@ -476,7 +482,7 @@ Operation data:
 | `branch` | `{repo, name}` |
 | `mr` | `{repo, url}` |
 | `tag`, `untag` | `{tag}` |
-| `archive`, `tombstone` | `{}` |
+| `archive`, `unarchive`, `tombstone` | `{}` |
 | `comment` | `{text}` or `{blob}`, plus optional `{link}` |
 | `doc` | `{name, blob, base: version id \| null}` |
 | `actor` | `{name}` (the writing actor's display name) |

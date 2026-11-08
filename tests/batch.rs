@@ -295,3 +295,49 @@ fn metadata_comments_and_lifecycle_use_the_shared_rules() {
     );
     assert_eq!(run_in(p, &["lint"], "").code, 0);
 }
+
+#[test]
+fn unarchive_in_a_batch_keeps_positions_for_noops_and_refuses_tombstones() {
+    let d = tracker();
+    let p = d.path();
+    let a = id(&ok(p, &["create", "Synthetic A"]));
+    let b = id(&ok(p, &["create", "Synthetic B"]));
+    ok(p, &["status", &a, "doing"]);
+    ok(p, &["archive", &a]);
+    let out = apply(
+        p,
+        json!([
+            {"op":"unarchive","ticket":b,"data":{}},
+            {"op":"unarchive","ticket":a,"data":{}},
+            {"op":"unarchive","ticket":a,"data":{}},
+            {"op":"archive","ticket":b,"data":{}},
+            {"op":"unarchive","ticket":b,"data":{}}
+        ]),
+    );
+    let written: Vec<_> = out["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["written"].as_bool().unwrap())
+        .collect();
+    assert_eq!(written, vec![false, true, false, true, true]);
+    let shown = ok(p, &["show", &a]);
+    assert_eq!(shown["archived"], false);
+    assert_eq!(shown["status"], "doing");
+    assert_eq!(ok(p, &["show", &b])["archived"], false);
+
+    refuses(
+        p,
+        json!({"changes":[{"op":"unarchive","ticket":a,"data":{"to":"x"}}]}),
+        "invalid-argument",
+    );
+    ok(p, &["tombstone", &b]);
+    refuses(
+        p,
+        json!({"changes":[
+            {"op":"archive","ticket":a,"data":{}},
+            {"op":"unarchive","ticket":b,"data":{}}
+        ]}),
+        "tombstoned",
+    );
+}

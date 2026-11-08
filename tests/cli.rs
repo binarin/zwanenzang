@@ -510,6 +510,44 @@ fn archive_and_tombstone_leave_the_default_list() {
     err(p, &["parent", &b, &c], "target-tombstoned");
 }
 
+#[test]
+fn unarchive_returns_a_ticket_to_the_default_list_with_its_status() {
+    let d = tracker();
+    let p = d.path();
+    let a = id(&ok(p, &["create", "A"]));
+    let c = id(&ok(p, &["create", "C"]));
+    // Not archived: nothing changes, as with archiving an archived ticket.
+    let unchanged = logs(p);
+    let noop = ok(p, &["unarchive", &a]);
+    assert_eq!(noop["written"], false);
+    assert_eq!(noop["ticket"]["archived"], false);
+    assert_eq!(logs(p), unchanged);
+
+    ok(p, &["status", &a, "done"]);
+    ok(p, &["archive", &a]);
+    let listed = |v: &Value, id: &str| {
+        v["tickets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["id"] == id)
+    };
+    assert!(!listed(&ok(p, &["list"]), &a));
+    let back = ok(p, &["unarchive", &a]);
+    assert_eq!(back["written"], true);
+    assert_eq!(back["event"]["op"], "unarchive");
+    assert_eq!(back["event"]["data"], json!({}));
+    assert_eq!(back["ticket"]["archived"], false);
+    assert_eq!(back["ticket"]["status"], "done");
+    assert!(listed(&ok(p, &["list"]), &a));
+    assert_eq!(ok(p, &["unarchive", &a])["written"], false);
+
+    ok(p, &["tombstone", &c]);
+    err(p, &["archive", &c], "tombstoned");
+    err(p, &["unarchive", &c], "tombstoned");
+    assert_eq!(run_in(p, &["lint"], "").code, 0);
+}
+
 fn line(id: &str, actor: &str, parent: &str, entity: &str, op: &str, data: Value) -> String {
     serde_json::to_string(&json!({
         "id": id, "actor": actor, "parent": parent, "ts": "2026-11-07T00:00:00Z",

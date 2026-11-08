@@ -229,3 +229,31 @@ fn invalid_requests_fail_without_writing_and_read_needs_no_git() {
     std::fs::remove_dir_all(p.join(".git")).unwrap();
     assert_eq!(scope(p, json!({}))["tickets"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn unarchive_is_in_history_and_brings_an_absent_ticket_back() {
+    let d = tracker();
+    let p = d.path();
+    let a = id(&ok(p, &["create", "revived"]));
+    let archived = ok(p, &["archive", &a]);
+    let first = scope(p, json!({"cursors": {&a: null}}));
+    let cursor = entry(&first, &a)["cursor"].clone();
+    assert_eq!(
+        entry(&first, &a)["events"].as_array().unwrap().last(),
+        Some(&archived["event"])
+    );
+    // Archived and absent from the scope: not discovered, even from the start.
+    assert_eq!(scope(p, json!({}))["tickets"], json!([]));
+
+    let revived = ok(p, &["unarchive", &a]);
+    assert_eq!(revived["event"]["op"], "unarchive");
+    let known = scope(
+        p,
+        json!({"cursors": {&a: cursor}, "since": first["cursor"]}),
+    );
+    assert_eq!(entry(&known, &a)["events"], json!([revived["event"]]));
+    assert_eq!(entry(&known, &a)["ticket"]["archived"], false);
+    let absent = scope(p, json!({"since": first["cursor"]}));
+    assert_eq!(absent["tickets"].as_array().unwrap().len(), 1);
+    assert_eq!(entry(&absent, &a)["ticket"]["archived"], false);
+}

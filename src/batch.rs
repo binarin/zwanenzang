@@ -85,7 +85,7 @@ pub fn apply(
                     "tag" | "untag" => &["tag"],
                     "branch" => &["repo", "name"],
                     "mr" => &["repo", "url"],
-                    "archive" | "tombstone" => &[],
+                    "archive" | "unarchive" | "tombstone" => &[],
                     "doc" => &["name", "text", "base"],
                     "comment" => &["text", "link"],
                     _ => {
