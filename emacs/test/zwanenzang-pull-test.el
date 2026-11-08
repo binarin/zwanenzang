@@ -23,21 +23,20 @@
 
 (ert-deftest zwanenzang-escape-keeps-headings-out-and-org-verbatim ()
   (let ((text (concat "* heading\n** deeper\n*bold* stays\n#+begin_src sh\nls\n#+end_src\n"
-                      "[[https://example.invalid][link]]\n:lone:\n,* already\nplain\n*\n")))
+                      "[[https://example.invalid][link]]\n,* already\nplain\n*\n")))
     (should (equal (zwanenzang--escape-text text)
                    (concat ",* heading\n,** deeper\n*bold* stays\n#+begin_src sh\nls\n#+end_src\n"
-                           "[[https://example.invalid][link]]\n:lone:\n,,* already\nplain\n,*\n")))
+                           "[[https://example.invalid][link]]\n,,* already\nplain\n,*\n")))
     (should (equal (zwanenzang--unescape-text (zwanenzang--escape-text text)) text))
     ;; A comma that escapes nothing is the human's and stays.
     (should (equal (zwanenzang--unescape-text ",plain\n") ",plain\n"))))
 
-(ert-deftest zwanenzang-escape-keeps-text-from-reading-as-a-drawer ()
-  ;; A whole drawer in tracker text would leave the description on reading.
-  (let ((text ":NOTE:\nkept\n:END:\n:END:\n"))
-    (should (equal (zwanenzang--escape-text text) ",:NOTE:\nkept\n:END:\n:END:\n"))
+(ert-deftest zwanenzang-escape-covers-every-drawer-like-line ()
+  ;; Whatever follows: a human may add a drawer below it later.
+  (let ((text ":wip:\ntext\n  :NOTE:\nkept\n:END:\n:end:\n:ZWANENZANG_COMMENTS:\n"))
+    (should (equal (zwanenzang--escape-text text)
+                   ",:wip:\ntext\n,  :NOTE:\nkept\n,:END:\n,:end:\n,:ZWANENZANG_COMMENTS:\n"))
     (should (equal (zwanenzang--body-description (zwanenzang--escape-text text)) text)))
-  (should (equal (zwanenzang--escape-text ":ZWANENZANG_COMMENTS:\n")
-                 ",:ZWANENZANG_COMMENTS:\n"))
   ;; `#+' lines escaped by an earlier version read back without the comma.
   (should (equal (zwanenzang--unescape-text ",#+begin_src\n,,#+x\n") "#+begin_src\n,#+x\n"))
   (should (equal (zwanenzang--escape-text ",#+x\n") ",,#+x\n")))
@@ -95,6 +94,20 @@
                            (zwanenzang--body-segments body))
                    '(text text "ZWANENZANG_COMMENTS")))
     (should (equal (zwanenzang--body-description body) ":lone:\nText\n"))))
+
+(ert-deftest zwanenzang-body-segments-read-an-old-bare-line-before-a-drawer-as-text ()
+  ;; As an earlier version wrote it, with a human's drawer added below.
+  (let ((body ":PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\ntext\n:B:\ntail\n:NOTES:\nmine\n:END:\n"))
+    (should (equal (zwanenzang--body-description body) "text\n:B:\ntail\n"))
+    ;; Writing the body keeps all of it, and it still reads the same.
+    (let ((new (zwanenzang--compose-body body nil)))
+      (should (equal (zwanenzang--body-description new) "text\n:B:\ntail\n"))
+      (should (string-match-p ":NOTES:\nmine\n:END:\n" new))))
+  ;; An empty property, and a line like it in the logbook, do not end those.
+  (let ((body ":PROPERTIES:\n:EMPTY:\n:END:\n:LOGBOOK:\n:odd:\n:END:\nText\n"))
+    (should (equal (mapcar (lambda (s) (if (eq (car s) 'drawer) (nth 2 s) (car s)))
+                           (zwanenzang--body-segments body))
+                   '("PROPERTIES" "LOGBOOK" text)))))
 
 (ert-deftest zwanenzang-description-excludes-drawers-and-planning ()
   (should (equal (zwanenzang--body-description zwanenzang-test--body)

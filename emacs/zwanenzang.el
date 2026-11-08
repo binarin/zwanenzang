@@ -179,11 +179,10 @@ report without pointing at it, so a clean run is one line in the echo."
 
 ;; Tracker prose is Org, written into Org bodies as it stands.  Only what
 ;; would break the outline or the body's structure gets a leading comma, as
-;; Org escapes such lines in blocks: a heading line, and a drawer-like line
-;; that would otherwise read as a drawer (one with an :END: below it, or
-;; named like the client's own drawers).  Reading strips that one comma
-;; again, along with the comma of any `#+' line an earlier version of the
-;; client escaped, so the two are inverse.
+;; Org escapes such lines in blocks: a heading line, and any drawer-like
+;; line, whatever follows it, since a human may add a drawer below it later.
+;; Reading strips that one comma again, along with the comma of any `#+'
+;; line an earlier version of the client escaped, so the two are inverse.
 
 (defconst zwanenzang--heading-line-re "\\`\\*+\\(?:[ \t]\\|\\'\\)"
   "A line Org would read as a heading.")
@@ -209,22 +208,14 @@ Writing adds one to such a line too, so it survives the round trip.")
 
 (defun zwanenzang--escape-text (text)
   "TEXT with every line that would break the Org body escaped by a comma."
-  (let ((rest (split-string text "\n"))
-        (case-fold-search t)
-        out)
-    (while rest
-      (let ((line (pop rest)))
-        (push (if (or (string-match-p zwanenzang--heading-line-re line)
-                      (string-match-p zwanenzang--escaped-line-re line)
-                      (string-match-p zwanenzang--client-drawer-re line)
-                      (and (string-match-p zwanenzang--drawer-line-re line)
-                           (not (string-match-p zwanenzang--end-line-re line))
-                           (seq-some (lambda (l) (string-match-p zwanenzang--end-line-re l))
-                                     rest)))
-                  (concat "," line)
-                line)
-              out)))
-    (string-join (nreverse out) "\n")))
+  (zwanenzang--map-lines
+   (lambda (line)
+     (if (or (string-match-p zwanenzang--heading-line-re line)
+             (string-match-p zwanenzang--drawer-line-re line)
+             (string-match-p zwanenzang--escaped-line-re line))
+         (concat "," line)
+       line))
+   text))
 
 (defun zwanenzang--unescape-text (text)
   "TEXT with the comma `zwanenzang--escape-text' added removed."
@@ -286,15 +277,21 @@ Nothing in such a line is markup, so any text is safe in a drawer."
 
 (defun zwanenzang--drawer-end (lines start)
   "The index in the vector LINES of what closes the drawer opened at START.
-Nil when nothing does.  Only a drawer of the client's can hold one of the
-client's opening lines, so a lone drawer-like line of text in front of
-them is text, not a drawer running through them."
+Nil when nothing does.  Drawers do not nest, so a drawer-like line with
+another one before its :END: is text.  Files written by earlier versions
+can hold such lines unescaped in a description, and reading them as a
+drawer running on through a human's drawer below would cut the description
+short.  Only the drawers known to hold such lines are exempt: the
+property drawer (an empty property looks like one), the logbook and the
+client's own."
   (let ((case-fold-search t)
-        (own (string-match-p zwanenzang--client-drawer-re (aref lines start))))
+        (container (or (string-match-p zwanenzang--client-drawer-re (aref lines start))
+                       (string-match-p "\\`[ \t]*:\\(?:PROPERTIES\\|LOGBOOK\\):[ \t]*\\'"
+                                       (aref lines start)))))
     (cl-loop for j from (1+ start) below (length lines)
              for line = (aref lines j)
              when (string-match-p zwanenzang--end-line-re line) return j
-             when (and (not own) (string-match-p zwanenzang--client-drawer-re line))
+             when (and (not container) (string-match-p zwanenzang--drawer-line-re line))
              return nil)))
 
 (defun zwanenzang--body-segments (body)

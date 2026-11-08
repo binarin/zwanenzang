@@ -422,18 +422,24 @@ tracker.
 - Prose: the description and named documents are compared normalized,
   without leading blank lines or trailing whitespace. They are written
   verbatim (`#+begin_src`, links and other Org included) except for what
-  would break the body: a heading line gets a leading comma, which reading
-  strips again, so tracker text cannot change the outline. So does a
-  drawer-like line that would read as a drawer, meaning one with an `:END:`
-  below it in the text or one named like the client's drawers; without that
-  a whole drawer in a description would leave it on the next read. In
-  comments, heading lines and `:END:` lines get the comma. Heading lines in
-  named documents stay escaped for now; levels are not shifted. Skipped
-  values are fixed-width `: ` lines. Drawers end at `:END:` in any case, as
-  in Org. A lone drawer-like line of text in front of the client's drawers
-  stays text: only the client's own drawers run through their opening
-  lines. Reading also strips the comma an earlier version put on `#+`
-  lines, so files written then do not read as edited.
+  would break the body. A heading line and every drawer-like line (`:word:`
+  alone on a line, `:END:` too) get a leading comma, whatever follows them,
+  which reading strips again. Escaping those only when an `:END:` followed
+  in the text was not enough: a human can add a drawer below later, the line
+  then read as its opening, and the push truncated the description. The
+  cost is a comma on `:wip:`-shaped lines of prose. In comments, heading
+  lines and `:END:` lines get the comma. Heading lines in named documents
+  stay escaped for now; levels are not shifted. Skipped values are
+  fixed-width `: ` lines. Drawers end at `:END:` in any case, as in Org.
+- Reading is lenient about files earlier versions wrote. Drawers do not
+  nest, so a drawer-like line with another one before its `:END:` is text;
+  only the property drawer, the logbook and the client's own drawers run
+  through such lines. Org itself would still fold that text as a drawer. Two
+  cases stay ambiguous: a bare `:B:` with a lone `:END:` typed below it is a
+  drawer (it is one, to Org too), and a human's own `:NOTES:` drawer holding
+  a `:word:` line leaks its opening line into the description. Reading also
+  strips the comma an earlier version put on `#+` lines, so files written
+  then do not read as edited.
 - Writing a body keeps planning lines first and the other drawers in
   their order, then `:ZWANENZANG_CONFLICT:`, then the text, then the
   comments and hidden drawers. A comments drawer in the old position above
