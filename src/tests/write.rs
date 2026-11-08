@@ -412,6 +412,7 @@ fn no_op_writes_are_not_written() {
         (u(T2), Op::Relate(RelateData { to: u(T1) })),
         (u(T2), Op::Unrelate(RelateData { to: u(T3) })),
         (u(T1), Op::Archive(Empty {})),
+        (u(T2), Op::Unarchive(Empty {})),
         (
             t.config.id,
             Op::Actor(ActorData {

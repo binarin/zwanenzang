@@ -69,6 +69,8 @@ Ticket lifecycle and metadata:
 - `tag` / `untag`.
 - `archive` — the tracker's notion of "out of the active set". Distinct from
   status; see the org client notes.
+- `unarchive` — puts a ticket back in the active set. Leaves status as it is,
+  as `archive` does.
 - `tombstone` — hides an entity created by mistake. Nothing is hard-deleted.
 
 Prose:
@@ -159,8 +161,17 @@ question; start human-only.
 - Whether `archive` is an operation or a derived property of terminal
   statuses. Current leaning: an operation, because the human archives for
   reasons unrelated to status.
-  **Chosen for milestone 2:** an operation, `archive` with `{}` data. No
-  `unarchive` yet; it is added as a new operation if the org client needs it.
+  **Chosen for milestone 2:** an operation, `archive` with `{}` data.
+  **Added in milestone 3:** `unarchive`, also with `{}` data, because the
+  Emacs client needs it to revive tickets moved back from an `.org_archive`
+  file. It mirrors `archive`: ticket entities only, refused on tombstoned
+  tickets, and it does not touch status. The flag is the state of the latest
+  of the two in ULID order; a concurrent pair is not a concurrent field
+  report. A live no-op writes no event, so unarchiving on a clone that has
+  not yet fetched a concurrent `archive` writes nothing and the archive
+  stands, with no lint report; clients should sync before reviving. A build
+  older than the operation skips it as `unknown-op`, so such a build keeps
+  the ticket archived until the build is updated.
 - Attachments (images). Probably blobs with a size cap, as in epiq, but not
   needed for the first milestones.
 - Numbers for imported tickets.
@@ -216,7 +227,8 @@ none changes a decision above.
 - **Tombstones.** Any further operation on a tombstoned entity is rejected.
   Tombstoned tickets are excluded from `list` unless asked for.
 - **No-op writes.** A live write that would not change derived state (the
-  same status again, an existing tag or relation) is not written; the CLI
+  same status again, an existing tag or relation, archiving an archived
+  ticket, unarchiving one that is not archived) is not written; the CLI
   reports `"written": false`. Replay accepts such events if they exist.
 - **Short ids.** An unpublished ticket displays as the shortest unique
   prefix of its ULID among all entities, at least 10 characters (the
@@ -233,8 +245,9 @@ none changes a decision above.
 - **Operation data.** `title`, `status`: `{to}`. `kind`: `{to}` where
   `null` clears the kind. `parent`: `{to}` where `null` clears the parent.
   `relate`, `unrelate`: `{to}`. `tag`, `untag`: `{tag}`. `number`:
-  `{number}`, at least 1. `archive`, `tombstone`: `{}`. `actor`: `{name}`,
-  the writing actor's own display name; a later declaration renames it.
+  `{number}`, at least 1. `archive`, `unarchive`, `tombstone`: `{}`.
+  `actor`: `{name}`, the writing actor's own display name; a later
+  declaration renames it.
   Nullable fields (`kind.to`, `parent.to`, `doc.base`) must be present, so a
   writer always states what it means. Unknown fields in `data` and in the
   envelope are ignored at replay, so the format can grow.
