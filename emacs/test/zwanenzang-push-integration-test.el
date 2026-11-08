@@ -143,6 +143,38 @@
       (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
       (should (string-match-p "status=doing " (zwanenzang-test-property id "ZWANENZANG_SYNC"))))))
 
+(ert-deftest zwanenzang-sync-human-wins-over-an-agents-concurrent-document ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-set-doc trk id "description" "Base text\n")
+      (zwanenzang-test-set-doc trk id "plan" "Base plan\n")
+      (zwanenzang-test-at-root #'zwanenzang-sync)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (search-forward "Base text") (replace-match "My text")
+        (search-forward "Base plan") (replace-match "My plan"))
+      ;; The agent works in its own clone and publishes first.
+      (let ((agent (zwanenzang-test-clone net "agent-test-repo")))
+        (zwanenzang-test-set-doc agent id "plan" "Agent plan\n")
+        (zwanenzang-test-at-root #'zwanenzang-sync)
+        (should (equal (zwanenzang-test--doc-text trk id "plan") "My plan\n"))
+        (should (equal (zwanenzang-test--doc-text trk id "description") "My text\n"))
+        (should (member "Agent plan\n"
+                        (mapcar (lambda (v)
+                                  (with-temp-buffer
+                                    (insert-file-contents-literally
+                                     (expand-file-name (format "blobs/%s" (alist-get 'blob v)) trk))
+                                    (decode-coding-region (point-min) (point-max) 'utf-8)
+                                    (buffer-string)))
+                                (zwanenzang-test--doc-versions trk id "plan"))))
+        (should-not (seq-some (lambda (v) (eq (alist-get 'lost v) t))
+                              (zwanenzang-test--doc-versions trk id "plan")))
+        (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))
+        (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
+        ;; The agent gets the human's version on its next sync.
+        (zwanenzang-test-cli agent "sync")
+        (should (equal (zwanenzang-test--doc-text agent id "plan") "My plan\n"))))))
+
 (ert-deftest zwanenzang-push-without-sync-keeps-the-text-when-a-remote-version-wins ()
   ;; Push does not fetch first, so its version can lose on the remote.
   ;; The text stays in Org and the next push settles it.
@@ -270,6 +302,8 @@
           (head (zwanenzang-test-head trk)))
       (should (string-match-p "push of Project blocked"
                               (zwanenzang-test-at-root #'zwanenzang-push)))
+      (should (string-match-p "pull of Project blocked"
+                              (zwanenzang-test-at-root #'zwanenzang-sync)))
       (should (equal (buffer-string) before))
       (should (equal (zwanenzang-test-head trk) head)))))
 
@@ -290,6 +324,39 @@
       (should (equal (zwanenzang-test-head trk) head))
       (should (equal (buffer-string) before))
       (should (= (buffer-modified-tick) tick)))))
+
+(ert-deftest zwanenzang-sync-offline-is-reported-not-failed ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-at-root #'zwanenzang-sync)
+      (zwanenzang-test-delete-dir (expand-file-name "remote-test-repo" net))
+      (zwanenzang-test--edit-title id "Edited offline")
+      (zwanenzang-test-append "** TODO Written offline\n")
+      (zwanenzang-test-clear-report)
+      (let ((summary (zwanenzang-test-at-root #'zwanenzang-sync)))
+        (should (string-match-p "1 created, 1 pushed" summary))
+        (should (string-match-p "see \\*zwanenzang\\*" summary)))
+      (should (string-match-p "not published: fetch-failed" (zwanenzang-test-report)))
+      ;; Local success: state is in the clone and in the sync state.
+      (should (equal (alist-get 'title (zwanenzang-test-show trk id)) "Edited offline"))
+      (should (zwanenzang-test-id-of "Written offline")))))
+
+(ert-deftest zwanenzang-sync-reports-checkout-results ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((checkout (zwanenzang-test-clone net "checkout-test-repo")))
+      (zwanenzang-test-git trk "config" "--local" "--add" "zwanenzang.checkout" checkout)
+      (zwanenzang-test-create trk "Ticket")
+      (with-temp-file (expand-file-name "untracked" checkout))
+      (zwanenzang-test-clear-report)
+      (should (string-match-p "see \\*zwanenzang\\*" (zwanenzang-test-at-root #'zwanenzang-sync)))
+      (should (string-match-p (concat "checkout " (regexp-quote checkout) ": skipped, dirty")
+                              (zwanenzang-test-report)))
+      (delete-file (expand-file-name "untracked" checkout))
+      (zwanenzang-test-clear-report)
+      (should-not (string-match-p "see \\*zwanenzang\\*"
+                                  (zwanenzang-test-at-root #'zwanenzang-sync)))
+      (should (string-match-p (concat "checkout " (regexp-quote checkout) ": \\(updated\\|up-to-date\\)")
+                              (zwanenzang-test-report))))))
 
 (ert-deftest zwanenzang-revival-by-archive-time-unarchives-and-follows-the-keyword ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
@@ -328,6 +395,50 @@
                                   (zwanenzang-test-call dir args input)))))
         (should-error (zwanenzang-test-at-root #'zwanenzang-push) :type 'user-error))
       (should (zwanenzang-test-property id "ARCHIVE_TIME")))))
+
+(ert-deftest zwanenzang-repeat-sync-is-stable ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((id (zwanenzang-test-create trk "Ticket" "--tag" "a")))
+      (zwanenzang-test-set-doc trk id "description" "Text\n#+begin_src sh\nls\n#+end_src\n* no\n")
+      (zwanenzang-test-set-doc trk id "plan" "Plan\n")
+      (zwanenzang-test-set-doc trk id "status" "Hidden\n")
+      (zwanenzang-test-cli trk "comment" id "A comment\n* starred\n:END:\n")
+      (zwanenzang-test-append "** Group\n*** NEXT New :x:\nNew text\n")
+      (zwanenzang-test-at-root #'zwanenzang-sync)
+      (let ((before (buffer-string))
+            (tick (buffer-modified-tick))
+            (head (zwanenzang-test-head trk)))
+        (should (string-match-p ": nothing changed\\'" (zwanenzang-test-at-root #'zwanenzang-sync)))
+        (should (equal (buffer-string) before))
+        (should (= (buffer-modified-tick) tick))
+        (should (equal (zwanenzang-test-head trk) head))))))
+
+(ert-deftest zwanenzang-sync-all-covers-every-scope-and-survives-a-failure ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-with-tracker other
+      (let* ((second (expand-file-name "second.org" net))
+             (broken (expand-file-name "broken.org" net))
+             (zwanenzang-org-files (list broken buffer-file-name second)))
+        (with-temp-file broken
+          (insert "* Broken\n:PROPERTIES:\n:ZWANENZANG: /nonexistent/zwanenzang\n:END:\n"))
+        (with-temp-file second
+          (insert (format zwanenzang-test--push-org other) "** TODO Over there\n"))
+        (zwanenzang-test-append "** TODO Over here\n")
+        (unwind-protect
+            (progn
+              (zwanenzang-test-clear-report)
+              (should (string-match-p "synced 2 scopes, 1 failed" (zwanenzang-sync-all)))
+              (should (zwanenzang-test-id-of "Over here"))
+              (should (equal (mapcar (lambda (s) (alist-get 'title s))
+                                     (alist-get 'tickets (zwanenzang-test-cli other "list")))
+                             '("Over there")))
+              (should (string-match-p "broken.org: Broken: .*not a directory"
+                                      (zwanenzang-test-report))))
+          (dolist (file (list broken second))
+            (let ((b (find-buffer-visiting file)))
+              (when b
+                (with-current-buffer b (set-buffer-modified-p nil))
+                (kill-buffer b)))))))))
 
 (provide 'zwanenzang-push-integration-test)
 ;;; zwanenzang-push-integration-test.el ends here

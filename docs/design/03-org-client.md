@@ -492,6 +492,11 @@ does.
   its parent, reported, and the nesting's sync state, so it retries.
 - An invalid tag, or a document name the CLI refuses, refuses the batch
   with the CLI's error, which names it. Nothing is lost.
+- `zwanenzang-sync` is CLI `sync`, pull, push, the push ending in a pull. An
+  unreachable remote is reported and the rest works on the local clone.
+  `zwanenzang-sync-all` does that for every scope in `zwanenzang-org-files`;
+  a scope that fails is reported and the others still run. Buffers are
+  edited, not saved.
 
 ### Errors and reports
 

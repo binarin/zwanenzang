@@ -1672,6 +1672,60 @@ buffer is edited but not saved; a report goes to the `*zwanenzang*' buffer."
     (zwanenzang--push-scope root outcome)
     (zwanenzang--report-outcome "pushed" root outcome)))
 
+(defun zwanenzang--sync-scope (root)
+  "Run the CLI's sync, a pull and a push on the scope at ROOT; report the result."
+  (let ((outcome (zwanenzang--outcome-create))
+        (dir (with-current-buffer (marker-buffer root) (zwanenzang--scope-directory root))))
+    (zwanenzang--note-sync outcome (alist-get 'sync (funcall zwanenzang--call dir '("sync"))))
+    (zwanenzang--pull-into outcome root)
+    (unless (zwanenzang--outcome-refused outcome)
+      (zwanenzang--push-scope root outcome))
+    (zwanenzang--report-outcome "synced" root outcome)))
+
+;;;###autoload
+(defun zwanenzang-sync ()
+  "Sync the scope containing point: CLI sync, then pull, then push.
+Failing to reach the remote is reported, not an error: work continues
+against the local clone."
+  (interactive)
+  (zwanenzang--sync-scope (zwanenzang--root-at-point)))
+
+(defun zwanenzang--scope-roots ()
+  "Markers at every scope root in the current buffer, in buffer order."
+  (org-with-wide-buffer
+   (goto-char (point-min))
+   (let ((case-fold-search t)
+         roots)
+     (while (re-search-forward "^[ \t]*:ZWANENZANG:[ \t]" nil t)
+       (unless (org-before-first-heading-p)
+         (save-excursion
+           (org-back-to-heading t)
+           (when (org-entry-get nil "ZWANENZANG")
+             (push (zwanenzang--heading-marker) roots)))))
+     (nreverse roots))))
+
+;;;###autoload
+(defun zwanenzang-sync-all ()
+  "Sync every scope in `zwanenzang-org-files', each like `zwanenzang-sync'.
+A scope that fails is reported and the others still run."
+  (interactive)
+  (let ((done 0) failures)
+    (dolist (file (zwanenzang--org-files))
+      (if (not (file-exists-p file))
+          (push (format "%s: no such file" file) failures)
+        (with-current-buffer (find-file-noselect file)
+          (dolist (root (zwanenzang--scope-roots))
+            (condition-case err
+                (progn (zwanenzang--sync-scope root)
+                       (cl-incf done))
+              (user-error
+               (push (format "%s: %s: %s" file
+                             (org-with-wide-buffer (zwanenzang--scope-name root))
+                             (error-message-string err))
+                     failures)))))))
+    (zwanenzang-report (format "zwanenzang: synced %d scopes, %d failed" done (length failures))
+                       (reverse failures))))
+
 ;;;; Hidden documents
 
 (defun zwanenzang--link-follow (path _arg)
