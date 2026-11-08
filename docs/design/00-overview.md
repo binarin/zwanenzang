@@ -112,4 +112,5 @@ Recorded so they are not re-surveyed.
 See [data model](01-data-model.md), [git and sync](02-git-and-sync.md),
 [org client](03-org-client.md), [milestones](04-milestones.md). The JSON
 contract of the CLI, which clients build on, is in
-[cli-json](../cli-json.md).
+[cli-json](../cli-json.md); how an agent uses a tracker is in
+[agents](../agents.md).
