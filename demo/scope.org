@@ -1,0 +1,21 @@
+#+TITLE: What zwanenzang-pull does to an Org file
+#+TODO: TODO NEXT WAIT REVIEW | DONE CNCL
+
+* Notes of my own
+Above the scope. The tracker never sees this heading.
+
+* Work
+** Tracked projects
+Still above the scope; only grouping for me.
+*** Widgets and sprockets
+:PROPERTIES:
+:ZWANENZANG: /tmp/zwanenzang-demo-test-repo
+:ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing WAIT=blocked REVIEW=review DONE=done CNCL=cancelled
+:ZWANENZANG_HIDE_DOCS: status
+:END:
+The scope root. Everything beneath it syncs with the tracker.
+**** Things to look at some day
+A heading with no keyword or id inside the scope: my own structure.
+
+* Notes after the scope
+Pull must not touch this either.
