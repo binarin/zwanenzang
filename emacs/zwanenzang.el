@@ -156,11 +156,12 @@ commands exit 1 with a full result: `sync' when publication failed,
 (defconst zwanenzang-report-buffer "*zwanenzang*"
   "Buffer collecting readable reports of publication errors and skips.")
 
-(defun zwanenzang-report (summary &optional details)
-  "Echo SUMMARY and append it with DETAILS to the `*zwanenzang*' buffer.
-DETAILS is a list of strings, one line each.  This is for outcomes that
-are not failures, such as a sync that could not publish; the report keeps
-what the one-line echo cannot hold."
+(defun zwanenzang-report (summary &optional details info)
+  "Echo SUMMARY and append it with DETAILS and INFO to the `*zwanenzang*' buffer.
+Each is a list of strings, one line each.  DETAILS is for outcomes that
+are not failures but need a look, such as a sync that could not publish;
+the echo points at the report then.  INFO is what happened, kept in the
+report without pointing at it, so a clean run is one line in the echo."
   (with-current-buffer (get-buffer-create zwanenzang-report-buffer)
     (unless (derived-mode-p 'special-mode)
       (special-mode))
@@ -169,7 +170,7 @@ what the one-line echo cannot hold."
         (goto-char (point-max))
         (unless (bobp) (insert "\n"))
         (insert (format-time-string "[%F %T] ") summary "\n")
-        (dolist (line details)
+        (dolist (line (append details info))
           (insert "  " line "\n")))))
   (message "%s%s" summary
            (if details (format " (see %s)" zwanenzang-report-buffer) "")))
@@ -561,35 +562,50 @@ That is the nearest heading at or above point with a ZWANENZANG property."
       (user-error "zwanenzang: scope location is not a directory: %s" location))
     dir))
 
-(defun zwanenzang--scan (root)
-  "The ticket headings in the scope at ROOT, in buffer order, and its inbox.
-Return (TICKETS . INBOX).  Each ticket is a plist with :id, :marker and
-:nest, the id of the nearest ticket heading above it in the scope or
-nil.  INBOX is a marker at the root's child with ZWANENZANG_INBOX: t,
-or nil.  The subtree of a scope root nested inside is another scope and
-is skipped."
+(defun zwanenzang--scan-all (root)
+  "The headings the scope at ROOT syncs, in buffer order, and its inbox.
+Return a plist with :headings and :inbox.  Each heading is a plist with
+:marker, then :id for a ticket heading, or nil for a new ticket: a heading
+with a TODO keyword and no identity, which is not the inbox or a document.
+:nest is the id of the nearest ticket heading above it in the scope, or
+nil; :up is the same but also counts a new ticket above it, as its marker.
+Other headings are the human's structure, and are transparent.  INBOX is
+a marker at the root's child with ZWANENZANG_INBOX: t, or nil.  The subtree
+of a scope root nested inside is another scope and is skipped."
   (save-excursion
     (goto-char root)
     (let ((root-level (org-current-level))
           (end (zwanenzang--subtree-end root))
-          stack tickets inbox)
+          stack headings inbox)
       (outline-next-heading)
       (while (< (point) end)
         (let ((level (org-current-level)))
           (if (org-entry-get nil "ZWANENZANG")
               (org-end-of-subtree t t)
-            (while (and stack (>= (caar stack) level)) (pop stack))
-            (let ((id (org-entry-get nil "ZWANENZANG_ID")))
-              (when (and (not inbox) (= level (1+ root-level))
-                         (equal (org-entry-get nil "ZWANENZANG_INBOX") "t"))
+            (while (and stack (>= (car (car stack)) level)) (pop stack))
+            (let* ((id (org-entry-get nil "ZWANENZANG_ID"))
+                   (is-inbox (equal (org-entry-get nil "ZWANENZANG_INBOX") "t"))
+                   (new (and (not id) (not is-inbox)
+                             (not (org-entry-get nil "ZWANENZANG_DOC"))
+                             (org-get-todo-state)))
+                   (marker (and (or id new) (zwanenzang--heading-marker))))
+              (when (and (not inbox) is-inbox (= level (1+ root-level)))
                 (setq inbox (zwanenzang--heading-marker)))
-              (when id
-                (push (list :id id :marker (zwanenzang--heading-marker)
-                            :nest (cdr (seq-find #'cdr stack)))
-                      tickets))
-              (push (cons level id) stack))
+              (when marker
+                (push (list :id id :marker marker
+                            :nest (nth 1 (seq-find #'cadr stack))
+                            :up (nth 2 (seq-find #'caddr stack)))
+                      headings))
+              (push (list level id (or id marker)) stack))
             (outline-next-heading))))
-      (cons (nreverse tickets) inbox))))
+      (list :headings (nreverse headings) :inbox inbox))))
+
+(defun zwanenzang--scan (root)
+  "The ticket headings in the scope at ROOT and its inbox, as (TICKETS . INBOX).
+See `zwanenzang--scan-all'."
+  (let ((scan (zwanenzang--scan-all root)))
+    (cons (seq-filter (lambda (h) (plist-get h :id)) (plist-get scan :headings))
+          (plist-get scan :inbox))))
 
 (defun zwanenzang--ensure-inbox (root)
   "A marker at the inbox of the scope at ROOT, creating it if needed."
@@ -700,11 +716,22 @@ nesting changed) or `conflict'."
   "What one scope's pull works with and collects."
   root dir tracker-dir map hidden actors
   (ids (make-hash-table :test #'equal)) ; id -> marker, unique headings only
-  moves lines (pulled 0) (new 0) (moved 0) (conflicted 0) (blocked 0))
+  moves
+  lines                                 ; what needs a look, newest first
+  info                                  ; what happened, newest first
+  pulled                                ; ids whose shown state changed
+  (new 0) (moved 0)
+  conflicted                            ; ids, each counted once
+  (blocked 0)
+  refused)                              ; why the whole scope was skipped
 
 (defun zwanenzang--pull-line (pull format &rest args)
   "Add a line to PULL's report, formatted from FORMAT and ARGS."
   (push (apply #'format format args) (zwanenzang--pull-lines pull)))
+
+(defun zwanenzang--pull-note (pull format &rest args)
+  "Add a line about what happened to PULL's report, from FORMAT and ARGS."
+  (push (apply #'format format args) (zwanenzang--pull-info pull)))
 
 (defun zwanenzang--label (ticket)
   "How the report names TICKET: its display form and title."
@@ -964,6 +991,15 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                       "the ticket is tombstoned in the tracker; writes to it would be refused"
                       nil)
                 conflicts))
+        ;; Push skips such a heading; the note lasts as long as the keyword.
+        (unless (rassoc keyword map)
+          (push (list "keyword"
+                      (if keyword
+                          (format "Org keyword %s has no status in the keyword map; not pushed"
+                                  keyword)
+                        "the heading has no TODO keyword; not pushed")
+                      nil)
+                conflicts))
         (setq conflicts (append (nreverse conflicts) (zwanenzang--pull-docs pull ticket texts)))
         (zwanenzang--write-body
          (zwanenzang--compose-body
@@ -986,19 +1022,54 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                  (and conflicts (list zwanenzang-conflict-tag))))
         (mapcar #'car conflicts)))))
 
+(defun zwanenzang--conflict-label (ticket)
+  "How the report names TICKET, at point, in a conflict: both titles."
+  (format "%s Org \"%s\", tracker \"%s\"" (alist-get 'display ticket)
+          (plist-get (zwanenzang--heading) :title) (alist-get 'title ticket)))
+
+(defun zwanenzang--note-conflict (pull ticket what)
+  "Report in PULL a conflict in WHAT on TICKET, at point; count the ticket once."
+  (cl-pushnew (alist-get 'id ticket) (zwanenzang--pull-conflicted pull) :test #'equal)
+  (zwanenzang--pull-line pull "%s: conflict in %s" (zwanenzang--conflict-label ticket) what))
+
 (defun zwanenzang--note-result (pull ticket result)
-  "Count RESULT of pulling TICKET in PULL and report what needs attention."
+  "Count RESULT of pulling TICKET, at point, in PULL and report it."
   (cond
    ((eq result 'blocked)
     (cl-incf (zwanenzang--pull-blocked pull))
     (zwanenzang--pull-line pull "%s: blocked, tracker status %s has no keyword"
                            (zwanenzang--label ticket) (alist-get 'status ticket)))
    (result
-    (cl-incf (zwanenzang--pull-conflicted pull))
-    (zwanenzang--pull-line pull "%s: conflict in %s" (zwanenzang--label ticket)
-                           (string-join result ", "))))
+    (zwanenzang--note-conflict pull ticket (string-join result ", "))))
   (when (eq (alist-get 'archived ticket) t)
-    (zwanenzang--pull-line pull "%s: archived in the tracker" (zwanenzang--label ticket))))
+    (zwanenzang--pull-note pull "%s: archived in the tracker" (zwanenzang--label ticket))))
+
+(defun zwanenzang--shown-state ()
+  "What the human sees of the ticket at point, to tell whether a pull changed it.
+Sync state and conflict notes are left out."
+  (let ((heading (zwanenzang--heading))
+        (segments (zwanenzang--body-segments (zwanenzang--body))))
+    (list (plist-get heading :keyword)
+          (plist-get heading :title)
+          (zwanenzang--tracker-tags (plist-get heading :tags))
+          (zwanenzang--segments-text segments)
+          (seq-filter (lambda (s) (member (nth 2 s) zwanenzang--tail-drawers)) segments)
+          (mapcar (lambda (doc)
+                    (save-excursion
+                      (goto-char (cdr doc))
+                      (zwanenzang--body-description (zwanenzang--body))))
+                  (zwanenzang--doc-headings)))))
+
+(defun zwanenzang--pull-existing (pull entry nest)
+  "Pull ENTRY into the ticket heading at point, reporting in PULL what changed.
+NEST is as in `zwanenzang--pull-ticket'."
+  (let* ((ticket (alist-get 'ticket entry))
+         (before (zwanenzang--shown-state))
+         (result (zwanenzang--pull-ticket pull entry nest)))
+    (zwanenzang--note-result pull ticket result)
+    (unless (equal before (zwanenzang--shown-state))
+      (push (alist-get 'id ticket) (zwanenzang--pull-pulled pull))
+      (zwanenzang--pull-note pull "pulled %s" (zwanenzang--label ticket)))))
 
 (defun zwanenzang--rescan (pull)
   "Refresh the markers of PULL's unique tickets after subtrees moved."
@@ -1048,7 +1119,8 @@ no keyword is not inserted.  Return nil if any was left out."
                 (goto-char marker)
                 (zwanenzang--note-result
                  pull ticket (zwanenzang--pull-ticket pull e (and under (parent e)) t)))
-              (cl-incf (zwanenzang--pull-new pull))))
+              (cl-incf (zwanenzang--pull-new pull))
+              (zwanenzang--pull-note pull "new %s" (zwanenzang--label ticket))))
           (setq pending (seq-difference pending ready #'eq)))))
     complete))
 
@@ -1076,9 +1148,7 @@ cursor."
         (when (and entry (gethash (plist-get tk :id) ids))
           (save-excursion
             (goto-char (plist-get tk :marker))
-            (zwanenzang--note-result pull (alist-get 'ticket entry)
-                                     (zwanenzang--pull-ticket pull entry (plist-get tk :nest))))
-          (cl-incf (zwanenzang--pull-pulled pull)))))
+            (zwanenzang--pull-existing pull entry (plist-get tk :nest))))))
     (pcase-dolist (`(,id ,target ,parent ,old-parent ,old-nest)
                    (reverse (zwanenzang--pull-moves pull)))
       (zwanenzang--rescan pull)
@@ -1089,7 +1159,8 @@ cursor."
             (ticket (alist-get 'ticket (gethash id entries))))
         (if (not (and (<= from to) (< to (zwanenzang--subtree-end from))))
             (progn (zwanenzang--move-subtree from to)
-                   (cl-incf (zwanenzang--pull-moved pull)))
+                   (cl-incf (zwanenzang--pull-moved pull))
+                   (zwanenzang--pull-note pull "moved %s" (zwanenzang--label ticket)))
           ;; An earlier move put the new parent inside this subtree.  The
           ;; heading stays, and so does the sync state of its nesting.
           (save-excursion
@@ -1103,11 +1174,9 @@ cursor."
             (zwanenzang--add-conflict
              (list "parent" (format "tracker parent %s is nested inside this heading; %s"
                                     parent "Org nesting kept")
-                   nil)))
-          (cl-incf (zwanenzang--pull-conflicted pull))
-          (zwanenzang--pull-line
-           pull "%s: conflict in parent (not moved, the new parent is nested inside it)"
-           (zwanenzang--label ticket)))))
+                   nil))
+            (zwanenzang--note-conflict
+             pull ticket "parent (not moved, the new parent is nested inside it)")))))
     (zwanenzang--rescan pull)
     (let ((complete (zwanenzang--discover
                      pull (seq-remove (lambda (e)
@@ -1119,15 +1188,69 @@ cursor."
         (when complete
           (zwanenzang--put "ZWANENZANG_CURSOR" (zwanenzang--null (alist-get 'cursor result))))))))
 
-(defun zwanenzang--known-ids (dir)
-  "The ids of every ticket the tracker at DIR knows, as a hash set."
-  (let ((ids (make-hash-table :test #'equal)))
-    (dolist (s (alist-get 'tickets (funcall zwanenzang--call dir '("list" "--all"))))
-      (puthash (alist-get 'id s) t ids))
-    ids))
+(defun zwanenzang--known-tickets (dir)
+  "Every ticket the tracker at DIR knows, as a hash table from id to summary."
+  (let ((known (make-hash-table :test #'equal)))
+    (dolist (summary (alist-get 'tickets (funcall zwanenzang--call dir '("list" "--all"))))
+      (puthash (alist-get 'id summary) summary known))
+    known))
+
+(defun zwanenzang--blocked-headings (tickets known)
+  "The scanned TICKETS that must not sync: foreign or duplicate ids.
+KNOWN is from `zwanenzang--known-tickets'.  Return an alist of each such
+ticket and a note saying why."
+  (let ((counts (make-hash-table :test #'equal))
+        blocked)
+    (dolist (tk tickets)
+      (cl-incf (gethash (plist-get tk :id) counts 0)))
+    (dolist (tk tickets)
+      (let* ((id (plist-get tk :id))
+             (note
+              (cond
+               ((> (gethash id counts) 1)
+                (format "duplicate: ZWANENZANG_ID %s is on %d headings in this scope (lines %s)"
+                        id (gethash id counts)
+                        (mapconcat (lambda (o) (number-to-string
+                                                (line-number-at-pos (plist-get o :marker) t)))
+                                   (seq-filter (lambda (o) (equal (plist-get o :id) id)) tickets)
+                                   ", ")))
+               ((not (gethash id known))
+                (format "foreign: the tracker has no ticket %s" id)))))
+        (when note (push (cons tk note) blocked))))
+    (nreverse blocked)))
+
+(defun zwanenzang--read-scope (root dir tickets blocked)
+  "Read the scope at ROOT from the tracker at DIR, for TICKETS except BLOCKED."
+  (funcall zwanenzang--call dir '("read")
+           `((cursors . ,(delq nil
+                               (mapcar (lambda (tk)
+                                         (unless (assq tk blocked)
+                                           (cons (intern (plist-get tk :id))
+                                                 (or (org-entry-get (plist-get tk :marker)
+                                                                    "ZWANENZANG_CURSOR")
+                                                     :null))))
+                                       tickets)))
+             (since . ,(or (org-entry-get root "ZWANENZANG_CURSOR") :null)))))
+
+(defun zwanenzang--scope-name (root)
+  "The title of the scope root at ROOT, for reports."
+  (substring-no-properties (save-excursion (goto-char root) (org-get-heading t t t t))))
+
+(defun zwanenzang--tracker-mismatch (what root dir result)
+  "Why the scope at ROOT must not WHAT with the tracker at DIR, or nil.
+RESULT is the read of that tracker; the scope is bound to the first one."
+  (let ((stored (org-entry-get root "ZWANENZANG_TRACKER"))
+        (id (alist-get 'id (alist-get 'tracker result))))
+    (when (and stored (not (equal stored id)))
+      (format "zwanenzang: %s of %s blocked: it is bound to tracker %s, %s is %s"
+              what (zwanenzang--scope-name root) stored dir id))))
+
+(defun zwanenzang--hide-docs (root)
+  "The names in the ZWANENZANG_HIDE_DOCS of the scope at ROOT."
+  (split-string (or (org-entry-get root "ZWANENZANG_HIDE_DOCS") "")))
 
 (defun zwanenzang--pull-scope (root)
-  "Pull the scope at ROOT, a marker at its root heading; return the summary.
+  "Pull the scope at ROOT, a marker at its root heading; return the pull.
 The CLI is only read from.  All changes to the buffer are one undo step
 and the buffer is not saved."
   (with-current-buffer (marker-buffer root)
@@ -1135,72 +1258,119 @@ and the buffer is not saved."
      (let* ((case-fold-search nil)
             (dir (zwanenzang--scope-directory root))
             (tickets (car (zwanenzang--scan root)))
-            (counts (make-hash-table :test #'equal))
-            (known (zwanenzang--known-ids dir))
-            (pull (zwanenzang--pull-create :root root :dir dir))
-            blocked cursors)
-       (dolist (tk tickets)
-         (cl-incf (gethash (plist-get tk :id) counts 0)))
+            (blocked (zwanenzang--blocked-headings tickets (zwanenzang--known-tickets dir)))
+            (pull (zwanenzang--pull-create :root root :dir dir)))
        ;; Duplicate and foreign ids block only their headings, and are
        ;; never sent to read.
        (dolist (tk tickets)
-         (let* ((id (plist-get tk :id))
-                (line (line-number-at-pos (plist-get tk :marker) t))
-                (note
-                 (cond
-                  ((> (gethash id counts) 1)
-                   (format "duplicate: ZWANENZANG_ID %s is on %d headings in this scope (lines %s)"
-                           id (gethash id counts)
-                           (mapconcat (lambda (o) (number-to-string
-                                                   (line-number-at-pos (plist-get o :marker) t)))
-                                      (seq-filter (lambda (o) (equal (plist-get o :id) id)) tickets)
-                                      ", ")))
-                  ((not (gethash id known))
-                   (format "foreign: the tracker has no ticket %s" id)))))
+         (let ((note (cdr (assq tk blocked))))
            (if note
-               (progn (push (cons tk note) blocked)
-                      (zwanenzang--pull-line pull "line %d: %s" line note))
-             (puthash id (plist-get tk :marker) (zwanenzang--pull-ids pull))
-             (push (cons (intern id)
-                         (or (org-entry-get (plist-get tk :marker) "ZWANENZANG_CURSOR") :null))
-                   cursors))))
-       (let* ((result (funcall zwanenzang--call dir '("read")
-                               `((cursors . ,(nreverse cursors))
-                                 (since . ,(or (org-entry-get root "ZWANENZANG_CURSOR") :null)))))
+               (zwanenzang--pull-line pull "line %d: %s"
+                                      (line-number-at-pos (plist-get tk :marker) t) note)
+             (puthash (plist-get tk :id) (plist-get tk :marker) (zwanenzang--pull-ids pull)))))
+       (let* ((result (zwanenzang--read-scope root dir tickets blocked))
               (tracker (alist-get 'tracker result))
-              (stored (org-entry-get root "ZWANENZANG_TRACKER"))
-              (scope-name (substring-no-properties
-                           (save-excursion (goto-char root) (org-get-heading t t t t)))))
-         (if (and stored (not (equal stored (alist-get 'id tracker))))
-             (zwanenzang-report
-              (format "zwanenzang: pull of %s blocked: it is bound to tracker %s, %s is %s"
-                      scope-name stored dir (alist-get 'id tracker)))
+              (refused (zwanenzang--tracker-mismatch "pull" root dir result)))
+         (if refused
+             (setf (zwanenzang--pull-refused pull) refused)
            (let ((km (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
                                               (alist-get 'statuses tracker)
-                                              org-todo-keywords-1)))
+                                              org-todo-keywords-1))
+                 (hide (zwanenzang--hide-docs root)))
              (setf (zwanenzang--pull-map pull) (car km)
-                   (zwanenzang--pull-hidden pull)
-                   (remove "description"
-                           (split-string (or (org-entry-get root "ZWANENZANG_HIDE_DOCS") "")))
+                   (zwanenzang--pull-hidden pull) (remove "description" hide)
                    (zwanenzang--pull-actors pull) (alist-get 'actors tracker)
                    (zwanenzang--pull-tracker-dir pull) dir)
              (dolist (p (cdr km)) (zwanenzang--pull-line pull "%s" p))
-             (when (member "description"
-                           (split-string (or (org-entry-get root "ZWANENZANG_HIDE_DOCS") "")))
+             (when (member "description" hide)
                (zwanenzang--pull-line
                 pull "ZWANENZANG_HIDE_DOCS: the description cannot be hidden; ignored")))
            (when (eq (alist-get 'reset result) t)
              (zwanenzang--pull-line
               pull "history changed under the scope cursor: compared in full"))
            (zwanenzang--one-undo-step
-             (zwanenzang--apply-read pull result blocked tickets))
-           (zwanenzang-report
-            (format (concat "zwanenzang: pulled %s: %d tickets, %d new, %d moved,"
-                            " %d with conflicts, %d blocked")
-                    scope-name (zwanenzang--pull-pulled pull) (zwanenzang--pull-new pull)
-                    (zwanenzang--pull-moved pull) (zwanenzang--pull-conflicted pull)
-                    (zwanenzang--pull-blocked pull))
-            (reverse (zwanenzang--pull-lines pull)))))))))
+             (zwanenzang--apply-read pull result blocked tickets))))
+       pull))))
+
+;;;; Reports of a whole command
+
+(cl-defstruct (zwanenzang--outcome (:constructor zwanenzang--outcome-create)
+                                   (:copier nil))
+  "What one command collected on one scope, for its report."
+  pull                                  ; the last pull: its conflicts still stand
+  problems info                         ; lines, newest first
+  pulled (new 0) (moved 0) (created 0) (pushed 0)
+  refused)
+
+(defun zwanenzang--pull-into (outcome root)
+  "Pull the scope at ROOT and add the result to OUTCOME."
+  (let ((pull (zwanenzang--pull-scope root)))
+    (setf (zwanenzang--outcome-pull outcome) pull
+          (zwanenzang--outcome-refused outcome) (zwanenzang--pull-refused pull)
+          (zwanenzang--outcome-info outcome) (append (zwanenzang--pull-info pull)
+                                                     (zwanenzang--outcome-info outcome))
+          (zwanenzang--outcome-pulled outcome) (seq-union (zwanenzang--outcome-pulled outcome)
+                                                          (zwanenzang--pull-pulled pull))
+          (zwanenzang--outcome-new outcome) (+ (zwanenzang--outcome-new outcome)
+                                               (zwanenzang--pull-new pull))
+          (zwanenzang--outcome-moved outcome) (+ (zwanenzang--outcome-moved outcome)
+                                                 (zwanenzang--pull-moved pull)))))
+
+(defun zwanenzang--note-sync (outcome sync)
+  "Add SYNC, a sync object or JSON null, to OUTCOME's report.
+Publication errors and skipped checkouts are not failures, but need a look."
+  (when (consp sync)
+    (let ((err (zwanenzang--null (alist-get 'error sync)))
+          (checkouts (alist-get 'checkouts sync)))
+      (when err
+        (push (format "not published: %s: %s" (alist-get 'code err) (alist-get 'message err))
+              (zwanenzang--outcome-problems outcome)))
+      (dolist (n (alist-get 'numbered sync))
+        (push (format "numbered %s" (alist-get 'display n))
+              (zwanenzang--outcome-info outcome)))
+      (let ((err (zwanenzang--null (alist-get 'error checkouts))))
+        (when err
+          (push (format "checkouts: %s: %s" (alist-get 'code err) (alist-get 'message err))
+                (zwanenzang--outcome-problems outcome))))
+      (dolist (c (alist-get 'results checkouts))
+        (if (equal (alist-get 'status c) "skipped")
+            (push (format "checkout %s: skipped, %s: %s" (alist-get 'path c)
+                          (alist-get 'reason c) (alist-get 'message c))
+                  (zwanenzang--outcome-problems outcome))
+          (push (format "checkout %s: %s" (alist-get 'path c) (alist-get 'status c))
+                (zwanenzang--outcome-info outcome)))))))
+
+(defun zwanenzang--report-outcome (verb root outcome)
+  "Report OUTCOME of a command on the scope at ROOT, saying it VERB the scope."
+  (with-current-buffer (marker-buffer root)
+    (if (zwanenzang--outcome-refused outcome)
+        (zwanenzang-report (zwanenzang--outcome-refused outcome))
+      (let* ((pull (zwanenzang--outcome-pull outcome))
+             (parts (delq nil
+                          (cl-mapcar
+                           (lambda (n label) (and (> n 0) (format "%d %s" n label)))
+                           (list (length (zwanenzang--outcome-pulled outcome))
+                                 (zwanenzang--outcome-new outcome)
+                                 (zwanenzang--outcome-moved outcome)
+                                 (zwanenzang--outcome-created outcome)
+                                 (zwanenzang--outcome-pushed outcome)
+                                 (length (zwanenzang--pull-conflicted pull))
+                                 (zwanenzang--pull-blocked pull))
+                           '("pulled" "new" "moved" "created" "pushed"
+                             "with conflicts" "blocked")))))
+        (zwanenzang-report
+         (format "zwanenzang: %s %s: %s" verb
+                 (org-with-wide-buffer (zwanenzang--scope-name root))
+                 (if parts (string-join parts ", ") "nothing changed"))
+         (append (reverse (zwanenzang--outcome-problems outcome))
+                 (reverse (zwanenzang--pull-lines pull)))
+         (reverse (zwanenzang--outcome-info outcome)))))))
+
+(defun zwanenzang--root-at-point ()
+  "The scope root containing point, in an Org buffer."
+  (unless (derived-mode-p 'org-mode)
+    (user-error "zwanenzang: not an Org buffer"))
+  (zwanenzang--scope-root))
 
 ;;;###autoload
 (defun zwanenzang-pull ()
@@ -1209,9 +1379,10 @@ Only the buffer changes: the tracker is read, not written, and nothing
 is saved.  The changes undo as one step.  A summary is echoed and a
 report appended to the `*zwanenzang*' buffer."
   (interactive)
-  (unless (derived-mode-p 'org-mode)
-    (user-error "zwanenzang: not an Org buffer"))
-  (zwanenzang--pull-scope (zwanenzang--scope-root)))
+  (let ((root (zwanenzang--root-at-point))
+        (outcome (zwanenzang--outcome-create)))
+    (zwanenzang--pull-into outcome root)
+    (zwanenzang--report-outcome "pulled" root outcome)))
 
 ;;;; Hidden documents
 

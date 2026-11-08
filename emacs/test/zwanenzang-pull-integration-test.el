@@ -151,6 +151,42 @@
           (should (= 1 (how-many ":ZWANENZANG_COMMENTS:" (point-min) (point-max))))))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id))))))
 
+(ert-deftest zwanenzang-pull-counts-a-heading-with-two-conflicts-once ()
+  ;; Field conflict and a skipped move on one heading.
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((x (zwanenzang-test-create trk "X"))
+          (y (zwanenzang-test-create trk "Y")))
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto y)
+        (org-cut-subtree)
+        (zwanenzang-test-goto x)
+        (org-end-of-subtree t t)
+        (org-paste-subtree 4)
+        (zwanenzang-test-goto x)
+        (org-edit-headline "X mine"))
+      (zwanenzang-test-cli trk "title" x "X theirs")
+      (zwanenzang-test-cli trk "parent" x y)
+      (zwanenzang-test-clear-report)
+      (should (string-match-p "1 with conflicts" (zwanenzang-test-pull)))
+      (should (string-match-p "ZZ-0001 Org \"X mine\", tracker \"X theirs\": conflict in title"
+                              (zwanenzang-test-report))))))
+
+(ert-deftest zwanenzang-pull-reports-what-changed-per-ticket ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((a (zwanenzang-test-create trk "A")))
+      (zwanenzang-test-create trk "B")
+      (zwanenzang-test-clear-report)
+      (zwanenzang-test-pull)
+      (should (string-match-p "new ZZ-0001 A\n  new ZZ-0002 B" (zwanenzang-test-report)))
+      (zwanenzang-test-cli trk "title" a "A2")
+      (zwanenzang-test-clear-report)
+      (should (string-match-p "1 pulled\\'" (zwanenzang-test-pull)))
+      (should (string-match-p "pulled ZZ-0001 A2" (zwanenzang-test-report)))
+      (should-not (string-match-p "ZZ-0002" (zwanenzang-test-report)))
+      ;; A clean run: the echo stays one line and points nowhere.
+      (should (string-match-p ": nothing changed\\'" (zwanenzang-test-pull))))))
+
 (ert-deftest zwanenzang-pull-keeps-local-edits-and-records-conflicts ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let ((id (zwanenzang-test-create trk "Base" "--status" "todo")))
@@ -269,7 +305,10 @@
                               (zwanenzang-test-entry b)))
       ;; The sync state still has the nesting before the skipped move.
       (should (string-match-p "parent=- nest=-\\'" (zwanenzang-test-property b "ZWANENZANG_SYNC")))
-      (should (string-match-p "B: conflict in parent" (zwanenzang-test-report)))
+      (should (string-match-p "Org \"B\", tracker \"B\": conflict in parent"
+                              (zwanenzang-test-report)))
+      ;; One heading, one count, however many reasons.
+      (should (string-match-p "1 with conflicts" (zwanenzang-test-pull)))
       ;; The next pull reaches the same verdict.
       (zwanenzang-test-pull)
       (should (equal (zwanenzang-test-parent-heading b) "Inbox"))
