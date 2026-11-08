@@ -61,7 +61,8 @@ open questions that block milestone 2 are answered; the rest stay listed.
 
 ## 4. Rendering
 
-- `render` producing the index and per-ticket pages, deterministic.
+- `render` producing the index and per-ticket pages, deterministic. Tracker
+  prose is Org, so the pages are Org too; the forge renders those.
 - Forge CI on `zwanenzang-tracker` pushing the `rendered` branch.
 - Lint check that the rendered branch matches the log.
 

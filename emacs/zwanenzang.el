@@ -176,37 +176,78 @@ what the one-line echo cannot hold."
 
 ;;;; Text in Org
 
-;; Tracker text goes into Org bodies.  A line that Org would read as a
-;; heading, a drawer boundary or an in-buffer setting gets a leading comma,
-;; as Org escapes such lines in blocks, so a description cannot break the
-;; outline it sits in.  Reading strips that one comma again, so the two
-;; are inverse.
+;; Tracker prose is Org, written into Org bodies as it stands.  Only what
+;; would break the outline or the body's structure gets a leading comma, as
+;; Org escapes such lines in blocks: a heading line, and a drawer-like line
+;; that would otherwise read as a drawer (one with an :END: below it, or
+;; named like the client's own drawers).  Reading strips that one comma
+;; again, along with the comma of any `#+' line an earlier version of the
+;; client escaped, so the two are inverse.
+
+(defconst zwanenzang--heading-line-re "\\`\\*+\\(?:[ \t]\\|\\'\\)"
+  "A line Org would read as a heading.")
+
+(defconst zwanenzang--drawer-line-re "\\`[ \t]*:\\(?:\\w\\|[-_]\\)+:[ \t]*\\'"
+  "A line Org could read as a drawer boundary.")
+
+(defconst zwanenzang--end-line-re "\\`[ \t]*:end:[ \t]*\\'"
+  "A line that closes a drawer; match it ignoring case.")
+
+(defconst zwanenzang--client-drawer-re "\\`[ \t]*:ZWANENZANG_[-_[:alnum:]]*:[ \t]*\\'"
+  "The opening line of a drawer the client owns.")
 
 (defconst zwanenzang--escaped-line-re
-  (concat "\\`,*\\(?:\\*+\\(?:[ \t]\\|\\'\\)\\|#\\+"
+  (concat "\\`,+\\(?:\\*+\\(?:[ \t]\\|\\'\\)\\|#\\+"
           "\\|[ \t]*:\\(?:\\w\\|[-_]\\)+:[ \t]*\\'\\)")
-  "Lines that need a comma in front to stay plain text in an Org body.")
+  "A line whose first comma reading strips.
+Writing adds one to such a line too, so it survives the round trip.")
 
 (defun zwanenzang--map-lines (fn text)
   "Apply FN to each line of TEXT and join the results again."
   (mapconcat fn (split-string text "\n") "\n"))
 
 (defun zwanenzang--escape-text (text)
-  "TEXT with every structural line escaped by a leading comma."
-  (zwanenzang--map-lines
-   (lambda (line)
-     (if (string-match-p zwanenzang--escaped-line-re line) (concat "," line) line))
-   text))
+  "TEXT with every line that would break the Org body escaped by a comma."
+  (let ((rest (split-string text "\n"))
+        (case-fold-search t)
+        out)
+    (while rest
+      (let ((line (pop rest)))
+        (push (if (or (string-match-p zwanenzang--heading-line-re line)
+                      (string-match-p zwanenzang--escaped-line-re line)
+                      (string-match-p zwanenzang--client-drawer-re line)
+                      (and (string-match-p zwanenzang--drawer-line-re line)
+                           (not (string-match-p zwanenzang--end-line-re line))
+                           (seq-some (lambda (l) (string-match-p zwanenzang--end-line-re l))
+                                     rest)))
+                  (concat "," line)
+                line)
+              out)))
+    (string-join (nreverse out) "\n")))
 
 (defun zwanenzang--unescape-text (text)
   "TEXT with the comma `zwanenzang--escape-text' added removed."
   (zwanenzang--map-lines
    (lambda (line)
-     (if (and (string-prefix-p "," line)
-              (string-match-p zwanenzang--escaped-line-re (substring line 1)))
-         (substring line 1)
-       line))
+     (if (string-match-p zwanenzang--escaped-line-re line) (substring line 1) line))
    text))
+
+(defun zwanenzang--comment-text (text)
+  "TEXT of a comment as Org text for the comments drawer, ending in a newline.
+Comments are never read back, so only heading lines and what would close
+the drawer are escaped."
+  (let ((s (string-trim-right text))
+        (case-fold-search t))
+    (if (string-empty-p s)
+        ""
+      (concat (zwanenzang--map-lines
+               (lambda (line)
+                 (if (or (string-match-p zwanenzang--heading-line-re line)
+                         (string-match-p zwanenzang--end-line-re line))
+                     (concat "," line)
+                   line))
+               s)
+              "\n"))))
 
 (defun zwanenzang--normalize-text (text)
   "TEXT without leading blank lines or trailing whitespace.
@@ -236,7 +277,24 @@ Nothing in such a line is markup, so any text is safe in a drawer."
 ;; The body of an entry is everything after its heading line up to the
 ;; next heading.  Planning lines come first, then drawers (the property
 ;; drawer among them) and text, which may be interleaved.  The
-;; description is the text, without drawers or planning lines.
+;; description is the text, without drawers or planning lines.  The
+;; client writes its comments and hidden drawers last, after the text.
+
+(defconst zwanenzang--tail-drawers '("ZWANENZANG_COMMENTS" "ZWANENZANG_HIDDEN")
+  "Drawers kept at the end of a ticket's body, in this order.")
+
+(defun zwanenzang--drawer-end (lines start)
+  "The index in the vector LINES of what closes the drawer opened at START.
+Nil when nothing does.  Only a drawer of the client's can hold one of the
+client's opening lines, so a lone drawer-like line of text in front of
+them is text, not a drawer running through them."
+  (let ((case-fold-search t)
+        (own (string-match-p zwanenzang--client-drawer-re (aref lines start))))
+    (cl-loop for j from (1+ start) below (length lines)
+             for line = (aref lines j)
+             when (string-match-p zwanenzang--end-line-re line) return j
+             when (and (not own) (string-match-p zwanenzang--client-drawer-re line))
+             return nil)))
 
 (defun zwanenzang--body-segments (body)
   "Split BODY, the text after a heading line, into a list of segments.
@@ -255,10 +313,7 @@ and TEXT ends in a newline.  A drawer without its :END: line is text."
          ((and (string-match org-drawer-regexp line)
                (not (string-equal-ignore-case (match-string 1 line) "END"))
                ;; Org ends a drawer at :END: in any case.
-               (setq end (let ((case-fold-search t))
-                           (cl-loop for j from (1+ i) below n
-                                    when (string-match-p org-property-end-re (aref lines j))
-                                    return j))))
+               (setq end (zwanenzang--drawer-end lines i)))
           (push (list 'drawer
                       (mapconcat (lambda (l) (concat l "\n"))
                                  (cl-subseq lines i (1+ end)) "")
@@ -287,21 +342,37 @@ and TEXT ends in a newline.  A drawer without its :END: line is text."
 (defun zwanenzang--compose-body (body drawers &optional description)
   "BODY with the client's DRAWERS and, unless nil, a new DESCRIPTION.
 DRAWERS maps drawer names to their new content: any drawer of such a
-name is dropped, and one with non-empty content is written after the
-other drawers.  Drawers not named stay where they are.  Without
+name is dropped, and one with non-empty content is written in its place
+in the order below.  The order is planning lines and other drawers as
+they stand, then the named drawers other than `zwanenzang--tail-drawers',
+then the text, then the tail drawers, wherever they were before.  Without
 DESCRIPTION the text is kept exactly as it stands; with it the text is
-replaced by DESCRIPTION, escaped, after all drawers."
+replaced by DESCRIPTION, escaped."
   (let* ((segments (zwanenzang--body-segments body))
+         (named (lambda (s names) (and (eq (car s) 'drawer) (member (nth 2 s) names))))
          (kept (seq-remove (lambda (s)
                              (or (eq (car s) 'text)
-                                 (and (eq (car s) 'drawer) (assoc (nth 2 s) drawers))))
+                                 (funcall named s zwanenzang--tail-drawers)
+                                 (funcall named s (mapcar #'car drawers))))
                            segments)))
     (concat (mapconcat #'cadr kept "")
-            (mapconcat (lambda (d) (or (zwanenzang--render-drawer (car d) (cdr d)) ""))
+            (mapconcat (lambda (d)
+                         (or (and (not (member (car d) zwanenzang--tail-drawers))
+                                  (zwanenzang--render-drawer (car d) (cdr d)))
+                             ""))
                        drawers "")
             (if description
                 (zwanenzang--escape-text (zwanenzang--normalize-text description))
-              (zwanenzang--segments-text segments)))))
+              (zwanenzang--segments-text segments))
+            (mapconcat (lambda (name)
+                         (let ((new (assoc name drawers)))
+                           (if new
+                               (or (zwanenzang--render-drawer name (cdr new)) "")
+                             (mapconcat #'cadr
+                                        (seq-filter (lambda (s) (funcall named s (list name)))
+                                                    segments)
+                                        ""))))
+                       zwanenzang--tail-drawers ""))))
 
 (defun zwanenzang--body-bounds ()
   "Start and end of the body of the heading at point."
@@ -655,10 +726,9 @@ nesting changed) or `conflict'."
      (let ((link (zwanenzang--null (alist-get 'link c))))
        (concat (format "[%s] %s:\n" (alist-get 'ts c)
                        (zwanenzang--actor-name pull (alist-get 'actor c)))
-               (zwanenzang--fixed-width (alist-get 'text c) "  ")
+               (zwanenzang--comment-text (alist-get 'text c))
                (and link
-                    (concat "  "
-                            (org-link-make-string
+                    (concat (org-link-make-string
                              (if (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" link)
                                  link
                                (concat "file:" (expand-file-name
@@ -1173,8 +1243,9 @@ The tracker is the one of the scope containing point."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (alist-get 'text doc))
-        (goto-char (point-min)))
-      (special-mode))
+        (goto-char (point-min))
+        (org-mode))
+      (setq buffer-read-only t))
     (pop-to-buffer buffer)
     buffer))
 

@@ -178,6 +178,9 @@ the foreign-id rule above. History does not travel, which is accepted.
 
 ## Prose in org
 
+Tracker prose (descriptions, named documents, comments) is Org, not Markdown.
+The CLI stays format-blind and nothing converts it.
+
 - The description is the human's. Pull overwrites it only when the local text
   is unchanged since the cursor. Agents cannot write it.
 - Named documents render as subheadings carrying a document property. The
@@ -329,18 +332,20 @@ Every property the client owns starts with `ZWANENZANG`.
 
 - The description is the body before the first subheading, excluding
   drawers and planning lines.
-- Comments go in a `:ZWANENZANG_COMMENTS:` drawer, newest last, each
-  `[timestamp] actor:` followed by the text. The drawer is rewritten from
+- Comments go in a `:ZWANENZANG_COMMENTS:` drawer at the end of the body,
+  below the description, newest last, each `[timestamp] actor:` followed by
+  the text as plain Org, so its links work. The drawer is rewritten from
   tracker state and never read back.
 - Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The
   conflict tag is `zz_conflict`; it is never pushed as a tracker tag.
 - Each hidden document is one link line using a `zwanenzang:` Org link
   type, which opens the document read-only through the CLI. The lines go
-  in a `:ZWANENZANG_HIDDEN:` drawer next to the comments drawer,
+  in a `:ZWANENZANG_HIDDEN:` drawer after the comments drawer,
   `[[zwanenzang:<id>/<doc>][<doc> (hidden)]]` for each hidden document the
   ticket has, rewritten from tracker state. Being a drawer, it is not part
   of the description. `description` in `ZWANENZANG_HIDE_DOCS` is
-  reported and ignored.
+  reported and ignored. `zwanenzang-open` shows the document in a read-only
+  `org-mode` buffer.
 - A comment's actor is its display name from `read`'s `tracker.actors`,
   or the first ten characters of its id when it declared none.
 
@@ -406,15 +411,26 @@ tracker.
   mapped. Pull never adds the tag, keeps it where the human set it, and
   `archived` is not part of `ZWANENZANG_SYNC`.
 - Prose: the description and named documents are compared normalized,
-  without leading blank lines or trailing whitespace. A line Org would
-  read as a heading, a drawer boundary or a `#+` keyword is written with
-  a leading comma, which reading strips again, so tracker text cannot
-  change the outline. Comment text and skipped values are written as
-  fixed-width `: ` lines. Drawers end at `:END:` in any case, as in Org.
+  without leading blank lines or trailing whitespace. They are written
+  verbatim (`#+begin_src`, links and other Org included) except for what
+  would break the body: a heading line gets a leading comma, which reading
+  strips again, so tracker text cannot change the outline. So does a
+  drawer-like line that would read as a drawer, meaning one with an `:END:`
+  below it in the text or one named like the client's drawers; without that
+  a whole drawer in a description would leave it on the next read. In
+  comments, heading lines and `:END:` lines get the comma. Heading lines in
+  named documents stay escaped for now; levels are not shifted. Skipped
+  values are fixed-width `: ` lines. Drawers end at `:END:` in any case, as
+  in Org. A lone drawer-like line of text in front of the client's drawers
+  stays text: only the client's own drawers run through their opening
+  lines. Reading also strips the comma an earlier version put on `#+`
+  lines, so files written then do not read as edited.
 - Writing a body keeps planning lines first and the other drawers in
-  their order, then the client's drawers, then the text. Human text
-  interleaved between drawers therefore moves, verbatim, after them; the
-  description it forms is unchanged.
+  their order, then `:ZWANENZANG_CONFLICT:`, then the text, then the
+  comments and hidden drawers. A comments drawer in the old position above
+  the text moves down the next time the body is written. Human text around
+  drawers moves, verbatim, in front of the tail drawers; the description it
+  forms is unchanged.
 - Named documents are the ticket heading's direct children with
   `ZWANENZANG_DOC`, titled with the document name. A tracker document
   without such a subheading gets one, including one the human deleted:
