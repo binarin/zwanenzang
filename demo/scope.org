@@ -13,7 +13,7 @@ Still above the scope; only grouping for me.
 :ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing WAIT=blocked REVIEW=review DONE=done CNCL=cancelled
 :ZWANENZANG_HIDE_DOCS: status
 :ZWANENZANG_TRACKER: 01M6XAJ6BCPQ16CMJYJDYW38JK
-:ZWANENZANG_CURSOR: 01M6XAJ6H46STZW7S6Z2FBG7C0:ecad3abee1e96c0abfc4bd76f483ecee08b5ad1ada012e1028939adaf5be2edc
+:ZWANENZANG_CURSOR: 01M6XAJDSPS7KCBZV1FNQR2HA0:5fff6c24c4d6f301f4ca386e84c4ecf5e088b372d9690e6567d850487d370acc
 :END:
 The scope root. Everything beneath it syncs with the tracker.
 **** Things to look at some day
@@ -27,7 +27,7 @@ A heading with no keyword or id inside the scope: my own structure.
 :PROPERTIES:
 :ZWANENZANG_ID: 01M6XAJ6DKDHTWH2P0BFERA5FH
 :ZWANENZANG_NUMBER: ZZ-0001
-:ZWANENZANG_CURSOR: 01M6XAJ6GMNZC1TMDXDN6HRSFP:180744151ce97acee2d567db5ccae0a673affd5bfd4c5ce8f639293f7754a764
+:ZWANENZANG_CURSOR: 01M6XAJDP96MNV8TW9WPSQZP4T:5b6b807cc249939a9c7a34b3cc11208d0b46d23eb2f5a97a17b0bc182310eac5
 :ZWANENZANG_SYNC: status=done title=3c4e13eec54adca7 tags=e3b0c44298fc1c14 parent=- nest=-
 :ZWANENZANG_DESC_VERSION: 01M6XAJ6DNZ5C3316D0YJ5G4PH
 :ZWANENZANG_DESC_HASH: 3ac470afbcd355e6
@@ -52,6 +52,8 @@ A heading with no keyword or id inside the scope: my own structure.
 [2026-11-08T10:16:46Z] ai-workflow import:
   : Supporting file linked from the imported description: docs/shared.md
   [[file:/tmp/zwanenzang-demo-test-repo/docs/shared.md]]
+[2026-11-08T10:16:54Z] demo-agent:
+  : Counted the widgets again: still correct.
 :END:
 ## Current
 
@@ -90,7 +92,7 @@ Uses the [glossary](../docs/shared.md) as well.
 :PROPERTIES:
 :ZWANENZANG_ID: 01M6XAJ6EBEA0F7N8375SY5SXV
 :ZWANENZANG_NUMBER: ZZ-0003
-:ZWANENZANG_CURSOR: 01M6XAJ6H46STZW7S6Z2FBG7C0:bb92f8a38bc7b61fc033ebb228afbd17a999199d59708ccd546dc22985d94887
+:ZWANENZANG_CURSOR: 01M6XAJDRB0JT5S5QN7JF6T2GM:4d998d1f74d50c80946654d3f86faaf2578f664790e2a619c184157d828980d3
 :ZWANENZANG_SYNC: status=todo title=a2933dc19ce3af47 tags=e3b0c44298fc1c14 parent=- nest=-
 :ZWANENZANG_DESC_VERSION: 01M6XAJ6EDRH5Q3K3AB2NB8YD4
 :ZWANENZANG_DESC_HASH: cb33482d18ac26d7
@@ -121,10 +123,35 @@ file an import may leave out.
 ****** plan
 :PROPERTIES:
 :ZWANENZANG_DOC: plan
-:ZWANENZANG_VERSION: 01M6XAJ6H46STZW7S6Z2FBG7BZ
-:ZWANENZANG_HASH: 066c8ee034bbcc8e
+:ZWANENZANG_VERSION: 01M6XAJDN8M367DVYRQR6WDPMQ
+:ZWANENZANG_HASH: 6348923f985977d6
 :END:
-First plan: cut the sprockets by hand.
+Second plan: order the sprockets from the forge.
+Cutting by hand was too slow.
+****** TODO A ticket without frontmatter
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJ6F37FSQVKDJYVMZ5XN7
+:ZWANENZANG_NUMBER: ZZ-0006
+:ZWANENZANG_CURSOR: 01M6XAJDQACJ6GT5CKP8QA9Y1Q:7c59389fa2ca79db47c17923ded15557f45558ed7dacded80ff629c622d0eb9f
+:ZWANENZANG_SYNC: status=draft title=b0b0c981c3d4c7df tags=e3b0c44298fc1c14 parent=01M6XAJ6EBEA0F7N8375SY5SXV nest=01M6XAJ6EBEA0F7N8375SY5SXV
+:ZWANENZANG_DESC_VERSION: 01M6XAJ6F5NDTYRG82SZX67VDQ
+:ZWANENZANG_DESC_HASH: df244a965f2cd225
+:END:
+:ZWANENZANG_COMMENTS:
+[2026-11-08T10:16:46Z] ai-workflow import:
+  : Imported from the ai-workflow tracker: AIWF-0006
+  : Source file: tickets/AIWF-0006-no-frontmatter.md
+  : Status there: none (imported as draft)
+:END:
+So it has no status either.
+****** TODO Measure the sprocket tolerance                        :sprockets:
+:PROPERTIES:
+:ZWANENZANG_ID: 01M6XAJDRB0JT5S5QN7JF6T2GK
+:ZWANENZANG_NUMBER: ZZ-0010
+:ZWANENZANG_CURSOR: 01M6XAJDS1ZPH9Q2XWT4GSX0RS:aac1940dddd6ae2d474ab575284e27156c6c98b8656a840731601d140ff60d39
+:ZWANENZANG_SYNC: status=todo title=e600a20ab7232ba1 tags=89c532393205b042 parent=01M6XAJ6EBEA0F7N8375SY5SXV nest=01M6XAJ6EBEA0F7N8375SY5SXV
+:ZWANENZANG_DESC_HASH: e3b0c44298fc1c14
+:END:
 ***** TODO Stage ceremony the tests leave out
 :PROPERTIES:
 :ZWANENZANG_ID: 01M6XAJ6ENG07DQ8BPXSV0TW1Q
@@ -179,27 +206,11 @@ while this ticket is excluded.
 A body without any level-one heading.
 
 ## Only a subheading
-***** TODO A ticket without frontmatter
-:PROPERTIES:
-:ZWANENZANG_ID: 01M6XAJ6F37FSQVKDJYVMZ5XN7
-:ZWANENZANG_NUMBER: ZZ-0006
-:ZWANENZANG_CURSOR: 01M6XAJ6GYH7Y3NB5VABZ5X3GS:a61560d936441698ed15c73ca95c0813c6cf944c0a1da6d46b2b9c348c10e15e
-:ZWANENZANG_SYNC: status=draft title=b0b0c981c3d4c7df tags=e3b0c44298fc1c14 parent=- nest=-
-:ZWANENZANG_DESC_VERSION: 01M6XAJ6F5NDTYRG82SZX67VDQ
-:ZWANENZANG_DESC_HASH: df244a965f2cd225
-:END:
-:ZWANENZANG_COMMENTS:
-[2026-11-08T10:16:46Z] ai-workflow import:
-  : Imported from the ai-workflow tracker: AIWF-0006
-  : Source file: tickets/AIWF-0006-no-frontmatter.md
-  : Status there: none (imported as draft)
-:END:
-So it has no status either.
-***** WAIT Change two repositories at once
+***** WAIT Split the two-repository change                      :zz_conflict:
 :PROPERTIES:
 :ZWANENZANG_ID: 01M6XAJ6FFS1MZYMC3XWS40W36
 :ZWANENZANG_NUMBER: ZZ-0008
-:ZWANENZANG_CURSOR: 01M6XAJ6H2CQYGH9PRWA8VJP6B:f6920d130ce8f573d1bd264338dc441db6a5ff6d914938e29653178860f68b1a
+:ZWANENZANG_CURSOR: 01M6XAJDSPS7KCBZV1FNQR2HA0:e3156af3062cf1544304f5b066581df40b8534b1e256d977da0993b1a4496a5f
 :ZWANENZANG_SYNC: status=blocked title=ac5867e63b65b744 tags=e3b0c44298fc1c14 parent=- nest=-
 :ZWANENZANG_DESC_VERSION: 01M6XAJ6FHD90MPDS7RQ3N2GY2
 :ZWANENZANG_DESC_HASH: 8e364ad4bd517a96
@@ -210,13 +221,17 @@ So it has no status either.
   : Source file: tickets/AIWF-0008-two-repositories.md
   : Status there: needs-human-input (imported as blocked)
 :END:
+:ZWANENZANG_CONFLICT:
+- title: tracker title skipped; Org title kept
+  : Change both repositories in one go
+:END:
 A ticket whose branches live in two repositories.
-***** TODO Nothing below the title
+***** NEXT Nothing below the title
 :PROPERTIES:
 :ZWANENZANG_ID: 01M6XAJ6FVE8TD5PDZ1X62YDXP
 :ZWANENZANG_NUMBER: ZZ-0009
-:ZWANENZANG_CURSOR: 01M6XAJ6H46STZW7S6Z2FBG7BY:1beb41a3db4f808e2e5ad04229f4774b088a8acacc3e4982574c96b7ffc6f56e
-:ZWANENZANG_SYNC: status=draft title=ce0a2b75e47aa728 tags=e3b0c44298fc1c14 parent=- nest=-
+:ZWANENZANG_CURSOR: 01M6XAJDM23JADV6T5R41J8D7R:fc9ca346e87915bf4c1ad1b51eb4e036f95d94e7b265fa34b13e6c9e77af4f87
+:ZWANENZANG_SYNC: status=doing title=ce0a2b75e47aa728 tags=e3b0c44298fc1c14 parent=- nest=-
 :ZWANENZANG_DESC_HASH: e3b0c44298fc1c14
 :END:
 :ZWANENZANG_COMMENTS:

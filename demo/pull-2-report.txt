@@ -1,0 +1,2 @@
+[2026-11-08 11:16:59] zwanenzang: pulled Widgets and sprockets: 9 tickets, 1 new, 1 moved, 1 with conflicts, 0 blocked
+  ZZ-0008 Change both repositories in one go: conflict in title
