@@ -18,6 +18,9 @@ org file on the desktop until milestone 3 makes it a synced scope.
   files, so nothing sensitive enters either repository.
 - `zwanenzang` on the forge mirrors to GitHub; `zwanenzang-tracker` is
   private and holds this project's own events.
+- Agent-facing documentation is done, moved out of milestone 5: the
+  [agent note](../agents.md) says how an agent uses a tracker from a project,
+  with no process rules attached.
 
 ## 1. Design notes and schema
 
@@ -72,8 +75,6 @@ open questions that block milestone 2 are answered; the rest stay listed.
 - Doctor command across all configured org files.
 - Refile flow between a personal inbox scope and a client scope.
 - Archive hook emitting `archive` events.
-- Agent-facing documentation: how an agent is pointed at a tracker from a
-  project, with no process rules attached.
 
 ## 6. Take over the ZL tracker
 

@@ -17,6 +17,12 @@ design decisions.
   `docs/design/` in the same change; open questions are answered there, not
   in chat.
 
+## This project's tracker
+
+This project's tracker is `zwanenzang-tracker` on the forge
+(`https://forgejo.lynx-lizard.ts.net/binarin/zwanenzang-tracker`). How to use
+it is in [docs/agents.md](docs/agents.md).
+
 ## Nix flake
 
 - Use flake-parts and the same pinned inputs as `swan-lake-common`: the

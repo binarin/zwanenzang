@@ -31,6 +31,8 @@ The clone's actor id is `zwanenzang.actor` in its local git configuration.
 - Usage errors (unknown command, missing argument) are reported by the
   argument parser on stderr with exit status 2, not as JSON.
 - `lint` prints its report and exits 1 when it found any issue.
+- `sync` prints its sync object and exits 1 when `sync.error` is set; there
+  is no top-level `error` then.
 
 Nothing is printed on stderr on success.
 
@@ -532,9 +534,11 @@ A summary (in `list`, and in `query --summary`) has the fields `id`, `short_id`,
 ```
 
 To change a document, pass the `version` you read as `--base` to `doc set`.
-A first version uses `--base none`. If anyone wrote a version since, the
-write fails with `stale-doc-base`: read again, merge, and write against the
-new version.
+A first version uses `--base none`. If this clone knows of a version written
+since, the write fails with `stale-doc-base`: read again, merge, and write
+against the new version. A concurrent version the clone has not fetched yet
+is not refused; once both are known, the one with the lower id stays current
+and the other is marked `lost` in `versions`.
 
 ### Lint report
 
