@@ -167,8 +167,11 @@ question; start human-only.
   file. It mirrors `archive`: ticket entities only, refused on tombstoned
   tickets, and it does not touch status. The flag is the state of the latest
   of the two in ULID order; a concurrent pair is not a concurrent field
-  report. A build older than the operation skips it as `unknown-op`, so such
-  a build keeps the ticket archived until it is updated.
+  report. A live no-op writes no event, so unarchiving on a clone that has
+  not yet fetched a concurrent `archive` writes nothing and the archive
+  stands, with no lint report; clients should sync before reviving. A build
+  older than the operation skips it as `unknown-op`, so such a build keeps
+  the ticket archived until the build is updated.
 - Attachments (images). Probably blobs with a size cap, as in epiq, but not
   needed for the first milestones.
 - Numbers for imported tickets.
