@@ -102,6 +102,13 @@ pub enum Command {
         #[arg(long)]
         remove: bool,
     },
+    /// Add a prerequisite to a ticket, or remove it. Never restricts status changes.
+    Depend {
+        ticket: String,
+        prerequisite: String,
+        #[arg(long)]
+        remove: bool,
+    },
     /// Add or remove a tag.
     Tag {
         ticket: String,
@@ -476,6 +483,23 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     Op::Unrelate(d)
                 } else {
                     Op::Relate(d)
+                },
+            ))
+        }),
+        Command::Depend {
+            ticket,
+            prerequisite,
+            remove,
+        } => ctx.mutate(&ticket, |view, id| {
+            let d = RelateData {
+                to: view.resolve(&prerequisite)?,
+            };
+            Ok(one(
+                id,
+                if remove {
+                    Op::Undepend(d)
+                } else {
+                    Op::Depend(d)
                 },
             ))
         }),

@@ -31,7 +31,9 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         .filter(|(_, a)| a.name.is_none())
         .map(|(id, a)| json!({"actor": id, "events": a.events}))
         .collect();
-    let issues = !rp.skipped.is_empty()
+    let dependency_cycles = rp.state.dependency_cycles();
+    let issues = !dependency_cycles.is_empty()
+        || !rp.skipped.is_empty()
         || !rp.state.concurrent.is_empty()
         || !rp.state.lost_docs.is_empty()
         || !dangling.is_empty()
@@ -42,6 +44,7 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         "skipped": rp.skipped,
         "concurrent": rp.state.concurrent,
         "lost_documents": rp.state.lost_docs,
+        "dependency_cycles": dependency_cycles,
         "dangling_repos": dangling,
         "unnamed_actors": unnamed,
     });

@@ -96,6 +96,10 @@ fn affected(events: &[Event]) -> BTreeMap<Ulid, Vec<&Event>> {
                 relations.entry(e.entity).or_default().remove(&d.to);
                 relations.entry(d.to).or_default().remove(&e.entity);
             }
+            Op::Depend(d) | Op::Undepend(d) => {
+                // Both forward and reverse views retain tombstoned endpoints.
+                ids.insert(d.to);
+            }
             Op::Tombstone(_) => {
                 ids.extend(parents.get(&e.entity).copied());
                 ids.extend(relations.get(&e.entity).into_iter().flatten().copied());

@@ -36,7 +36,7 @@ pub struct Plan {
     /// Texts the operations refer to by blob name.
     pub blobs: Vec<String>,
     /// Ticket references resolved when the events are built: the `to` of
-    /// the `relate`, `unrelate` or `parent` operation at index `i` of `ops`
+    /// the `relate`, `unrelate`, `depend`, `undepend` or `parent` operation at index `i` of `ops`
     /// becomes the entity of the target. A plan can so relate tickets it
     /// creates itself, whose ids are not known until they are written.
     pub refs: Vec<(usize, Target)>,
@@ -237,7 +237,7 @@ impl Tracker {
             if let Some(t) = index.and_then(|i| refs.get(&i)) {
                 let to = resolve(*t, &created)?;
                 match &mut op {
-                    Op::Relate(d) | Op::Unrelate(d) => d.to = to,
+                    Op::Relate(d) | Op::Unrelate(d) | Op::Depend(d) | Op::Undepend(d) => d.to = to,
                     Op::Parent(d) => d.to = Some(to),
                     _ => {
                         return Err(Error::InvalidArgument(format!(
@@ -274,6 +274,15 @@ impl Tracker {
             }
             let mut trial = state.clone();
             let applied = apply(&mut trial, &ev).map_err(Error::Rejected)?;
+            if applied.changed
+                && let Op::Depend(d) = &ev.op
+                && state.dependency_reaches(d.to, entity)
+            {
+                return Err(Error::Rejected(Rejection {
+                    code: RejectCode::DependencyCycle,
+                    message: format!("dependency {entity} -> {} would close a cycle", d.to),
+                }));
+            }
             if let Some(lost) = applied.lost {
                 return Err(Error::Rejected(Rejection {
                     code: RejectCode::StaleDocBase,

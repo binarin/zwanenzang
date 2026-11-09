@@ -49,7 +49,7 @@ Mapping between heading and ticket:
 | body text before the first subheading | document `description` |
 | subheadings marked with a document property | named documents |
 | a read-only drawer or subtree | comments, newest last |
-| properties | number, relations, branches, MRs, repo links |
+| properties | number, dependencies, relations, branches, MRs, repo links |
 
 ## Keyword map
 
@@ -129,7 +129,7 @@ happens to it.
 
 For every ticket in scope, compare the heading with its sync state and emit
 events for what differs: keyword to `status`, title, parent from nesting,
-tags, description and documents as new versions with the synced version as
+tags, dependencies, description and documents as new versions with the synced version as
 `base`. Then publish and pull once more so numbers and cursors land.
 
 Push always succeeds for the human. If an agent changed the same field in
@@ -313,7 +313,7 @@ Decided 2026-11-07 for the first Emacs implementation.
 
 - Sync runs through explicit interactive commands: no minor mode or timers.
   Loading the client also installs a global Org completion-blocker hook for
-  the manual dependency experiment below. It is gated by inherited
+  the dependency UI below. It is gated by inherited
   `ZWANENZANG` and never calls the CLI.
 - CLI calls are synchronous: `call-process` for local scopes now,
   `process-file` over tramp in milestone 5.
@@ -340,7 +340,7 @@ Every property the client owns starts with `ZWANENZANG`.
   form), `ZWANENZANG_CURSOR`, `ZWANENZANG_SYNC`, `ZWANENZANG_DESC_VERSION`
   and `ZWANENZANG_DESC_HASH`. `ZWANENZANG_SYNC` is a compact snapshot of
   the last synced fields, for example `status=draft title=<hash>
-  tags=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
+  tags=<hash> depends=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
   stores the tracker status, so a draft shown as TODO stays draft.
 - Named document: a subheading with `ZWANENZANG_DOC: <name>`,
   `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`.
@@ -387,7 +387,7 @@ tracker.
   naming a keyword the buffer does not define, or a status outside the
   vocabulary, is reported and ignored. Without the property, each TODO
   keyword maps the status of the same name, ignoring case.
-- Field by field, for status, title, tags, parent, description and each
+- Field by field, for status, title, tags, dependencies, parent, description and each
   named document: the remote value applies when Org still shows the
   value as last synced; Org's value stays when only Org changed; when
   both changed, Org's value stays, the heading gets `zz_conflict` and
@@ -401,7 +401,7 @@ tracker.
   what this pull could not apply, and disappear once Org agrees with the
   tracker (by hand, or after a push).
 - `ZWANENZANG_SYNC` is `status=<status> title=<hash> tags=<hash>
-  parent=<id> nest=<id>`, `-` for none. `nest` is the ticket heading the
+  depends=<hash> parent=<id> nest=<id>`, `-` for none. `nest` is the ticket heading the
   heading was nested under at that sync; it differs from `parent` when
   the parent has no heading in scope. Hashes, here and in
   `ZWANENZANG_DESC_HASH` and `ZWANENZANG_HASH`, are the first 16 hex
@@ -554,12 +554,12 @@ does.
   before it opens, writes to or pushes from a repository. The client has
   no bypass.
 
-## Manual dependency UX experiment
+## Dependencies
 
-Decided 2026-11-09. This is an Org-side experiment to try the interaction
-before designing tracker dependency events or CLI support. It adds no
-tracker-side completion policy and requires neither org-contrib's
-`org-depend` nor Org Edna. Those packages share a `BLOCKER` property name
+Decided 2026-11-09, starting with an Org-only manual UX experiment. The
+human accepted that interaction and authorized tracker-backed relationships.
+Dependencies add no tracker-side completion policy and require neither
+org-contrib's `org-depend` nor Org Edna. Those packages share a `BLOCKER` property name
 but not a grammar; generating it could silently enable their enforcement.
 
 Enter dependencies manually on the dependent heading:
@@ -586,7 +586,8 @@ local edits. Unpublished tickets must acquire a number before they can be
 referenced. Every prerequisite must be done. The dependency property itself
 is not inherited. Edit it directly;
 there are no editing/inspection commands, overlays or agenda additions.
-Pull/push preserve it as local Org metadata and do not send it to the CLI.
+Pull/push synchronize it with the ticket's `depends_on` set. The event log
+stores stable identities; the property always shows published ticket numbers.
 
 - Loading the package installs a global `org-blocker-hook` function, gated
   on inherited `ZWANENZANG` and a nonempty `ZWANENZANG_DEPENDS_ON` on the
@@ -625,17 +626,40 @@ Pull/push preserve it as local Org metadata and do not send it to the CLI.
   remote completion is accepted even if its prerequisites are unfinished;
   the CLI remains tracking-only and human overrides are always possible.
 
-Future direction, not part of this experiment: a directed same-tracker
-relationship stored once on the dependent, with reverse `blocks` derived;
-CLI and Org editing and Org-wins reconciliation; local self-edge/cycle
-validation and diagnosis of cycles introduced by concurrency without
-silently deleting edges. The experiment deliberately has no graph validator;
-unfinished prerequisites in a cycle block naturally and can be overridden.
-No any-of dependencies, triggers, cascading reopening, cross-tracker lookup
-or dependency synchronization is implemented here.
+### Tracker-backed synchronization
+
+- Directed same-tracker edges are stored once on the dependent; reverse
+  `blocks` is derived. CLI `depend T PREREQUISITE [--remove]` and batch
+  `depend`/`undepend` edit edges without imposing any status policy.
+- Pull reconciles the dependency set as one field, using the normalized,
+  sorted ticket-number set's hash in `ZWANENZANG_SYNC` as `depends=`.
+  Order, repeated references and letter case are not edits. Remote-only
+  changes apply; simultaneous disagreement keeps Org, with the skipped
+  remote numbers in the conflict drawer. Push sends edge differences between
+  the edited Org set and its own current read; the human's set wins over
+  known concurrent edits. Unseen remote changes have the same next-pull
+  conflict/next-push settlement boundary as other synced fields.
+- On upgrade, a missing `depends=` baseline means the empty set. Existing
+  manually entered dependencies are therefore preserved and pushed; an
+  empty property can receive remotely stored relationships. Removing a
+  property with recorded sync state explicitly clears the dependency set.
+- Resolution uses pull/push's existing `list --all` number map, including
+  archived/tombstoned prerequisites absent from Org. No org-id, global
+  registry or extra TODO-transition CLI calls are introduced. Unknown or
+  ambiguous numbers refuse the whole push before apply. New headings may
+  depend on published tickets; referencing new prerequisites still requires
+  publishing them first. A remote prerequisite without a number leaves the
+  field unchanged and raises a pull conflict until it has a number.
+- Dependency removals precede additions in the batch, after creates, avoiding
+  temporary cycles when reversing relationships. The CLI rejects local
+  self-edges/cycles atomically. Replay preserves cycles introduced by
+  concurrent writes and lint diagnoses them; Org completion checks remain
+  overridable even for such cycles. Archive/tombstone never deletes edges.
+- The blocker and snapshot rules above are unchanged: no CLI completion
+  vetoes, implicit terminal-status vocabulary, automatic status changes,
+  any-of dependencies, triggers, cascading reopening or cross-tracker lookup.
 
 ## Open questions
 
-The dependency experiment is for manual UX evaluation. Tracker dependency
-storage and a richer UI remain future work, not implicit requirements for
-this prototype.
+Richer dependency editing commands, displays and agenda integration remain
+out of scope until daily use motivates them.

@@ -73,6 +73,33 @@ fn numbers(p: &Path) -> Vec<u64> {
 }
 
 #[test]
+fn concurrent_dependencies_preserve_and_diagnose_cycles() {
+    let net = Net::new();
+    let a = net.path("a");
+    let x = id(&ok(&a, &["create", "X"]));
+    let y = id(&ok(&a, &["create", "Y"]));
+    let b = net.clone_as("b");
+    net.offline(&a, true);
+    net.offline(&b, true);
+    ok(&a, &["depend", &x, &y]);
+    ok(&b, &["depend", &y, &x]);
+    net.offline(&a, false);
+    net.offline(&b, false);
+    ok(&a, &["sync"]);
+    ok(&b, &["sync"]);
+    ok(&a, &["sync"]);
+    assert_eq!(tickets(&a), tickets(&b));
+    assert_eq!(ok(&a, &["show", &x])["depends_on"], json!([y]));
+    assert_eq!(ok(&a, &["show", &y])["depends_on"], json!([x]));
+    let lint = run_in(&a, &["lint"], "");
+    assert_eq!(lint.code, 1);
+    assert_eq!(lint.json["skipped"], json!([]));
+    assert_eq!(lint.json["dependency_cycles"].as_array().unwrap().len(), 2);
+    ok(&a, &["depend", &x, &y, "--remove"]);
+    assert_eq!(run_in(&a, &["lint"], "").code, 0);
+}
+
+#[test]
 fn clones_share_one_numbering() {
     let net = Net::new();
     let a = net.path("a");

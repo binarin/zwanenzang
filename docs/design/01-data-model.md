@@ -63,6 +63,9 @@ Ticket lifecycle and metadata:
   configured vocabulary.
 - `parent` — set or clear the parent ticket. Cycles are rejected.
 - `relate` / `unrelate` — undirected relation to another ticket.
+- `depend` / `undepend` — add/remove a same-tracker prerequisite on the
+  dependent ticket, `{to: <prerequisite id>}`. Reverse `blocks` is derived.
+  Multiple prerequisites mean all-of. No tracker-side status enforcement.
 - `branch`, `mr` — repository-scoped references: `{repo, name}` or `{repo, url}`.
   `repo` is an alias from `zwanenzang.toml`, so one tracker can span several
   code repositories.
@@ -127,6 +130,24 @@ Applied on live writes (error) and on replay (skip and report):
   the version is kept in history as lost and does not become current.
 - `number` is unique and greater than any existing number.
 - Event id greater than its parent's id.
+
+Dependency self-edges are rejected on write and replay. New dependency edges
+must target live tickets; existing edges survive archive/tombstone and can
+still be removed. Both forward `depends_on` and reverse `blocks` views retain
+tombstoned endpoints, so a missing prerequisite never silently disappears.
+The live writer rejects an added edge when its target can already reach the
+dependent, including within a batch. Replay deliberately does not reject
+longer dependency cycles: individually valid concurrent writes can create one,
+and rejecting the later edge would lose a chosen relationship. Lint reports
+every current cycle-participating edge as `{ticket, to}` under
+`dependency_cycles`, including tombstoned endpoints. Removing an edge repairs
+the graph; unrelated writes and status changes remain unrestricted.
+
+Concurrent add/remove changes to the same directed edge use ULID order and
+are reported as field `depends_on`, with `{to, present}` values. Distinct
+prerequisite edits commute. As with tags, an absent removal or existing addition
+is a live no-op: it cannot express intent against an unseen remote write.
+Org reconciles its edited set against the state it reads before applying.
 
 Lint additionally reports: concurrent changes to the same scalar field of one
 entity (the later ULID won; a human should know), lost document edits,

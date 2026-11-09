@@ -81,7 +81,8 @@ pub fn apply(
                 let mut data = change.data;
                 let fields: &[&str] = match change.op.as_str() {
                     "create" => &["title", "status", "kind"],
-                    "title" | "status" | "kind" | "parent" | "relate" | "unrelate" => &["to"],
+                    "title" | "status" | "kind" | "parent" | "relate" | "unrelate" | "depend"
+                    | "undepend" => &["to"],
                     "tag" | "untag" => &["tag"],
                     "branch" => &["repo", "name"],
                     "mr" => &["repo", "url"],
@@ -120,7 +121,10 @@ pub fn apply(
                         &creations,
                     )?
                 };
-                if matches!(change.op.as_str(), "parent" | "relate" | "unrelate") {
+                if matches!(
+                    change.op.as_str(),
+                    "parent" | "relate" | "unrelate" | "depend" | "undepend"
+                ) {
                     let to = object
                         .get("to")
                         .ok_or_else(|| invalid("missing field `to`"))?;
