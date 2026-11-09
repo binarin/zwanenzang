@@ -135,6 +135,10 @@ impl<'a> View<'a> {
             "kind": t.kind,
             "parent": t.parent,
             "tags": t.tags,
+            "depends_on": t.depends_on,
+            "blocks": self.replay.state.tickets.values()
+                .filter(|other| other.depends_on.contains(&t.id))
+                .map(|other| other.id).collect::<Vec<_>>(),
             "archived": t.archived,
             "tombstoned": t.tombstoned,
             "last_event": t.last_event,

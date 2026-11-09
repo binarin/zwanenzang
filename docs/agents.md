@@ -67,11 +67,17 @@ or a unique id prefix.
 zwanenzang -C <dir> create "A title" --status todo --tag example
 zwanenzang -C <dir> status ZZ-0042 doing
 zwanenzang -C <dir> mr ZZ-0042 app https://forge.example/app/pulls/7
+zwanenzang -C <dir> depend ZZ-0043 ZZ-0042
 ```
 
 Status and kind names, and the repository aliases `branch` and `mr` take, are in
 the clone's `zwanenzang.toml`. An unknown status or kind is refused; an unknown
 alias is written anyway and only `lint` reports it.
+
+`depend T P` records T's prerequisite P; `--remove` removes it. Ticket
+objects expose `depends_on` and reverse `blocks` as stable ticket ids.
+Self-edges and local cycles are refused; cycles formed concurrently survive
+sync and are reported by `lint`. Dependencies never veto CLI status changes.
 
 Every write commits and then syncs. Output is one JSON value on stdout, unless
 the arguments themselves are wrong, which is a message on stderr and exit

@@ -2,7 +2,8 @@
 //!
 //! [`apply`] is used both by replay, where a rejection means the event is
 //! skipped and reported, and by live writes, where a rejection is an error
-//! and nothing is written. Using one function keeps the two identical.
+//! and nothing is written. Dependency cycle validation additionally runs in
+//! the live writer: replay must retain cycles formed by concurrent writes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -50,6 +51,7 @@ pub enum RejectCode {
     TargetTombstoned,
     ParentCycle,
     SelfRelation,
+    DependencyCycle,
     /// A document write whose base is not the current version. Only ever a
     /// live-write error; at replay such a version is kept and marked lost.
     StaleDocBase,
@@ -84,6 +86,7 @@ impl RejectCode {
             RejectCode::TargetTombstoned => "target-tombstoned",
             RejectCode::ParentCycle => "parent-cycle",
             RejectCode::SelfRelation => "self-relation",
+            RejectCode::DependencyCycle => "dependency-cycle",
             RejectCode::StaleDocBase => "stale-doc-base",
             RejectCode::MissingBlob => "missing-blob",
             RejectCode::InvalidComment => "invalid-comment",
@@ -181,6 +184,7 @@ pub struct Ticket {
     pub kind: Option<String>,
     pub parent: Option<Ulid>,
     pub related: BTreeSet<Ulid>,
+    pub depends_on: BTreeSet<Ulid>,
     pub tags: BTreeSet<String>,
     pub branches: BTreeSet<(String, String)>,
     pub mrs: BTreeSet<(String, String)>,
@@ -207,6 +211,7 @@ pub enum Field {
     Status,
     Kind,
     Parent,
+    Dependency(Ulid),
 }
 
 impl Field {
@@ -216,6 +221,7 @@ impl Field {
             Field::Status => "status",
             Field::Kind => "kind",
             Field::Parent => "parent",
+            Field::Dependency(_) => "depends_on",
         }
     }
 }
@@ -384,6 +390,36 @@ impl State {
         false
     }
 
+    /// Reachability is iterative and safe even when merged history contains cycles.
+    pub fn dependency_reaches(&self, from: Ulid, target: Ulid) -> bool {
+        let mut pending = vec![from];
+        let mut seen = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if id == target {
+                return true;
+            }
+            if seen.insert(id)
+                && let Some(t) = self.tickets.get(&id)
+            {
+                pending.extend(t.depends_on.iter().copied());
+            }
+        }
+        false
+    }
+
+    /// Every edge participating in a current cycle, including tombstoned tickets.
+    pub fn dependency_cycles(&self) -> Vec<Value> {
+        self.tickets
+            .values()
+            .flat_map(|t| {
+                t.depends_on
+                    .iter()
+                    .filter(|to| self.dependency_reaches(**to, t.id))
+                    .map(|to| json!({"ticket": t.id, "to": to}))
+            })
+            .collect()
+    }
+
     fn note_field(&mut self, ev: &Event, field: Field, value: Value) {
         let me = Causal::of(ev);
         let history = self.field_history.entry((ev.entity, field)).or_default();
@@ -464,6 +500,7 @@ pub fn apply(state: &mut State, ev: &Event) -> Result<Applied, Rejection> {
                 kind: d.kind.clone(),
                 parent: None,
                 related: BTreeSet::new(),
+                depends_on: BTreeSet::new(),
                 tags: BTreeSet::new(),
                 branches: BTreeSet::new(),
                 mrs: BTreeSet::new(),
@@ -634,6 +671,34 @@ fn apply_ticket_op(state: &mut State, ev: &Event) -> Result<(bool, Option<LostDo
             }
             let changed = state.tickets.get_mut(&id).unwrap().related.remove(&d.to);
             state.tickets.get_mut(&d.to).unwrap().related.remove(&id);
+            changed
+        }
+        Op::Depend(d) | Op::Undepend(d) => {
+            if d.to == id {
+                return reject(
+                    RejectCode::DependencyCycle,
+                    "a ticket cannot depend on itself",
+                );
+            }
+            let adding = matches!(ev.op, Op::Depend(_));
+            if adding && !t.depends_on.contains(&d.to) {
+                state.check_target(d.to)?;
+            } else if !state.tickets.contains_key(&d.to) {
+                return reject(RejectCode::UnknownTarget, format!("no ticket {}", d.to));
+            }
+            // Replay preserves cycles formed by independently valid concurrent writes.
+            // The live writer checks reachability before calling apply.
+            let targets = &mut state.tickets.get_mut(&id).unwrap().depends_on;
+            let changed = if adding {
+                targets.insert(d.to)
+            } else {
+                targets.remove(&d.to)
+            };
+            state.note_field(
+                ev,
+                Field::Dependency(d.to),
+                json!({"to": d.to, "present": adding}),
+            );
             changed
         }
         Op::Branch(d) => {

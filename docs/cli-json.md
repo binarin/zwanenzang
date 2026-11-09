@@ -91,6 +91,7 @@ them; any change to them fails with `tombstoned`.
 | `kind T KIND` / `kind T --clear` | `kind` | mutation object |
 | `parent T P` / `parent T --clear` | `parent` | mutation object |
 | `relate T OTHER [--remove]` | `relate` / `unrelate` | mutation object |
+| `depend T PREREQUISITE [--remove]` | `depend` / `undepend` | mutation object |
 | `tag T TAG [--remove]` | `tag` / `untag` | mutation object |
 | `branch T REPO NAME` | `branch` | mutation object |
 | `mr T REPO URL` | `mr` | mutation object |
@@ -118,6 +119,14 @@ would be stored. `doc set` reads the new text from `--file` or stdin.
 Archiving an archived ticket or unarchiving one that is not archived writes
 nothing and reports `"written": false`. Both are refused on a tombstoned
 ticket with `tombstoned`.
+
+`depend T P` records that T depends on P (all prerequisites, not any-of).
+It never changes or restricts status. Self-edges and added edges closing a
+cycle are refused with `dependency-cycle`; targets must exist and new edges
+require a live target. Existing edges survive archive/tombstone and can still
+be removed with `--remove`. An existing addition or absent removal is a
+no-op. Concurrent valid edges may form a cycle after sync; replay keeps them
+and lint reports the cycle rather than silently dropping an edge.
 
 `list` shows tickets that are neither archived nor tombstoned unless `--all`
 is given. Repeated `--status` and `--kind` match any of the values; repeated
@@ -190,7 +199,7 @@ may be empty. Each change has `op`, `data` (an object), and, except for
 A reference is either an ordinary ticket reference string, or
 `{"created": N}` where N is the zero-based **change index** of an earlier
 `create` in this request. The same syntax works for `ticket` and for
-`parent.to`, `relate.to`, and `unrelate.to`. Forward references, references
+`parent.to`, `relate.to`, `unrelate.to`, `depend.to` and `undepend.to`. Forward references, references
 to non-create changes and negative/non-integer indices are invalid. Order
 all creates before changes that connect them when pushing a scope. Ordinary
 references resolve against the state at the start of the batch under the
@@ -204,7 +213,7 @@ Supported operations and their complete input data fields:
 | `title`, `status` | `{to: string}` |
 | `kind` | `{to: string or null}`; required, null clears |
 | `parent` | `{to: reference or null}`; required, null clears |
-| `relate`, `unrelate` | `{to: reference}` |
+| `relate`, `unrelate`, `depend`, `undepend` | `{to: reference}` |
 | `tag`, `untag` | `{tag: string}` |
 | `branch` | `{repo: string, name: string}` |
 | `mr` | `{repo: string, url: string}` |
@@ -554,8 +563,11 @@ Operation data:
   has one; `blob` is `null` for inline comments.
 
 A summary (in `list`, and in `query --summary`) has the fields `id`, `short_id`, `number`, `display`,
-`title`, `status`, `kind`, `parent`, `tags`, `archived`, `tombstoned` and
-`last_event`.
+`title`, `status`, `kind`, `parent`, `tags`, `depends_on`, `blocks`, `archived`,
+`tombstoned` and `last_event`. Full ticket objects include these fields too.
+`depends_on` contains prerequisite ULIDs; `blocks` contains dependent ULIDs,
+computed from forward edges. Both arrays are sorted, include archived and
+tombstoned endpoints, and contain no cross-tracker identities.
 
 ### Document object
 
@@ -579,6 +591,7 @@ and the other is marked `lost` in `versions`.
  "skipped": [{"log", "line", "id", "op", "code", "message", "raw"}],
  "concurrent": [{"entity", "field", "earlier", "earlier_value", "later", "later_value", "won"}],
  "lost_documents": [{"entity", "name", "event", "actor", "base", "current"}],
+ "dependency_cycles": [{"ticket", "to"}],
  "dangling_repos": [{"event", "entity", "op", "repo"}],
  "unnamed_actors": [{"actor", "events"}]}
 ```
@@ -590,8 +603,16 @@ and the other is marked `lost` in `versions`.
 - `concurrent`: two changes by different actors to the same field (`title`,
   `status`, `kind`, `parent`) of one ticket where the later writer had not
   seen the earlier change, with different values. The later one won.
+  Directed dependency add/remove disagreements on the same edge use field
+  `depends_on` and values `{to: <prerequisite ULID>, present: boolean}`.
+  Edits on distinct edges do not conflict; no-op writes express no intent
+  against unseen changes.
 - `lost_documents`: document versions written against a stale base;
   `current` is the version that was current when the lost one was replayed.
+- `dependency_cycles`: every current edge participating in a dependency cycle,
+  sorted by dependent (`ticket`) then prerequisite (`to`). Tombstoned endpoints
+  are included. This is a current-graph diagnostic, not skipped history;
+  removing edges can clear it. A nonempty array makes lint exit 1.
 - `dangling_repos`: `branch` and `mr` events naming a repository alias that
   `zwanenzang.toml` does not declare.
 - `unnamed_actors`: actors with accepted events but no `actor` declaration.
@@ -635,8 +656,9 @@ Rejections: returned as the error code when a write is refused, and as
 | `tombstoned` | the ticket is tombstoned |
 | `invalid-title`, `invalid-tag`, `invalid-name`, `invalid-comment` | a value has the wrong format |
 | `status-not-in-vocabulary`, `kind-not-in-vocabulary` | not in the tracker's vocabulary |
-| `unknown-target`, `target-tombstoned` | a parent or relation target is missing or tombstoned |
+| `unknown-target`, `target-tombstoned` | a parent, relation or dependency target is missing or tombstoned |
 | `parent-cycle`, `self-relation` | the parent chain would loop, or a ticket relates to itself |
+| `dependency-cycle` | a dependency self-edge (write/replay), or an added edge would close a cycle (write only) |
 | `stale-doc-base` | `doc set` with a base that is not the current version (write only) |
 | `missing-blob` | a `doc` or `comment` names a blob that does not exist |
 | `number-not-unique`, `number-not-greater`, `already-numbered` | number assignment rules |
