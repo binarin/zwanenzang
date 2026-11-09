@@ -19,6 +19,12 @@ That heading is the scope root. Everything beneath it syncs with that tracker.
 - The location doubles as the execution host. A tramp path means the CLI runs
   on that machine with `process-file`; a local path means it runs locally.
   The desktop never needs a clone of a tracker it reaches over tramp.
+- A scope may point at the same persistent clone agents use on that execution
+  host; see [stable clone placement](02-git-and-sync.md#stable-clone-placement).
+  The property stays a path, not an origin URL, and existing locations remain
+  valid. Adopting or moving a clone requires updating this property; it never
+  silently creates a replacement clone. Multiple clients sharing the clone
+  share its actor and mutation lock, not the Org heading's sync state.
 - Headings above the scope root and non-ticket headings inside it are the
   human's own structure. The tracker never sees them.
 
