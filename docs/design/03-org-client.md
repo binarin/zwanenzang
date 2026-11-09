@@ -311,7 +311,10 @@ Decided 2026-11-07 for the first Emacs implementation.
 
 ### Activation and calls
 
-- Explicit interactive commands only: no minor mode, hooks or timers.
+- Sync runs through explicit interactive commands: no minor mode or timers.
+  Loading the client also installs a global Org completion-blocker hook for
+  the manual dependency experiment below. It is gated by inherited
+  `ZWANENZANG` and never calls the CLI.
 - CLI calls are synchronous: `call-process` for local scopes now,
   `process-file` over tramp in milestone 5.
 - First commands: `zwanenzang-pull`, `zwanenzang-push` and
@@ -551,8 +554,88 @@ does.
   before it opens, writes to or pushes from a repository. The client has
   no bypass.
 
+## Manual dependency UX experiment
+
+Decided 2026-11-09. This is an Org-side experiment to try the interaction
+before designing tracker dependency events or CLI support. It adds no
+tracker-side completion policy and requires neither org-contrib's
+`org-depend` nor Org Edna. Those packages share a `BLOCKER` property name
+but not a grammar; generating it could silently enable their enforcement.
+
+Enter dependencies manually on the dependent heading:
+
+```org
+** TODO A prerequisite
+:PROPERTIES:
+:ZWANENZANG_ID: 01M00000000000000000000001
+:ZWANENZANG_NUMBER: ZZ-0042
+:END:
+** TODO The dependent ticket
+:PROPERTIES:
+:ZWANENZANG_ID: 01M00000000000000000000002
+:ZWANENZANG_DEPENDS_ON: ZZ-0042
+:END:
+```
+
+Both headings must be inside a scope carrying `ZWANENZANG`. The property
+is a whitespace-separated list of human-facing ticket IDs in that same
+tracker, such as `ZZ-0042`, not internal ULIDs, Org links or Org `ID`
+values. Resolve them through the snapshot's display references or local
+`ZWANENZANG_NUMBER` properties; use stable identity internally to find
+local edits. Unpublished tickets must acquire a number before they can be
+referenced. Every prerequisite must be done. The dependency property itself
+is not inherited. Edit it directly;
+there are no editing/inspection commands, overlays or agenda additions.
+Pull/push preserve it as local Org metadata and do not send it to the CLI.
+
+- Loading the package installs a global `org-blocker-hook` function, gated
+  on inherited `ZWANENZANG` and a nonempty `ZWANENZANG_DEPENDS_ON` on the
+  heading itself. Unrelated Org headings are unaffected.
+- Only a transition from an unfinished/no keyword to a done keyword is
+  checked. Starting, reopening, changing unfinished states or switching
+  between done keywords is unrestricted. Completion/reopening never
+  changes another ticket's keyword or sets a `blocked` status/tag.
+- Same-scope Org headings supply their current, possibly unsynced keywords.
+  Otherwise the last tracker snapshot supplies status, interpreted through
+  the dependent scope's current keyword map and buffer's done keywords.
+  Different scope configurations may interpret completion differently.
+- Successful `zwanenzang-sync`/`zwanenzang-sync-all` automatically retain an
+  in-memory snapshot for each scope from the final pull's `list --all` and
+  `read` results, preferring `read` where both contain the ticket. These
+  are separate local loads, not an atomic all-ticket snapshot. Plain pull
+  or push does not refresh the dependency snapshot.
+- The snapshot is buffer-local and not persisted, shared across trackers,
+  timed out or refreshed by timers. A failed sync/publication keeps the
+  previous snapshot. Checks never fetch or run the CLI. Reopening a buffer
+  starts without a snapshot; absent prerequisites remain unknown until a
+  successful sync. Changing the scope location or recorded tracker identity
+  invalidates its snapshot.
+- Missing tickets, unknown/unmapped states and duplicate local IDs block
+  completion with a reason. A known tombstone blocks even if a surviving
+  local heading says DONE. Archiving alone neither satisfies nor invalidates
+  a prerequisite; its status determines completion. Without a snapshot,
+  unique local headings can still satisfy prerequisites.
+- Rejection lists prerequisite references, titles when known and reasons,
+  plus the snapshot age (or its absence). There is no claim of live remote
+  knowledge. Use Org's normal triple-prefix `C-u C-u C-u C-c C-t` to
+  change state without blockers, or its `NOBLOCKING` property; overrides
+  leave dependencies intact. The triple prefix retains Org's normal state
+  selection/cycling behavior, so the next keyword may still be unfinished.
+- Pulls continue to rewrite headings directly, bypassing TODO hooks. A
+  remote completion is accepted even if its prerequisites are unfinished;
+  the CLI remains tracking-only and human overrides are always possible.
+
+Future direction, not part of this experiment: a directed same-tracker
+relationship stored once on the dependent, with reverse `blocks` derived;
+CLI and Org editing and Org-wins reconciliation; local self-edge/cycle
+validation and diagnosis of cycles introduced by concurrency without
+silently deleting edges. The experiment deliberately has no graph validator;
+unfinished prerequisites in a cycle block naturally and can be overridden.
+No any-of dependencies, triggers, cascading reopening, cross-tracker lookup
+or dependency synchronization is implemented here.
+
 ## Open questions
 
-None at present. The keyword map, unmapped keywords, ticket headings needing
-a keyword, hidden documents and closing on archive were decided 2026-11-07
-(sections above).
+The dependency experiment is for manual UX evaluation. Tracker dependency
+storage and a richer UI remain future work, not implicit requirements for
+this prototype.

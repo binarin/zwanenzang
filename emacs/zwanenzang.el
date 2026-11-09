@@ -14,8 +14,9 @@
 ;; the ticket headings beneath it sync with that tracker through the
 ;; `zwanenzang' CLI and its JSON contract.
 ;;
-;; Everything happens through explicit interactive commands: there is no
-;; minor mode, hook or timer.  CLI calls are synchronous.
+;; Sync happens through explicit interactive commands.  A global Org blocker
+;; hook checks manually entered ZWANENZANG_DEPENDS_ON properties inside scopes;
+;; it never calls the CLI.  There is no minor mode or timer.
 ;;
 ;; The design is in docs/design/03-org-client.md and the CLI contract in
 ;; docs/cli-json.md of the zwanenzang repository.
@@ -653,6 +654,117 @@ in this buffer, or a status outside the vocabulary, is left out."
         (push (format "keyword map: status %s has no keyword" status) problems)))
     (cons (nreverse map) (nreverse problems))))
 
+;;;; Dependency UX experiment
+
+(defvar-local zwanenzang--dependency-snapshots nil
+  "In-memory tracker snapshots for dependency checks in this buffer.
+Each plist holds a scope :root marker, :location, :tracker identity,
+:tickets (all summaries), :statuses and refresh :time.  Nothing is persisted.")
+
+(defun zwanenzang--dependency-snapshot (root)
+  "The usable dependency snapshot for ROOT, or nil after a scope change."
+  (seq-find
+   (lambda (snapshot)
+     (let ((marker (plist-get snapshot :root)))
+       (and (eq (marker-buffer marker) (current-buffer))
+            (= marker root)
+            (equal (plist-get snapshot :location) (org-entry-get root "ZWANENZANG"))
+            (equal (plist-get snapshot :tracker) (org-entry-get root "ZWANENZANG_TRACKER")))))
+   zwanenzang--dependency-snapshots))
+
+(defun zwanenzang--dependency-reasons (root refs)
+  "Explain why prerequisite ticket REFS in ROOT are not known to be done.
+REFS are human-facing numbers such as ZZ-0042, not internal ULIDs.
+Local Org keywords take precedence over snapshot statuses.  Missing,
+duplicate, tombstoned and unmapped prerequisites are not satisfied."
+  (let* ((snapshot (zwanenzang--dependency-snapshot root))
+         (known (plist-get snapshot :tickets))
+         (map (car (zwanenzang--keyword-map
+                    (org-entry-get root "ZWANENZANG_KEYWORDS")
+                    (plist-get snapshot :statuses) org-todo-keywords-1)))
+         (local (make-hash-table :test #'equal))
+         (local-numbers (make-hash-table :test #'equal))
+         (summaries (make-hash-table :test #'equal))
+         (headings (car (zwanenzang--scan root)))
+         reasons)
+    (when known
+      (maphash (lambda (_id summary)
+                 (puthash (alist-get 'display summary) summary summaries))
+               known))
+    (dolist (heading headings)
+      (push (plist-get heading :marker) (gethash (plist-get heading :id) local)))
+    (dolist (heading headings)
+      (let ((number (org-entry-get (plist-get heading :marker) "ZWANENZANG_NUMBER")))
+        (when number
+          (puthash number (seq-union (gethash number local-numbers)
+                                    (gethash (plist-get heading :id) local) #'eq)
+                   local-numbers))))
+    (dolist (ref (delete-dups refs))
+      (let* ((number-p (string-match-p "\\`[^ \t\n]+-[0-9]+\\'" ref))
+             (summary (and number-p (gethash ref summaries)))
+             ;; Resolve through the snapshot's canonical number when possible,
+             ;; then match Org by stable identity, even if its number is stale.
+             (headings (and number-p
+                            (if summary (gethash (alist-get 'id summary) local)
+                              (gethash ref local-numbers))))
+             (keyword (and (= (length headings) 1)
+                           (save-excursion
+                             (goto-char (car headings))
+                             (org-get-todo-state))))
+             (status (alist-get 'status summary))
+             (label (if headings
+                        (save-excursion
+                          (goto-char (car headings))
+                          (format "%s %s" ref (org-get-heading t t t t)))
+                      (if summary (zwanenzang--label summary) ref)))
+             (reason
+              (cond
+               ((not number-p) "expected a ticket ID such as ZZ-0042")
+               ((> (length headings) 1) "duplicate headings")
+               ((and snapshot (not summary)) "unknown ticket in this tracker")
+               ((eq (alist-get 'tombstoned summary) t) "tombstoned")
+               (headings
+                (cond ((member keyword org-done-keywords) nil)
+                      (keyword (format "unfinished (%s, local Org)" keyword))
+                      (t "unknown local TODO state")))
+               ((not snapshot) "unknown; sync this scope first")
+               ((not (cdr (assoc status map))) (format "unmapped status %s" status))
+               ((member (cdr (assoc status map)) org-done-keywords) nil)
+               (t (format "unfinished (%s)" status)))))
+        (when reason (push (format "%s: %s" label reason) reasons))))
+    (nreverse reasons)))
+
+(defun zwanenzang--block-dependencies (change)
+  "Block local completion in CHANGE when explicit prerequisites are unfinished.
+Only headings with inherited ZWANENZANG and their own DEPENDS_ON property
+participate.  Org's ordinary force-TODO and NOBLOCKING overrides apply.
+Pull rewrites headings directly and therefore never runs this hook."
+  (if (or (not (eq (plist-get change :type) 'todo-state-change))
+          (member (plist-get change :from) org-done-keywords)
+          (not (member (plist-get change :to) org-done-keywords)))
+      t
+    (org-with-point-at (plist-get change :position)
+      (org-with-wide-buffer
+       (let ((ids (and (derived-mode-p 'org-mode)
+                       (not (org-before-first-heading-p))
+                       (org-entry-get nil "ZWANENZANG" t)
+                       (split-string (or (org-entry-get nil "ZWANENZANG_DEPENDS_ON") "")))))
+         (if (not ids) t
+           (let* ((root (zwanenzang--scope-root))
+                  (reasons (zwanenzang--dependency-reasons root ids))
+                  (snapshot (zwanenzang--dependency-snapshot root)))
+             (if (not reasons) t
+               (setq org-block-entry-blocking
+                     (format "%s [%s; C-u C-u C-u C-c C-t overrides]"
+                             (string-join reasons "; ")
+                             (if snapshot
+                                 (format "snapshot %s old"
+                                         (format-seconds "%h h %m min %s s"
+                                                         (max 0 (- (float-time)
+                                                                   (plist-get snapshot :time)))))
+                               "no tracker snapshot")))
+               nil))))))))
+
 ;;;; Sync state
 
 ;; ZWANENZANG_SYNC holds the fields as last synced: the tracker status,
@@ -719,6 +831,7 @@ nesting changed) or `conflict'."
                                 (:copier nil))
   "What one scope's pull works with and collects."
   root dir tracker-dir map hidden actors
+  known statuses tracker                ; last successful read, for dependency checks
   (ids (make-hash-table :test #'equal)) ; id -> marker, unique headings only
   moves
   lines                                 ; what needs a look, newest first
@@ -1260,7 +1373,8 @@ and the buffer is not saved."
      (let* ((case-fold-search nil)
             (dir (zwanenzang--scope-directory root))
             (tickets (car (zwanenzang--scan root)))
-            (blocked (zwanenzang--blocked-headings tickets (zwanenzang--known-tickets dir)))
+            (known (zwanenzang--known-tickets dir))
+            (blocked (zwanenzang--blocked-headings tickets known))
             (pull (zwanenzang--pull-create :root root :dir dir)))
        ;; Duplicate and foreign ids block only their headings, and are
        ;; never sent to read.
@@ -1291,7 +1405,15 @@ and the buffer is not saved."
              (zwanenzang--pull-line
               pull "history changed under the scope cursor: compared in full"))
            (zwanenzang--one-undo-step
-             (zwanenzang--apply-read pull result blocked tickets))))
+             (zwanenzang--apply-read pull result blocked tickets))
+           ;; Read and list are separate local loads.  Prefer read's newer
+           ;; state where available; absent unchanged tickets stay in KNOWN.
+           (dolist (entry (alist-get 'tickets result))
+             (let ((ticket (alist-get 'ticket entry)))
+               (puthash (alist-get 'id ticket) ticket known)))
+           (setf (zwanenzang--pull-known pull) known
+                 (zwanenzang--pull-statuses pull) (alist-get 'statuses tracker)
+                 (zwanenzang--pull-tracker pull) (alist-get 'id tracker))))
        pull))))
 
 ;;;; Reports of a whole command
@@ -1736,14 +1858,36 @@ to the `*zwanenzang*' buffer."
     (zwanenzang--push-scope root outcome)
     (zwanenzang--report-outcome "pushed" root outcome)))
 
+(defun zwanenzang--remember-dependencies (pull)
+  "Retain PULL's successful local read for interactive dependency checks."
+  (let ((root (zwanenzang--pull-root pull)))
+    (with-current-buffer (marker-buffer root)
+      (setq zwanenzang--dependency-snapshots
+            (cons (list :root (copy-marker root)
+                        :location (org-entry-get root "ZWANENZANG")
+                        :tracker (zwanenzang--pull-tracker pull)
+                        :tickets (zwanenzang--pull-known pull)
+                        :statuses (zwanenzang--pull-statuses pull)
+                        :time (float-time))
+                  (seq-remove
+                   (lambda (snapshot)
+                     (let ((marker (plist-get snapshot :root)))
+                       (or (not (marker-buffer marker)) (= marker root))))
+                   zwanenzang--dependency-snapshots))))))
+
 (defun zwanenzang--sync-scope (root)
   "Run the CLI's sync, a pull and a push on the scope at ROOT; report the result."
   (let ((outcome (zwanenzang--outcome-create))
         (dir (with-current-buffer (marker-buffer root) (zwanenzang--scope-directory root))))
-    (zwanenzang--note-sync outcome (alist-get 'sync (funcall zwanenzang--call dir '("sync"))))
-    (zwanenzang--pull-into outcome root)
-    (unless (zwanenzang--outcome-refused outcome)
-      (zwanenzang--push-scope root outcome))
+    (let ((sync (alist-get 'sync (funcall zwanenzang--call dir '("sync")))))
+      (zwanenzang--note-sync outcome sync)
+      (zwanenzang--pull-into outcome root)
+      (unless (zwanenzang--outcome-refused outcome)
+        (zwanenzang--push-scope root outcome)
+        (when (and (not (zwanenzang--outcome-refused outcome))
+                   (not (zwanenzang--null (alist-get 'error sync)))
+                   (null (zwanenzang--outcome-problems outcome)))
+          (zwanenzang--remember-dependencies (zwanenzang--outcome-pull outcome)))))
     (zwanenzang--report-outcome "synced" root outcome)))
 
 ;;;###autoload
@@ -1875,6 +2019,8 @@ The tracker is the one of the scope containing point."
       (setq buffer-read-only t))
     (pop-to-buffer buffer)
     buffer))
+
+(add-hook 'org-blocker-hook #'zwanenzang--block-dependencies)
 
 (provide 'zwanenzang)
 ;;; zwanenzang.el ends here
