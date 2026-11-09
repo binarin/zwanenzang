@@ -682,5 +682,57 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
                                       (zwanenzang-test-report))))
           (kill-buffer (find-buffer-visiting stuck)))))))
 
+(ert-deftest zwanenzang-dependency-sync-refreshes-snapshot-and-pull-bypasses-blockers ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let ((prerequisite (zwanenzang-test-create trk "Prerequisite"))
+          (dependent (zwanenzang-test-create trk "Dependent")))
+      (zwanenzang-test-at-root #'zwanenzang-sync)
+      (should (= 1 (length zwanenzang--dependency-snapshots)))
+      (zwanenzang-test-goto dependent)
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" prerequisite)
+      ;; An absent prerequisite is still found in the automatic snapshot.
+      (zwanenzang-test-goto prerequisite)
+      (delete-region (point) (zwanenzang--subtree-end (point)))
+      (zwanenzang-test-goto dependent)
+      (org-todo "DONE")
+      (should (equal (org-get-todo-state) "TODO"))
+      ;; Pull accepts a CLI completion despite its unfinished prerequisite.
+      (zwanenzang-test-cli trk "status" dependent "done")
+      (zwanenzang-test-pull)
+      (zwanenzang-test-goto dependent)
+      (should (equal (org-get-todo-state) "DONE"))
+      (should (equal (org-entry-get nil "ZWANENZANG_DEPENDS_ON") prerequisite))
+      (org-todo "TODO")
+      (zwanenzang-test-cli trk "status" prerequisite "done")
+      (zwanenzang-test-at-root #'zwanenzang-sync)
+      (zwanenzang-test-goto prerequisite)
+      (delete-region (point) (zwanenzang--subtree-end (point)))
+      (zwanenzang-test-goto dependent)
+      (org-todo "DONE")
+      (should (equal (org-get-todo-state) "DONE")))))
+
+(ert-deftest zwanenzang-dependency-failed-sync-retains-previous-snapshot ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-create trk "Prerequisite")
+    (zwanenzang-test-at-root #'zwanenzang-sync)
+    (let ((before zwanenzang--dependency-snapshots)
+          (real zwanenzang--call))
+      ;; Publication failure still permits local work, but not a claim of
+      ;; fresh remote knowledge.  All real calls retain the fixture guard.
+      (let ((zwanenzang--call
+             (lambda (dir args &optional input)
+               (if (equal args '("sync"))
+                   '((sync . ((error . ((code . "fetch-failed") (message . "offline"))))))
+                 (funcall real dir args input)))))
+        (zwanenzang-test-at-root #'zwanenzang-sync))
+      (should (eq before zwanenzang--dependency-snapshots))
+      (let ((zwanenzang--call
+             (lambda (dir args &optional input)
+               (if (equal args '("read"))
+                   (user-error "simulated read failure")
+                 (funcall real dir args input)))))
+        (should-error (zwanenzang-test-at-root #'zwanenzang-sync) :type 'user-error))
+      (should (eq before zwanenzang--dependency-snapshots)))))
+
 (provide 'zwanenzang-push-integration-test)
 ;;; zwanenzang-push-integration-test.el ends here
