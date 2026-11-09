@@ -34,6 +34,38 @@ The one thing that needs the network is number assignment. Publishing is the
 moment a `number` event is written, after a successful fetch. Offline tickets
 have no number and display their short ULID until then.
 
+## Stable clone placement
+
+Clients reuse one durable clone per chosen origin URL, per user and execution
+host, rather than cloning per workspace or session. The standard path is
+`${XDG_DATA_HOME:-$HOME/.local/share}/zwanenzang/trackers/<key>`, with `<key>` the
+full lowercase SHA-256 of the exact UTF-8 URL bytes, without a trailing newline.
+It is data, not cache: unpublished events may live only there. Workspace cleanup
+must not remove it. This is a client placement convention, not a new CLI resolver;
+`-C` and Org locations remain explicit paths, including existing custom locations.
+
+The project chooses a canonical URL spelling. No automatic URL normalization,
+transport equivalence, redirect following or git URL-rewrite resolution determines
+identity. Different spellings are different keys unless the caller explicitly
+chooses the existing canonical URL. Do not store credentials in URLs. On an origin
+change, stop clients, verify tracker identity, update the remote and move the whole
+clone to the new key, refusing an occupied destination. Adopt an existing clone by
+moving it with its `.git`, not by replacing it: retain its actor, unpublished work
+and clone-local configuration, and review relative checkout paths. Update explicit
+path users after a move.
+
+Provisioning clients serialize the existence check and clone on a `flock` of the
+parent directory itself. This leaves no registry or lock file outside a clone.
+They check the work-tree root, tracker configuration and exact clone-local origin
+before reuse. Failed checks stop for inspection; an existing directory is never
+automatically removed, reset or replaced. Moves require quiescent clients and the
+same provisioning lock. The executable setup recipe is in [agents](../agents.md).
+Once provisioned, mutations and sync use only the existing clone lock; no
+per-workspace worktrees, branch switching or manual git writes alongside clients.
+Read-only calls remain unlocked, not isolated from writes or rebase, and a
+read/write pair is not a transaction. Clients retry overlapping reads and stale
+document bases; this convention does not add stronger read semantics.
+
 ## Actor identity
 
 An actor id is a ULID created on first use in a clone and stored in that
@@ -42,7 +74,10 @@ human on two machines is two actors, which is what makes per-actor logs safe
 without coordination. The display name is declared by an `actor` event and
 may be the same on both machines.
 
-Nothing about identity lives in the home directory.
+Identity lives only inside the clone, even when that clone is placed beneath
+the home directory. There is no separate user identity file. Shared clients on
+one execution host use the clone's one actor and display name; a session-specific
+`--actor-name` does not create a session identity.
 
 ## Remotes
 
@@ -61,14 +96,18 @@ spans trackers and no state that outlives a clone:
 - derived state is computed per invocation from one clone
 - actor identity is in the clone
 - configuration is in the clone
-- the only cross-tracker knowledge anywhere is the human's org files, which
-  name tracker locations as subtree properties (see [org client](03-org-client.md))
+- the parent directory of stable clones holds no registry, identity, derived
+  state or URL-to-path mapping file; its child names are computed from URLs
+- the human's org files name tracker locations as subtree properties (see
+  [org client](03-org-client.md)); the placement convention does not discover
+  trackers or aggregate them
 
 Consequences that are deliberate:
 
 - A client laptop with its own clone and no remote is a complete tracker.
-- The desktop holds clones only for trackers the human chose to place there.
-  Other trackers are reached by running the CLI on their machine over tramp.
+- Each execution host holds clones only for trackers explicitly used there.
+  Other trackers are reached by running the CLI on their machine over tramp;
+  the URL-keyed path is then on that host, not implicitly on the desktop.
 - Moving a ticket between trackers is a human-initiated refile in org that
   creates a fresh ticket in the target. History does not travel. There is no
   import, federation or cross-reference feature between trackers.
