@@ -654,7 +654,23 @@ in this buffer, or a status outside the vocabulary, is left out."
         (push (format "keyword map: status %s has no keyword" status) problems)))
     (cons (nreverse map) (nreverse problems))))
 
-;;;; Dependency UX experiment
+;;;; Dependencies
+
+(defun zwanenzang--dependency-refs ()
+  "The entry's prerequisite numbers, normalized as a set."
+  (sort (delete-dups (split-string (upcase (or (org-entry-get nil "ZWANENZANG_DEPENDS_ON") ""))))
+        #'string<))
+
+(defun zwanenzang--dependency-displays (ticket known)
+  "Resolve TICKET's dependency identities through KNOWN to published numbers.
+An unpublished prerequisite cannot be represented in the manual property."
+  (sort (mapcar (lambda (id)
+                  (let ((target (and known (gethash id known))))
+                    (unless (integerp (alist-get 'number target))
+                      (user-error "prerequisite %s has no published ticket number" id))
+                    (alist-get 'display target)))
+                (alist-get 'depends_on ticket))
+        #'string<))
 
 (defvar-local zwanenzang--dependency-snapshots nil
   "In-memory tracker snapshots for dependency checks in this buffer.
@@ -772,7 +788,7 @@ Pull rewrites headings directly and therefore never runs this hook."
 ;; heading had then (they differ when the parent has no heading in scope).
 ;; "-" is none; a missing key is unknown.
 
-(defconst zwanenzang--sync-keys '(status title tags parent nest))
+(defconst zwanenzang--sync-keys '(status title tags depends parent nest))
 
 (defun zwanenzang--parse-sync (value)
   "Parse a ZWANENZANG_SYNC VALUE into an alist; \"-\" becomes nil."
@@ -1089,6 +1105,21 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                         (if remote (string-join remote " ") "(none)")
                         'tags (zwanenzang--tags-hash remote))
             (setq tags remote)))
+        (condition-case err
+            (let* ((local (zwanenzang--dependency-refs))
+                   (remote (zwanenzang--dependency-displays ticket (zwanenzang--pull-known pull)))
+                   ;; Upgrade old Org-only properties without discarding them.
+                   (base (if fresh (zwanenzang--tags-hash local)
+                           (or (alist-get 'depends sync) (zwanenzang--tags-hash nil)))))
+              (when (settle "dependencies"
+                            (zwanenzang--merge (zwanenzang--tags-hash local) base
+                                              (zwanenzang--tags-hash remote))
+                            "tracker prerequisites skipped; Org dependencies kept"
+                            (string-join remote " ") 'depends (zwanenzang--tags-hash remote))
+                (zwanenzang--put "ZWANENZANG_DEPENDS_ON"
+                                 (and remote (string-join remote " ")))))
+          (user-error
+           (push (list "dependencies" (error-message-string err) nil) conflicts)))
         (pcase-let ((`(,conflict ,parent ,nested) (zwanenzang--pull-parent pull ticket nest sync)))
           (if conflict
               (push conflict conflicts)
@@ -1168,6 +1199,7 @@ Sync state and conflict notes are left out."
         (segments (zwanenzang--body-segments (zwanenzang--body))))
     (list (plist-get heading :keyword)
           (plist-get heading :title)
+          (zwanenzang--dependency-refs)
           (zwanenzang--tracker-tags (plist-get heading :tags))
           (zwanenzang--segments-text segments)
           (seq-filter (lambda (s) (member (nth 2 s) zwanenzang--tail-drawers)) segments)
@@ -1404,15 +1436,16 @@ and the buffer is not saved."
            (when (eq (alist-get 'reset result) t)
              (zwanenzang--pull-line
               pull "history changed under the scope cursor: compared in full"))
-           (zwanenzang--one-undo-step
-             (zwanenzang--apply-read pull result blocked tickets))
            ;; Read and list are separate local loads.  Prefer read's newer
            ;; state where available; absent unchanged tickets stay in KNOWN.
+           ;; Relationship display needs this map before editing headings.
            (dolist (entry (alist-get 'tickets result))
              (let ((ticket (alist-get 'ticket entry)))
                (puthash (alist-get 'id ticket) ticket known)))
-           (setf (zwanenzang--pull-known pull) known
-                 (zwanenzang--pull-statuses pull) (alist-get 'statuses tracker)
+           (setf (zwanenzang--pull-known pull) known)
+           (zwanenzang--one-undo-step
+             (zwanenzang--apply-read pull result blocked tickets))
+           (setf (zwanenzang--pull-statuses pull) (alist-get 'statuses tracker)
                  (zwanenzang--pull-tracker pull) (alist-get 'id tracker))))
        pull))))
 
@@ -1602,11 +1635,12 @@ names that are never pushed."
             (goto-char (cdr doc))
             (zwanenzang--plan-doc plan ref name ticket texts))))))))
 
-(defun zwanenzang--plan-fields (plan heading ref entry map hidden targets)
+(defun zwanenzang--plan-fields (plan heading ref entry map hidden targets &optional known)
   "Add to PLAN what differs from sync state on HEADING, a scanned heading at point.
 REF names its ticket in the request.  ENTRY is its read result, nil for a
 new ticket.  MAP is the keyword map, HIDDEN the hidden documents and
-TARGETS the ids that cannot be parents."
+TARGETS the ids that cannot be parents.  KNOWN maps all tracker ids to
+summaries for resolving dependency numbers, including absent prerequisites."
   (let* ((ticket (alist-get 'ticket entry))
          (shown (zwanenzang--heading))
          (keyword (plist-get shown :keyword))
@@ -1635,6 +1669,29 @@ TARGETS the ids that cannot be parents."
           (zwanenzang--plan-add plan "tag" ref `((tag . ,tag))))
         (dolist (tag (seq-difference remote tags))
           (zwanenzang--plan-add plan "untag" ref `((tag . ,tag))))))
+    (let* ((refs (zwanenzang--dependency-refs))
+           (base (zwanenzang--sync-get sync 'depends)))
+      (when (zwanenzang--edited-p (zwanenzang--tags-hash refs) base (null refs))
+        (let (local)
+          ;; Never silently drop malformed/unknown references from a push.
+          ;; Refuse before apply, so no other field is partially written.
+          (dolist (number refs)
+            (let (matches)
+              (when known
+                (maphash (lambda (id summary)
+                           (when (and (integerp (alist-get 'number summary))
+                                      (equal number (alist-get 'display summary)))
+                             (push id matches)))
+                         known))
+              (unless (= (length matches) 1)
+                (user-error "zwanenzang: %s: unknown or ambiguous prerequisite %s"
+                            (zwanenzang--heading-label) number))
+              (push (car matches) local)))
+          (let ((remote (alist-get 'depends_on ticket)))
+            (dolist (id (seq-difference remote local #'equal))
+              (zwanenzang--plan-add plan "undepend" ref `((to . ,id))))
+            (dolist (id (seq-difference local remote #'equal))
+              (zwanenzang--plan-add plan "depend" ref `((to . ,id))))))))
     ;; Parent goes by nesting, and only a change in nesting sends it: a
     ;; ticket parked in the inbox keeps its tracker parent.
     (let ((base (zwanenzang--sync-get sync 'nest))
@@ -1676,17 +1733,19 @@ Unless something blocks it, which is reported.  MAP and TARGETS are as in
   "What the report calls the field CHANGE touches."
   (pcase (alist-get 'op change)
     ((or "tag" "untag") "tags")
+    ((or "depend" "undepend") "dependencies")
     ("doc" (let ((name (alist-get 'name (alist-get 'data change))))
              (if (equal name "description") name (format "document %s" name))))
     (op op)))
 
-(defun zwanenzang--plan-push (headings blocked entries map hidden)
+(defun zwanenzang--plan-push (headings blocked entries map hidden &optional known)
   "The plan of one push, comparing Org with a read; the buffer is not changed.
 HEADINGS is from `zwanenzang--scan-all', BLOCKED from
 `zwanenzang--blocked-headings', ENTRIES the tickets of the read, MAP the
 keyword map and HIDDEN the hidden documents.  Creates come first, so later
 changes can refer to them.  The rest go in buffer order, ancestors first,
-so a reshuffled nesting has no moment with a parent cycle."
+so a reshuffled nesting has no moment with a parent cycle.  KNOWN maps all
+tracker ids to summaries for resolving dependency numbers."
   (let ((plan (zwanenzang--plan-create))
         (read (make-hash-table :test #'equal))
         (targets (make-hash-table :test #'equal)))
@@ -1711,14 +1770,21 @@ so a reshuffled nesting has no moment with a parent cycle."
                (shown (zwanenzang--heading)))
           (cond
            (new
-            (zwanenzang--plan-fields plan h `((created . ,(cdr new))) nil map hidden targets))
+            (zwanenzang--plan-fields plan h `((created . ,(cdr new))) nil map hidden targets known))
            ((or (not id) (gethash id targets)))
            ((not (and (rassoc (plist-get shown :keyword) map)
                       (assoc (alist-get 'status (alist-get 'ticket entry)) map))))
            ((string-empty-p (plist-get shown :title))
             (zwanenzang--plan-line plan "%s: not pushed: the heading has no title" id))
            (t
-            (zwanenzang--plan-fields plan h id entry map hidden targets))))))
+            (zwanenzang--plan-fields plan h id entry map hidden targets known))))))
+    ;; Remove old edges before adding replacements, avoiding transient cycles.
+    ;; Creates remain first and in order: their change-index references stay valid.
+    (setf (zwanenzang--plan-changes plan)
+          (reverse (cl-stable-sort (reverse (zwanenzang--plan-changes plan)) #'<
+                                  :key (lambda (change)
+                                         (pcase (alist-get 'op change)
+                                           ("create" 0) ("undepend" 1) (_ 2))))))
     plan))
 
 (defun zwanenzang--written-fields (changes results)
@@ -1813,7 +1879,8 @@ recover.  OUTCOME collects the report."
 Refusing the scope, or failing, adds nothing to OUTCOME's lines."
   (let* ((headings (plist-get (zwanenzang--scan-all root) :headings))
          (tickets (seq-filter (lambda (h) (plist-get h :id)) headings))
-         (blocked (zwanenzang--blocked-headings tickets (zwanenzang--known-tickets dir)))
+         (known (zwanenzang--known-tickets dir))
+         (blocked (zwanenzang--blocked-headings tickets known))
          (result (zwanenzang--read-scope root dir tickets blocked))
          (refused (zwanenzang--tracker-mismatch "push" root dir result)))
     (if refused
@@ -1823,7 +1890,7 @@ Refusing the scope, or failing, adds nothing to OUTCOME's lines."
                    (car (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
                                                  (alist-get 'statuses (alist-get 'tracker result))
                                                  org-todo-keywords-1))
-                   (remove "description" (zwanenzang--hide-docs root)))))
+                   (remove "description" (zwanenzang--hide-docs root)) known)))
         (zwanenzang--send-plan plan dir outcome)
         (setf (zwanenzang--outcome-problems outcome)
               (append (zwanenzang--plan-lines plan) (zwanenzang--outcome-problems outcome)))))))

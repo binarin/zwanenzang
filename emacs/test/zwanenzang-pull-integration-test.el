@@ -372,6 +372,7 @@
                      (zwanenzang--format-sync
                       `((status . "draft") (title . ,(zwanenzang--hash "New"))
                         (tags . ,(zwanenzang--tags-hash '("a" "b" "c")))
+                        (depends . ,(zwanenzang--tags-hash nil))
                         (parent . nil) (nest . nil))))))))
 
 (ert-deftest zwanenzang-pull-adds-a-second-document-after-the-first ()
