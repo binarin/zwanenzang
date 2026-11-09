@@ -41,8 +41,13 @@ host, rather than cloning per workspace or session. The standard path is
 `${XDG_DATA_HOME:-$HOME/.local/share}/zwanenzang/trackers/<key>`, with `<key>` the
 full lowercase SHA-256 of the exact UTF-8 URL bytes, without a trailing newline.
 It is data, not cache: unpublished events may live only there. Workspace cleanup
-must not remove it. This is a client placement convention, not a new CLI resolver;
-`-C` and Org locations remain explicit paths, including existing custom locations.
+must not remove it. The CLI implements this resolver with `--tracker-url URL`,
+or a code repository's local `zwanenzang.trackerUrl` git setting. No project
+file, global git setting or global registry is consulted. Explicit `-C` wins
+and never falls back to discovery; otherwise an enclosing tracker wins over
+project configuration. `--tracker-url` overrides discovery and conflicts with
+`-C`. `init` stays local and refuses `--tracker-url`. Org locations remain
+explicit paths, including existing custom locations.
 
 The project chooses a canonical URL spelling. No automatic URL normalization,
 transport equivalence, redirect following or git URL-rewrite resolution determines
@@ -54,12 +59,17 @@ moving it with its `.git`, not by replacing it: retain its actor, unpublished wo
 and clone-local configuration, and review relative checkout paths. Update explicit
 path users after a move.
 
-Provisioning clients serialize the existence check and clone on a `flock` of the
+The CLI serializes the existence check and clone on an exclusive lock of the
 parent directory itself. This leaves no registry or lock file outside a clone.
-They check the work-tree root, tracker configuration and exact clone-local origin
+It checks the work-tree root, tracker configuration and exact clone-local origin
 before reuse. Failed checks stop for inspection; an existing directory is never
 automatically removed, reset or replaced. Moves require quiescent clients and the
-same provisioning lock. The executable setup recipe is in [agents](../agents.md).
+same provisioning lock. Existing symlinks to standalone clones are supported;
+linked worktrees are not. Provisioning never fetches an existing clone, even
+for reads; run `sync` for current remote state. The first clone needs a reachable
+remote. Local origins must be absolute paths (or `file://` URLs), so identity
+cannot depend on which code repository invokes the command. Relative data-home
+paths are refused; an empty XDG value falls back to HOME, and missing both fails.
 Once provisioned, mutations and sync use only the existing clone lock; no
 per-workspace worktrees, branch switching or manual git writes alongside clients.
 Read-only calls remain unlocked, not isolated from writes or rebase, and a
@@ -99,7 +109,7 @@ spans trackers and no state that outlives a clone:
 - the parent directory of stable clones holds no registry, identity, derived
   state or URL-to-path mapping file; its child names are computed from URLs
 - the human's org files name tracker locations as subtree properties (see
-  [org client](03-org-client.md)); the placement convention does not discover
+  [org client](03-org-client.md)); URL selection does not search for other
   trackers or aggregate them
 
 Consequences that are deliberate:
