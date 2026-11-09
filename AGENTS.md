@@ -23,6 +23,18 @@ This project's tracker is `zwanenzang-tracker` on the forge
 (`https://forgejo.lynx-lizard.ts.net/binarin/zwanenzang-tracker`). How to use
 it is in [docs/agents.md](docs/agents.md).
 
+For work on this project:
+
+- Use `doing` while implementing or addressing review feedback.
+- Move the ticket to `review` when its merge request is ready for human review,
+  and record the merge request link on the ticket.
+- Mark it `done` only after confirming the merge request was merged, or when
+  the human explicitly instructs you to do so. Implementation complete and
+  passing tests alone do not mean the ticket is done.
+
+These are conventions for agents working on this project, not rules enforced
+by zwanenzang or imposed on other projects using it.
+
 ## Nix flake
 
 - Use flake-parts and the same pinned inputs as `swan-lake-common`: the
