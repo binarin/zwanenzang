@@ -672,8 +672,9 @@ Each plist holds a scope :root marker, :location, :tracker identity,
             (equal (plist-get snapshot :tracker) (org-entry-get root "ZWANENZANG_TRACKER")))))
    zwanenzang--dependency-snapshots))
 
-(defun zwanenzang--dependency-reasons (root ids)
-  "Explain why prerequisite IDS in ROOT are not known to be done.
+(defun zwanenzang--dependency-reasons (root refs)
+  "Explain why prerequisite ticket REFS in ROOT are not known to be done.
+REFS are human-facing numbers such as ZZ-0042, not internal ULIDs.
 Local Org keywords take precedence over snapshot statuses.  Missing,
 duplicate, tombstoned and unmapped prerequisites are not satisfied."
   (let* ((snapshot (zwanenzang--dependency-snapshot root))
@@ -682,12 +683,30 @@ duplicate, tombstoned and unmapped prerequisites are not satisfied."
                     (org-entry-get root "ZWANENZANG_KEYWORDS")
                     (plist-get snapshot :statuses) org-todo-keywords-1)))
          (local (make-hash-table :test #'equal))
+         (local-numbers (make-hash-table :test #'equal))
+         (summaries (make-hash-table :test #'equal))
+         (headings (car (zwanenzang--scan root)))
          reasons)
-    (dolist (heading (car (zwanenzang--scan root)))
+    (when known
+      (maphash (lambda (_id summary)
+                 (puthash (alist-get 'display summary) summary summaries))
+               known))
+    (dolist (heading headings)
       (push (plist-get heading :marker) (gethash (plist-get heading :id) local)))
-    (dolist (id (delete-dups ids))
-      (let* ((headings (gethash id local))
-             (summary (and known (gethash id known)))
+    (dolist (heading headings)
+      (let ((number (org-entry-get (plist-get heading :marker) "ZWANENZANG_NUMBER")))
+        (when number
+          (puthash number (seq-union (gethash number local-numbers)
+                                    (gethash (plist-get heading :id) local) #'eq)
+                   local-numbers))))
+    (dolist (ref (delete-dups refs))
+      (let* ((number-p (string-match-p "\\`[^ \t\n]+-[0-9]+\\'" ref))
+             (summary (and number-p (gethash ref summaries)))
+             ;; Resolve through the snapshot's canonical number when possible,
+             ;; then match Org by stable identity, even if its number is stale.
+             (headings (and number-p
+                            (if summary (gethash (alist-get 'id summary) local)
+                              (gethash ref local-numbers))))
              (keyword (and (= (length headings) 1)
                            (save-excursion
                              (goto-char (car headings))
@@ -696,10 +715,11 @@ duplicate, tombstoned and unmapped prerequisites are not satisfied."
              (label (if headings
                         (save-excursion
                           (goto-char (car headings))
-                          (zwanenzang--heading-label))
-                      (if summary (zwanenzang--label summary) id)))
+                          (format "%s %s" ref (org-get-heading t t t t)))
+                      (if summary (zwanenzang--label summary) ref)))
              (reason
               (cond
+               ((not number-p) "expected a ticket ID such as ZZ-0042")
                ((> (length headings) 1) "duplicate headings")
                ((and snapshot (not summary)) "unknown ticket in this tracker")
                ((eq (alist-get 'tombstoned summary) t) "tombstoned")

@@ -568,18 +568,23 @@ Enter dependencies manually on the dependent heading:
 ** TODO A prerequisite
 :PROPERTIES:
 :ZWANENZANG_ID: 01M00000000000000000000001
+:ZWANENZANG_NUMBER: ZZ-0042
 :END:
 ** TODO The dependent ticket
 :PROPERTIES:
 :ZWANENZANG_ID: 01M00000000000000000000002
-:ZWANENZANG_DEPENDS_ON: 01M00000000000000000000001
+:ZWANENZANG_DEPENDS_ON: ZZ-0042
 :END:
 ```
 
 Both headings must be inside a scope carrying `ZWANENZANG`. The property
-is a whitespace-separated list of full ticket ULIDs in that same tracker,
-not ticket numbers, Org links or Org `ID` values. Every prerequisite must
-be done. The dependency property itself is not inherited. Edit it directly;
+is a whitespace-separated list of human-facing ticket IDs in that same
+tracker, such as `ZZ-0042`, not internal ULIDs, Org links or Org `ID`
+values. Resolve them through the snapshot's display references or local
+`ZWANENZANG_NUMBER` properties; use stable identity internally to find
+local edits. Unpublished tickets must acquire a number before they can be
+referenced. Every prerequisite must be done. The dependency property itself
+is not inherited. Edit it directly;
 there are no editing/inspection commands, overlays or agenda additions.
 Pull/push preserve it as local Org metadata and do not send it to the CLI.
 

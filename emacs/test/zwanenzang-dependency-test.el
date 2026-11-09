@@ -17,10 +17,10 @@
              "* Project\n:PROPERTIES:\n:ZWANENZANG: /unused\n"
              ":ZWANENZANG_TRACKER: tracker\n"
              ":ZWANENZANG_KEYWORDS: TODO=todo NEXT=doing DONE=done CANCEL=cancelled\n:END:\n"
-             "** TODO First\n:PROPERTIES:\n:ZWANENZANG_ID: A\n:END:\n"
-             "** DONE Second\n:PROPERTIES:\n:ZWANENZANG_ID: B\n:END:\n"
-             "** TODO Dependent\n:PROPERTIES:\n:ZWANENZANG_ID: C\n"
-             ":ZWANENZANG_DEPENDS_ON: A B\n:END:\n")
+             "** TODO First\n:PROPERTIES:\n:ZWANENZANG_ID: A\n:ZWANENZANG_NUMBER: ZZ-0001\n:END:\n"
+             "** DONE Second\n:PROPERTIES:\n:ZWANENZANG_ID: B\n:ZWANENZANG_NUMBER: ZZ-0002\n:END:\n"
+             "** TODO Dependent\n:PROPERTIES:\n:ZWANENZANG_ID: C\n:ZWANENZANG_NUMBER: ZZ-0003\n"
+             ":ZWANENZANG_DEPENDS_ON: ZZ-0001 ZZ-0002\n:END:\n")
      (org-mode)
      (let ((org-log-done nil)
            (org-log-repeat nil)
@@ -50,7 +50,7 @@
       (org-todo "DONE")
       (should (equal (org-get-todo-state) "TODO"))
       (should (equal before (buffer-string)))
-      (should (string-match-p "A First: unfinished" org-block-entry-blocking))
+      (should (string-match-p "ZZ-0001 First: unfinished" org-block-entry-blocking))
       (should (string-match-p "no tracker snapshot" org-block-entry-blocking))
       (should-not (string-match-p "Second" org-block-entry-blocking)))
     (org-todo "NEXT")
@@ -89,7 +89,7 @@
     (org-entry-put nil "NOBLOCKING" "t")
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "DONE"))
-    (should (equal (org-entry-get nil "ZWANENZANG_DEPENDS_ON") "A B"))))
+    (should (equal (org-entry-get nil "ZWANENZANG_DEPENDS_ON") "ZZ-0001 ZZ-0002"))))
 
 (ert-deftest zwanenzang-dependency-hook-is-scoped-and-property-is-not-inherited ()
   (zwanenzang-dependency-test--with-org
@@ -112,7 +112,7 @@
 
 (ert-deftest zwanenzang-dependency-snapshot-supports-absent-and-archived-tickets ()
   (zwanenzang-dependency-test--with-org
-    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "remote")
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0099")
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "TODO"))
     (zwanenzang-dependency-test--snapshot
@@ -131,43 +131,43 @@
 
 (ert-deftest zwanenzang-dependency-unknown-unmapped-and-tombstoned-are-not-done ()
   (zwanenzang-dependency-test--with-org
-    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "missing unknown deleted")
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0097 ZZ-0098 ZZ-0099")
     (zwanenzang-dependency-test--snapshot
      '((id . "unknown") (display . "ZZ-0098") (title . "New status") (status . "unmapped"))
      '((id . "deleted") (display . "ZZ-0099") (title . "Deleted")
        (status . "done") (tombstoned . t)))
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "TODO"))
-    (should (string-match-p "missing: unknown ticket" org-block-entry-blocking))
+    (should (string-match-p "ZZ-0097: unknown ticket" org-block-entry-blocking))
     (should (string-match-p "New status: unmapped status unmapped" org-block-entry-blocking))
     (should (string-match-p "Deleted: tombstoned" org-block-entry-blocking))))
 
 (ert-deftest zwanenzang-dependency-local-state-wins-except-known-tombstone ()
   (zwanenzang-dependency-test--with-org
-    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "A")
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0001")
     (zwanenzang-dependency-test--snapshot
-     '((id . "A") (status . "done")))
+     '((id . "A") (display . "ZZ-0001") (status . "done")))
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "TODO"))
     (zwanenzang-dependency-test--goto "A")
     (org-todo "DONE")
     (zwanenzang-dependency-test--goto "C")
     (zwanenzang-dependency-test--snapshot
-     '((id . "A") (status . "todo")))
+     '((id . "A") (display . "ZZ-0001") (status . "todo")))
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "DONE"))
     (org-todo "TODO")
     (zwanenzang-dependency-test--snapshot
-     '((id . "A") (status . "done") (tombstoned . t)))
+     '((id . "A") (display . "ZZ-0001") (status . "done") (tombstoned . t)))
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "TODO"))))
 
 (ert-deftest zwanenzang-dependency-duplicate-local-ids-and-cycles-block-naturally ()
   (zwanenzang-dependency-test--with-org
-    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "C")
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0003")
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "TODO"))
-    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "A")
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0001")
     (goto-char (point-max))
     (insert "** DONE Duplicate\n:PROPERTIES:\n:ZWANENZANG_ID: A\n:END:\n")
     (zwanenzang-dependency-test--goto "C")
@@ -177,8 +177,9 @@
 
 (ert-deftest zwanenzang-dependency-snapshot-is-invalidated-by-scope-changes ()
   (zwanenzang-dependency-test--with-org
-    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "remote")
-    (zwanenzang-dependency-test--snapshot '((id . "remote") (status . "done")))
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0099")
+    (zwanenzang-dependency-test--snapshot
+     '((id . "remote") (display . "ZZ-0099") (status . "done")))
     (let ((root (zwanenzang--scope-root)))
       (org-entry-put root "ZWANENZANG" "/changed")
       (should-not (zwanenzang--dependency-snapshot root))
@@ -187,6 +188,31 @@
       (org-entry-put root "ZWANENZANG" "/unused")
       (org-entry-put root "ZWANENZANG_TRACKER" "different")
       (should-not (zwanenzang--dependency-snapshot root)))))
+
+(ert-deftest zwanenzang-dependency-requires-human-facing-ticket-ids ()
+  (zwanenzang-dependency-test--with-org
+    (zwanenzang-dependency-test--goto "A")
+    (org-todo "DONE")
+    (zwanenzang-dependency-test--goto "C")
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "A")
+    (org-todo "DONE")
+    (should (equal (org-get-todo-state) "TODO"))
+    (should (string-match-p "expected a ticket ID" org-block-entry-blocking))
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0001")
+    (org-todo "DONE")
+    (should (equal (org-get-todo-state) "DONE"))))
+
+(ert-deftest zwanenzang-dependency-snapshot-resolves-number-to-local-stable-id ()
+  (zwanenzang-dependency-test--with-org
+    (zwanenzang-dependency-test--goto "A")
+    (org-entry-delete nil "ZWANENZANG_NUMBER")
+    (org-todo "DONE")
+    (zwanenzang-dependency-test--goto "C")
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0001")
+    (zwanenzang-dependency-test--snapshot
+     '((id . "A") (display . "ZZ-0001") (status . "todo")))
+    (org-todo "DONE")
+    (should (equal (org-get-todo-state) "DONE"))))
 
 (provide 'zwanenzang-dependency-test)
 ;;; zwanenzang-dependency-test.el ends here
