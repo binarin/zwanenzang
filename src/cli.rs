@@ -17,7 +17,7 @@ use crate::event::{
 use crate::lint::lint;
 use crate::replay::Replay;
 use crate::state::{RejectCode, Rejection, Ticket};
-use crate::store::{Tracker, blob_name, find_root};
+use crate::store::{Tracker, blob_name};
 use crate::ulid::Ulid;
 use crate::view::View;
 use crate::write::{Plan, Target, Written};
@@ -33,9 +33,12 @@ pub const INLINE_COMMENT_LIMIT: usize = 2048;
 )]
 pub struct Cli {
     /// Tracker directory; the tracker is searched for upward from it.
-    /// Defaults to the current directory.
+    /// Otherwise discover the enclosing tracker or local git trackerUrl setting.
     #[arg(short = 'C', long = "tracker", global = true, value_name = "DIR")]
     pub tracker: Option<PathBuf>,
+    /// Use a durable clone of this exact origin URL instead of local discovery.
+    #[arg(long, global = true, value_name = "URL", conflicts_with = "tracker")]
+    pub tracker_url: Option<String>,
     /// Display name declared on this actor's first write.
     #[arg(long, global = true, value_name = "NAME")]
     pub actor_name: Option<String>,
@@ -279,14 +282,6 @@ fn read_text(file: Option<&Path>, stdin: &mut dyn Read) -> Result<String> {
     }
 }
 
-fn open(cli_dir: Option<&Path>) -> Result<Tracker> {
-    let start = match cli_dir {
-        Some(d) => d.to_path_buf(),
-        None => std::env::current_dir().map_err(Error::io("."))?,
-    };
-    Tracker::open(&find_root(&start)?)
-}
-
 struct Ctx<'a> {
     tracker: Tracker,
     clock: &'a mut dyn Clock,
@@ -347,6 +342,11 @@ fn parse_base(s: &str) -> Result<Option<Ulid>> {
 
 fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Value, i32)> {
     if let Command::Init { prefix, name } = &cli.command {
+        if cli.tracker_url.is_some() {
+            return Err(Error::InvalidArgument(
+                "init needs a local directory, not --tracker-url".into(),
+            ));
+        }
         let dir = match &cli.tracker {
             Some(d) => d.clone(),
             None => std::env::current_dir().map_err(Error::io("."))?,
@@ -379,7 +379,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
         ));
     }
 
-    let tracker = open(cli.tracker.as_deref())?;
+    let tracker = crate::locator::open(cli.tracker.as_deref(), cli.tracker_url.as_deref())?;
     let mut ctx = Ctx {
         tracker,
         clock,

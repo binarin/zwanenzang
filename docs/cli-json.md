@@ -8,7 +8,7 @@ JSON request. The format grows by adding fields; a client must ignore fields it 
 ## Invocation
 
 ```
-zwanenzang [-C DIR | --tracker DIR] [--actor-name NAME] <command> ...
+zwanenzang [-C DIR | --tracker DIR | --tracker-url URL] [--actor-name NAME] <command> ...
 ```
 
 - `-C DIR`: start the tracker search in `DIR` instead of the current
@@ -16,11 +16,43 @@ zwanenzang [-C DIR | --tracker DIR] [--actor-name NAME] <command> ...
   `zwanenzang.toml`. For `init`, `DIR` is where the tracker is created;
   it must not be in or below an existing tracker, nor inside another git
   work tree unless it is that work tree's top.
+- `--tracker-url URL`: provision/reuse a durable clone keyed by the exact
+  origin URL. Mutually exclusive with `-C` / `--tracker`. Not valid for `init`.
+- With neither selector, use the enclosing tracker, if any; otherwise use
+  exactly one `zwanenzang.trackerUrl` value from the enclosing code repository's
+  **local** git configuration. No global config or project file is consulted.
+  Missing configuration is `not-a-tracker`; multiple values are
+  `invalid-argument`. Explicit `-C` never falls back to URL selection.
 - `--actor-name NAME`: display name declared by this clone's first write.
   Defaults to `$USER`, then `unknown`. Ignored once the actor is declared.
 
 The `git` binary must be on `PATH` (the nix package falls back to its own).
 The clone's actor id is `zwanenzang.actor` in its local git configuration.
+
+### URL-selected storage
+
+The clone lives at
+`${XDG_DATA_HOME:-$HOME/.local/share}/zwanenzang/trackers/<key>`, where `<key>`
+is the full lowercase SHA-256 of the URL's exact UTF-8 bytes, without a trailing
+newline. Different URL spellings are distinct; no normalization or git rewrite
+is used to compute identity. Use a canonical URL without credentials. Local
+origins must be absolute paths or `file://` URLs. Storage must be absolute;
+missing HOME and XDG_DATA_HOME, or relative data-home values, are
+`invalid-argument`.
+
+An exclusive parent-directory lock covers provisioning and validation. Existing
+storage must be a standalone tracker work-tree root with a `.git` directory and
+exactly the requested clone-local origin; invalid storage is refused, never
+reset or replaced. Incomplete storage and origin mismatches are
+`invalid-argument`; git failures are `git`, filesystem failures `io`. A failed
+clone may leave a directory requiring manual inspection. Symlinks to valid
+standalone clones work; linked worktrees do not. The clone's existing actor,
+unpublished work and configuration survive reuse.
+
+The initial clone needs the network; existing clones are not fetched implicitly.
+Read-only commands retain their unlocked, local-only semantics, and mutations
+retain the exclusive clone lock and usual commit/sync behavior. Storage is
+persistent data, not a cache: do not remove it during workspace cleanup.
 
 ## Output and exit status
 

@@ -49,7 +49,7 @@ pub struct Repo {
     pub git_dir: PathBuf,
 }
 
-fn command(dir: &Path) -> Command {
+pub(crate) fn command(dir: &Path) -> Command {
     let mut c = Command::new("git");
     c.arg("-C")
         .arg(dir)
