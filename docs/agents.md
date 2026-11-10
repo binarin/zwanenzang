@@ -58,8 +58,10 @@ zwanenzang -C <dir> doc get ZZ-0042 plan
 
 Read-only commands answer from the clone and do not fetch, so run `sync` first
 when current state matters. `list` returns summaries; `query` takes more filters
-and returns full tickets, as `show` does. A ticket reference is a number, an id
-or a unique id prefix.
+and returns full tickets, as `show` does. A ticket reference is a prefixed number
+such as `ZZ-0042` or `zz-42`, a full ULID, or a unique case-insensitive ULID prefix
+of at least 4 characters. Bare decimal input is not ticket-number syntax, but may
+match a ULID prefix. See [Ticket references](cli-json.md#ticket-references).
 
 ## Writing
 
