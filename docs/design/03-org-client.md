@@ -59,7 +59,7 @@ Mapping between heading and ticket:
 | tags | tags, optionally filtered by a per-tracker allowlist |
 | body text before the first subheading | document `description` |
 | subheadings marked with a document property | named documents |
-| a read-only drawer or subtree | comments, newest last |
+| a read-only drawer or subtree | comments, newest first |
 | properties | number, dependencies, relations, branches, MRs, repo links |
 
 ## Keyword map
@@ -285,7 +285,7 @@ The CLI stays format-blind and nothing converts it.
   new version only when the local text is unchanged; otherwise conflict tag,
   the agent's text in a drawer, and the agent will have to rebase on its next
   write anyway.
-- Comments render read-only, newest last, each with a link to any file or URL
+- Comments render read-only, newest first, each with a link to any file or URL
   it names. Removing them from the buffer changes nothing.
 - Bulky files are links, opened over tramp.
 
@@ -464,9 +464,12 @@ manual edits there are overwritten on pull (no new edit warning is added).
 - The description is the body before the first subheading, excluding
   drawers and planning lines.
 - Comments go in a `:ZWANENZANG_COMMENTS:` drawer at the end of the body,
-  below the description, newest last, each `[timestamp] actor:` followed by
+  below the description, newest first, each `[timestamp] actor:` followed by
   the text as plain Org, so its links work. The drawer is rewritten from
   tracker state and never read back.
+  Newest means reverse event replay order, not wall-clock timestamp order.
+  This applies immediately after an accepted comment send and on every pull,
+  including cursor resets; the CLI keeps its ascending replay order.
 - Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The
   conflict tag is `zz_conflict`; it is never pushed as a tracker tag.
 - Each hidden document is one link line using a `zwanenzang:` Org link
