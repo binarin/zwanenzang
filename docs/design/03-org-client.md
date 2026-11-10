@@ -228,13 +228,35 @@ subtree to an archive file where it is outside any scope, so to the client an
 archived ticket is simply absent. Rules:
 
 - Absence from scope is never a deletion. No prompt, no event.
-- When a heading is archived with org-archive, an archive hook may emit an
-  `archive` event so the tracker knows. If the hook did not run, the tracker
-  still learns nothing and the ticket stays as it was, which is safe.
-- Archiving an open ticket also closes it. If the heading's keyword is a
-  done state (DONE, CNCL) its status is pushed first; otherwise the hook
-  sets the status mapped from the first done-state keyword (DONE), so
-  archiving never prompts for a note. Then it emits `archive`. Status and
+- Loading the client installs `org-archive-hook`, gated on the original
+  heading's tracker scope. Org calls it after copying the subtree but before
+  removing the original. The hook sends one atomic batch for all identified
+  ticket headings moved within that scope (including children of grouping
+  headings): each ticket's closing status, then `archive`. It never creates
+  tickets, pushes other edits, pulls, rewrites keywords or saves Org files.
+  Locally edited title, priority, tags, dependencies, parent, description and
+  named documents are listed per ticket in the report as not pushed: those
+  edits remain only in the Org archive. Push before archiving to publish them.
+- Foreign/duplicate identities, tombstones, invalid keyword maps, no mapped
+  first done keyword, tracker/priority mismatch or CLI refusal leave the
+  whole batch unwritten. Archiving a scope root or a subtree containing a
+  nested scope is unsupported and reported, not guessed across trackers.
+  Failures and keyboard quits warn but do not interrupt Org's move: throwing
+  from this hook would leave both copied and original subtrees. Correct the
+  problem, check tracker state, set a closing status and run
+  `zwanenzang archive` manually if needed. Offline local success is retained and
+  publication failure is reported normally. If the hook did not run, the
+  tracker learns nothing and the ticket stays as it was, which is safe.
+  In-place ARCHIVE tagging is not this hook and still emits no events.
+- Archiving an open ticket also closes it. A tracker status already mapped
+  to a done keyword is preserved, including when Org still shows a stale
+  open keyword. The exception is an explicit human edit to a done keyword
+  different from both the synced and remote keywords: that keyword's first
+  mapped status is pushed, as on ordinary push. For a remotely open ticket,
+  use the heading's done keyword if present, otherwise the first done-state
+  keyword (DONE), and send its first status before `archive`. Two statuses
+  sharing a done keyword agree; archival does not collapse them to its first
+  status. Archiving never prompts for a note. Status and
   the archived flag stay separate: the flag is what takes a ticket out of
   default views (`list`, `query` without `--all`), whatever its status.
 - The re-insertion rule in Pull is what brings an archived-but-active ticket
@@ -379,9 +401,10 @@ Decided 2026-11-07 for the first Emacs implementation.
 ### Activation and calls
 
 - Sync runs through explicit interactive commands: no minor mode or timers.
-  Loading the client also installs a global Org completion-blocker hook for
-  the dependency UI below. It is gated by inherited
-  `ZWANENZANG` and never calls the CLI.
+  Loading the client installs the Org archive hook described above.
+  It also installs a global Org completion-blocker hook for the dependency
+  UI below; only this blocker is gated by inherited `ZWANENZANG` and never
+  calls the CLI.
 - CLI calls are synchronous: `call-process` for local scopes now,
   `process-file` over tramp in milestone 5.
 - First commands: `zwanenzang-pull`, `zwanenzang-push` and
@@ -391,7 +414,7 @@ Decided 2026-11-07 for the first Emacs implementation.
   `zwanenzang-unarchive`, `zwanenzang-adopt-foreign`,
   `zwanenzang-resolve-duplicate` and `zwanenzang-open`.
 - Deferred to milestone 5: per-heading operations, doctor across files,
-  the archive hook, tramp.
+  tramp. The archive hook is implemented.
 
 ### Properties
 
