@@ -1717,15 +1717,36 @@ report appended to the `*zwanenzang*' buffer."
   "Compose an append-only tracker comment.
 C-c C-c sends; C-c C-k aborts.  The buffer contains only comment text.")
 
+(defun zwanenzang--comment-heading ()
+  "The ticket heading for a note at point, or nil.
+A named document belongs to its direct parent ticket, not an inherited ID.
+Structural headings and nested scopes never borrow an ancestor's ticket."
+  (when (derived-mode-p 'org-mode)
+    (org-with-wide-buffer
+     (unless (org-before-first-heading-p)
+       (org-back-to-heading t)
+       (when (org-entry-get nil "ZWANENZANG" t)
+         (when (and (org-entry-get nil "ZWANENZANG_DOC")
+                    (not (org-entry-get nil "ZWANENZANG_ID"))
+                    (not (org-entry-get nil "ZWANENZANG")))
+           (org-up-heading-safe))
+         (when (or (org-entry-get nil "ZWANENZANG_ID")
+                   (and (org-get-todo-state)
+                        (not (org-entry-get nil "ZWANENZANG"))
+                        (not (org-entry-get nil "ZWANENZANG_DOC"))
+                        (not (org-entry-get nil "ZWANENZANG_INBOX"))))
+           (zwanenzang--heading-marker)))))))
+
 ;;;###autoload
 (defun zwanenzang-comment ()
-  "Compose a tracker comment for the published ticket heading at point.
+  "Compose a tracker comment for the ticket or its named document at point.
 Sending appends one comment and pulls the scope, without pushing Org edits.
 The optional CLI link field is not exposed by this command."
   (interactive)
   (let* ((root (zwanenzang--root-at-point))
-         (heading (save-excursion (org-back-to-heading t) (point-marker)))
-         (id (org-entry-get nil "ZWANENZANG_ID"))
+         (heading (or (zwanenzang--comment-heading)
+                      (user-error "zwanenzang: point is not on a ticket or its named document")))
+         (id (org-entry-get heading "ZWANENZANG_ID"))
          (dir (zwanenzang--scope-directory root)))
     (unless id
       (user-error "zwanenzang: push this ticket before adding a comment"))
@@ -1797,16 +1818,9 @@ closed even if publication or the subsequent pull fails, to avoid resend."
            (zwanenzang--report-outcome "comment saved in" root outcome)))))))
 
 (defun zwanenzang--org-add-note (original &rest args)
-  "Redirect ORIGINAL with ARGS only on ticket headings inside scopes."
+  "Redirect ORIGINAL with ARGS on tickets and their named documents."
   (if (and zwanenzang-redirect-org-notes (not current-prefix-arg)
-           (derived-mode-p 'org-mode)
-           (not (org-before-first-heading-p))
-           (org-entry-get nil "ZWANENZANG" t)
-           (or (org-entry-get nil "ZWANENZANG_ID")
-               (and (org-get-todo-state)
-                    (not (org-entry-get nil "ZWANENZANG"))
-                    (not (org-entry-get nil "ZWANENZANG_DOC"))
-                    (not (org-entry-get nil "ZWANENZANG_INBOX")))))
+           (zwanenzang--comment-heading))
       (zwanenzang-comment)
     (apply original args)))
 
