@@ -27,6 +27,7 @@
 (require 'org)
 (require 'org-element)
 (require 'org-fold)
+(require 'org-id)
 (require 'subr-x)
 
 (defgroup zwanenzang nil
@@ -473,6 +474,12 @@ Text is unchanged when it already has that value; properties stay folded."
         (org-entry-put nil property value)
       (org-entry-delete nil property)))
   (zwanenzang--restore-drawers (zwanenzang--drawer-visibility)))
+
+(defun zwanenzang--ensure-org-id ()
+  "Give the ticket at point an Org ID without using the global ID registry.
+Keep any existing ID; tracker identity remains ZWANENZANG_ID."
+  (unless (org-entry-get nil "ID")
+    (zwanenzang--put "ID" (org-id-new))))
 
 ;;;; Headings
 
@@ -1169,6 +1176,7 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                                   status "nothing pulled")
                 nil)))
             'blocked)
+        (zwanenzang--ensure-org-id)
         ;; Status is compared as keywords: a draft shown as TODO stays
         ;; draft until the keyword changes.
         (let* ((remote (cdr (assoc status map)))
@@ -1968,7 +1976,10 @@ push would create the ticket again, so a push that created one saves the
 file; nothing else does."
   (pcase-dolist (`(,marker . ,index) (reverse (zwanenzang--plan-news plan)))
     (org-entry-put marker "ZWANENZANG_ID"
-                   (alist-get (intern (number-to-string index)) created)))
+                   (alist-get (intern (number-to-string index)) created))
+    (save-excursion
+      (goto-char marker)
+      (zwanenzang--ensure-org-id)))
   (dolist (marker (zwanenzang--plan-revived plan))
     (save-excursion
       (goto-char marker)

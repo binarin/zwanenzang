@@ -32,10 +32,21 @@ That heading is the scope root. Everything beneath it syncs with that tracker.
 
 A ticket is a heading inside a scope that carries the client's own identity
 property, `:ZWANENZANG_ID:`, holding the ticket ULID. The org `:ID:`
-property is not used for tracker identity and org-id is never consulted;
-headings are located by scanning the scope. This is deliberate: org-id tooling
-and subtree copies touch `:ID:` freely, and the predecessor saw duplicated and
-arbitrarily reassigned ids.
+property is not used for tracker identity and the org-id location registry is
+never consulted; headings are located by scanning the scope. This is deliberate:
+org-id tooling and subtree copies touch `:ID:` freely, and the predecessor saw
+duplicated and arbitrarily reassigned ids.
+
+For ordinary Org links and tooling, successful ticket pulls also fill in a
+missing `:ID:` using `org-id-new` (a fresh Org identity, independent of the
+ticket ULID). Existing IDs are left untouched, including copied IDs: tracker
+sync neither relies on them nor repairs them. Newly pushed tickets get this
+ID alongside `ZWANENZANG_ID`, before the creation save. Existing ticket
+headings acquire it on their next pull/push/sync, without saving the file;
+a repeated no-op does not regenerate it. Blocked foreign/duplicate headings,
+scope roots, inboxes, grouping headings and named documents are not assigned
+IDs. Generation does not read or write the global org-id location registry;
+Org's own tooling remains responsible for indexing links.
 
 Mapping between heading and ticket:
 
@@ -334,7 +345,8 @@ Decided 2026-11-07 for the first Emacs implementation.
 
 ### Properties
 
-Every property the client owns starts with `ZWANENZANG`.
+Every tracker property the client owns starts with `ZWANENZANG`. The
+standard Org `ID` is only filled in when missing, as described above.
 
 - Scope root: `ZWANENZANG` (the location), `ZWANENZANG_KEYWORDS`,
   `ZWANENZANG_HIDE_DOCS`, `ZWANENZANG_CURSOR` (scope cursor) and
@@ -660,7 +672,7 @@ stores stable identities; the property always shows published ticket numbers.
   empty property can receive remotely stored relationships. Removing a
   property with recorded sync state explicitly clears the dependency set.
 - Resolution uses pull/push's existing `list --all` number map, including
-  archived/tombstoned prerequisites absent from Org. No org-id, global
+  archived/tombstoned prerequisites absent from Org. No org-id lookup, global
   registry or extra TODO-transition CLI calls are introduced. Unknown or
   ambiguous numbers refuse the whole push before apply. New headings may
   depend on published tickets; referencing new prerequisites still requires

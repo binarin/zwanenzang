@@ -53,6 +53,39 @@
       (should-not (nth 2 (assoc "ZWANENZANG_COMMENTS"
                                (zwanenzang--drawer-visibility)))))))
 
+(ert-deftest zwanenzang-sync-fills-only-missing-ticket-org-ids ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((first (zwanenzang-test-create trk "First"))
+          (second (zwanenzang-test-create trk "Second")))
+      (zwanenzang-test-set-doc trk first "plan" "A plan\n")
+      (zwanenzang-test-pull)
+      (let ((first-id (zwanenzang-test-property first "ID"))
+            (second-id (zwanenzang-test-property second "ID")))
+        (should first-id)
+        (should second-id)
+        (should-not (equal first-id second-id))
+        (should-not (equal first-id first))
+        ;; Upgrade an existing heading; preserve the other heading's human ID.
+        (zwanenzang-test-goto first)
+        (org-entry-delete nil "ID")
+        (zwanenzang-test-goto second)
+        (org-entry-put nil "ID" "human-id")
+        (let ((on-disk (zwanenzang-test--file-text)))
+          (zwanenzang-sync)
+          (should (equal on-disk (zwanenzang-test--file-text))))
+        (setq first-id (zwanenzang-test-property first "ID"))
+        (should first-id)
+        (should (equal (zwanenzang-test-property second "ID") "human-id"))
+        (let ((before (buffer-string)))
+          (zwanenzang-sync)
+          (should (equal before (buffer-string))))
+        ;; Only ticket headings get IDs, not structural/document headings.
+        (org-map-entries
+         (lambda ()
+           (unless (org-entry-get nil "ZWANENZANG_ID")
+             (should-not (org-entry-get nil "ID")))))
+        (should (equal (zwanenzang-test-property first "ZWANENZANG_ID") first))))))
+
 (ert-deftest zwanenzang-pull-discovers-tickets-with-state ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let* ((parent (zwanenzang-test-create trk "Parent" "--tag" "alpha"))
@@ -447,14 +480,20 @@
                                                "** TODO Foreign\n:PROPERTIES:\n"
                                                ":ZWANENZANG_ID: 01ZZZZZZZZZZZZZZZZZZZZZZZZ\n:END:\n"))
     (let ((dup (zwanenzang-test-create trk "Dup"))
-          (fine (zwanenzang-test-create trk "Fine")))
+          (fine (zwanenzang-test-create trk "Fine"))
+          dup-org-id)
       (zwanenzang-test-pull)
       ;; Copy the Dup subtree: two headings with one id.
       (save-excursion
         (zwanenzang-test-goto dup)
+        (setq dup-org-id (org-entry-get nil "ID"))
+        (should dup-org-id)
         (org-copy-subtree)
         (goto-char (point-max))
-        (org-paste-subtree 2))
+        (org-paste-subtree 2)
+        ;; One duplicate has no Org ID; the other retains the copied ID.
+        (zwanenzang-test-goto dup)
+        (org-entry-delete nil "ID"))
       (zwanenzang-test-cli trk "title" dup "Dup renamed")
       (zwanenzang-test-cli trk "title" fine "Fine renamed")
       (zwanenzang-test-clear-report)
@@ -463,6 +502,9 @@
       (let ((copies (org-map-entries (lambda () (org-get-heading t t t t))
                                      (format "ZWANENZANG_ID=\"%s\"" dup))))
         (should (equal copies '("Dup" "Dup"))))
+      (should (equal (org-map-entries (lambda () (org-entry-get nil "ID"))
+                                     (format "ZWANENZANG_ID=\"%s\"" dup))
+                     (list nil dup-org-id)))
       (org-map-entries
        (lambda ()
          (should (member zwanenzang-conflict-tag (org-get-tags nil t)))
@@ -471,6 +513,7 @@
        (format "ZWANENZANG_ID=\"%s\"" dup))
       (save-excursion
         (zwanenzang-test-goto "01ZZZZZZZZZZZZZZZZZZZZZZZZ")
+        (should-not (org-entry-get nil "ID"))
         (should (member zwanenzang-conflict-tag (org-get-tags nil t)))
         (should (string-match-p "- id: foreign: the tracker has no ticket"
                                 (zwanenzang--body))))
@@ -493,8 +536,12 @@
       ;; The scope cursor stays, so the ticket comes back once it maps.
       (should-not (save-excursion (goto-char (point-min)) (outline-next-heading)
                                   (org-entry-get nil "ZWANENZANG_CURSOR")))
+      ;; Model an existing pre-upgrade heading without a standard Org ID.
+      (zwanenzang-test-goto known)
+      (org-entry-delete nil "ID")
       (zwanenzang-test-cli trk "status" known "blocked")
       (zwanenzang-test-pull)
+      (should-not (zwanenzang-test-property known "ID"))
       (should (member zwanenzang-conflict-tag (zwanenzang-test-tags known)))
       (should (string-prefix-p "*** TODO Known" (zwanenzang-test-heading known)))
       (should (string-match-p "status: tracker status blocked has no keyword"
@@ -506,6 +553,7 @@
                        "TODO=todo,draft NEXT=doing,blocked DONE=done,cancelled,review"))
       (zwanenzang-test-pull)
       (should (string-prefix-p "*** NEXT Known" (zwanenzang-test-heading known)))
+      (should (zwanenzang-test-property known "ID"))
       (should (string-prefix-p "*** NEXT Waiting" (zwanenzang-test-heading waiting))))))
 
 (ert-deftest zwanenzang-pull-refuses-another-tracker ()

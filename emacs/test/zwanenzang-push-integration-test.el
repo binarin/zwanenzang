@@ -56,6 +56,21 @@
       (org-end-of-subtree t t)
       (org-paste-subtree level))))
 
+(ert-deftest zwanenzang-push-saves-new-org-ids-before-followup-pull ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     "** TODO New\n** TODO Existing Org ID\n:PROPERTIES:\n:ID: human-id\n:END:\n")
+    (zwanenzang-test-at-root #'zwanenzang-push)
+    (let* ((new (zwanenzang-test-id-of "New"))
+           (existing (zwanenzang-test-id-of "Existing Org ID"))
+           (org-id (zwanenzang-test-property new "ID"))
+           (on-disk (zwanenzang-test--on-disk)))
+      (should org-id)
+      (should-not (equal new org-id))
+      (should (string-match-p (concat ":ID:[ \t]+" (regexp-quote org-id)) on-disk))
+      (should (equal (zwanenzang-test-property existing "ID") "human-id"))
+      (should (string-match-p ":ID:[ \t]+human-id" on-disk)))))
+
 (ert-deftest zwanenzang-native-priority-roundtrip-org-wins-and-clearing ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
     (zwanenzang-test-append "** TODO [#A] Ranked :needs_human:\n")
