@@ -260,8 +260,21 @@ None at present.
 - **Sync** runs after every commit and as the `sync` command: fetch the
   upstream branch; rebase onto it (`--autostash`, so the human's
   uncommitted edits survive); number; push `HEAD` to the upstream branch,
-  never forced. The remote not having the branch yet is not an error; the
-  push creates it.
+  never forced. Skip rebase entirely when the fetched commit is already an
+  ancestor of local `HEAD` (including equal heads): even a no-op rebase
+  autostashes dirty files, rewriting them on restore and triggering editor
+  auto-revert messages. When local `HEAD` is an ancestor of the fetched
+  commit, first try `merge --ff-only --no-autostash` with hooks disabled:
+  unrelated dirty files retain their contents, timestamps and index state.
+  If that refuses (for example, a dirty file would be overwritten), fall
+  back to rebase with autostash. Divergent histories also still rebase with
+  autostash. These remaining paths restore every dirty file and may trigger
+  editor auto-revert even for files upstream did not change; staged edits
+  may return unstaged, as Git restores the stash without `--index`. Avoiding
+  such rewrites for divergent histories is outside this change's scope.
+  No Emacs notifications are suppressed globally. Sync does not serialize
+  or rewrite the tracker configuration itself. The remote not having the
+  branch yet is not an error; the push creates it.
 - **Numbering at publish.** After the fetch and rebase, every live ticket
   without a number gets the next one, in id order, from the highest number
   in use plus one, written by this clone's actor and committed as
