@@ -88,6 +88,148 @@
         (should (org-fold-folded-p (1- (point)) 'outline))
         (should (invisible-p (1- (point))))))))
 
+(defconst zwanenzang-test--folded-body
+  (concat "* Parent\n** Ticket\n:PROPERTIES:\n:ZWANENZANG_ID: synthetic\n:END:\n"
+          "Original prose\n:ZWANENZANG_COMMENTS:\nA comment\n:END:\n"
+          "*** Plan\n:PROPERTIES:\n:ZWANENZANG_DOC: plan\n:END:\nDocument prose\n"
+          "** Neighbor\nNeighbor prose\n* Outside\nOutside prose\n")
+  "Synthetic entries with a document and unrelated later text.")
+
+(defun zwanenzang-test--outline-ranges ()
+  "Sorted outline bounds, inspecting raw overlays on that backend.
+Adjacent same-spec overlays can be skipped by Org's region enumerator."
+  (sort
+   (if (eq org-fold-core-style 'overlays)
+       (delq nil
+             (mapcar (lambda (overlay)
+                       (when (eq (overlay-get overlay 'invisible) 'org-fold-outline)
+                         (cons (overlay-start overlay) (overlay-end overlay))))
+                     (overlays-in (point-min) (point-max))))
+     (mapcar (lambda (region) (cons (nth 0 region) (nth 1 region)))
+             (org-fold-core-get-regions :specs 'outline)))
+   (lambda (a b) (< (car a) (car b)))))
+
+(ert-deftest zwanenzang-write-body-noop-preserves-ancestor-outline-region ()
+  (let ((org-fold-core-style 'overlays))
+    (zwanenzang-test-with-org zwanenzang-test--folded-body
+      (org-fold-subtree t)
+      (let ((ranges (zwanenzang-test--outline-ranges))
+            (text (buffer-substring-no-properties (point-min) (point-max))))
+        (search-forward "Ticket") (org-back-to-heading t)
+        (dotimes (_ 3) (zwanenzang--write-body (zwanenzang--body)))
+        (should (equal ranges (zwanenzang-test--outline-ranges)))
+        (should (equal text (buffer-substring-no-properties (point-min) (point-max))))))))
+
+(ert-deftest zwanenzang-write-body-noop-text-properties-control ()
+  (let ((org-fold-core-style 'text-properties))
+    (zwanenzang-test-with-org zwanenzang-test--folded-body
+      (org-fold-subtree t)
+      (let ((ranges (zwanenzang-test--outline-ranges)))
+        (search-forward "Ticket") (org-back-to-heading t)
+        (dotimes (_ 3) (zwanenzang--write-body (zwanenzang--body)))
+        (should (equal ranges (zwanenzang-test--outline-ranges)))))))
+
+(ert-deftest zwanenzang-write-body-change-preserves-ancestor-outline-region ()
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (dolist (fold '(ancestor subtree entry))
+      (dolist (narrow '(nil t))
+        (zwanenzang-test-with-org zwanenzang-test--folded-body
+          (if (eq fold 'ancestor)
+              (org-fold-subtree t)
+            (outline-next-heading)
+            (if (eq fold 'entry) (org-fold-hide-entry) (org-fold-subtree t)))
+          (let ((fold-start (copy-marker (caar (zwanenzang-test--outline-ranges))))
+                (fold-end (copy-marker (cdar (zwanenzang-test--outline-ranges)) t)))
+            (goto-char (point-min)) (search-forward "Ticket") (org-back-to-heading t)
+            (when narrow (org-narrow-to-subtree))
+            (let* ((position (point-marker))
+                   (minimum (copy-marker (point-min)))
+                   (maximum (copy-marker (point-max) t))
+                   (bounds (zwanenzang--body-bounds))
+                   (new (zwanenzang--compose-body
+                         (zwanenzang--body)
+                         '(("ZWANENZANG_COMMENTS" . "A comment\nAnother comment\n"))
+                         "Replacement prose\n"))
+                   (expected (concat (buffer-substring-no-properties (point-min) (car bounds))
+                                     new
+                                     (buffer-substring-no-properties (cdr bounds) (point-max)))))
+              (zwanenzang--write-body new)
+              (should (= position (point)))
+              (should (= minimum (point-min)))
+              (should (= maximum (point-max)))
+              (should (equal expected (buffer-substring-no-properties (point-min) (point-max))))
+              ;; An entry fold ends on the newline before its document, which
+              ;; was part of the replacement; other endpoints move with text.
+              (let ((end (if (eq fold 'entry)
+                             (1- (cdr (zwanenzang--body-bounds)))
+                           (marker-position fold-end))))
+                (save-restriction
+                  (widen)
+                  (should (equal (list (cons (marker-position fold-start) end))
+                                 (zwanenzang-test--outline-ranges)))))
+              (should-not (nth 2 (assoc "ZWANENZANG_COMMENTS"
+                                       (zwanenzang--drawer-visibility))))
+              (dotimes (_ 2) (zwanenzang--write-body new)))
+            (set-marker fold-start nil)
+            (set-marker fold-end nil)))))))
+
+(ert-deftest zwanenzang-write-body-preserves-final-entry-fold ()
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (dolist (new '("Changed prose\n" ""))
+      (zwanenzang-test-with-org "* Ticket\nOriginal prose\n"
+        (org-fold-subtree t)
+        (zwanenzang--write-body new)
+        (let ((expected (list (cons (line-end-position) (point-max)))))
+          (should (equal expected (zwanenzang-test--outline-ranges))))))))
+
+(ert-deftest zwanenzang-write-body-clears-empty-entry-fold ()
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (zwanenzang-test-with-org "* Ticket\nOriginal prose\n** Plan\nDocument prose\n"
+      (org-fold-hide-entry)
+      (zwanenzang--write-body "")
+      (should-not (zwanenzang-test--outline-ranges))
+      (org-copy-visible (point-min) (point-max))
+      (should (equal "* Ticket\n** Plan\nDocument prose\n"
+                     (substring-no-properties (current-kill 0)))))))
+
+(ert-deftest zwanenzang-write-body-visibility-roundtrip-preserves-separation ()
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (zwanenzang-test-with-org zwanenzang-test--folded-body
+      (org-fold-subtree t)
+      (let ((ranges (zwanenzang-test--outline-ranges))
+            (text (buffer-substring-no-properties (point-min) (point-max))))
+        (search-forward "Ticket") (org-back-to-heading t)
+        (zwanenzang--write-body (zwanenzang--body))
+        (org-fold-core-save-visibility t nil)
+        (zwanenzang--write-body (zwanenzang--body))
+        (should (equal ranges (zwanenzang-test--outline-ranges)))
+        (org-copy-visible (point-min) (point-max))
+        (should (equal "* Parent\n* Outside\nOutside prose\n"
+                       (substring-no-properties (current-kill 0))))
+        (should (equal text (buffer-substring-no-properties (point-min) (point-max))))))))
+
+(ert-deftest zwanenzang-write-body-isearch-preserves-heading-separation ()
+  (require 'isearch)
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (zwanenzang-test-with-org zwanenzang-test--folded-body
+      (org-fold-subtree t)
+      (search-forward "Ticket") (org-back-to-heading t)
+      (let ((text (buffer-substring-no-properties (point-min) (point-max)))
+            (search-invisible 'open)
+            (isearch-opened-overlays nil))
+        (zwanenzang--write-body (zwanenzang--body))
+        (search-forward "Document prose")
+        (unwind-protect
+            (progn
+              (isearch-range-invisible (- (point) (length "Document prose")) (point))
+              (org-copy-visible (point-min) (point-max))
+              (let ((visible (substring-no-properties (current-kill 0))))
+                (should-not (string-match-p "Parent\\*\\*\\* Plan" visible))
+                (when (eq org-fold-core-style 'overlays)
+                  (should (string-match-p "\n\\*\\*\\* Plan\n" visible))))
+              (should (equal text (buffer-substring-no-properties (point-min) (point-max)))))
+          (isearch-clean-overlays))))))
+
 (ert-deftest zwanenzang-move-preserves-outline-folds ()
   (dolist (org-fold-core-style '(overlays text-properties))
     (zwanenzang-test-with-org

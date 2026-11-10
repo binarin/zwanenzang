@@ -535,24 +535,36 @@ New or changed drawers are opened, but unchanged drawers retain their fold."
   "Replace the body with NEW, preserving unchanged drawers' visibility."
   (zwanenzang--check-source-edit)
   (let ((before (zwanenzang--drawer-visibility))
-        (outline-hidden (save-excursion
-                          (org-back-to-heading t)
-                          (org-fold-folded-p (line-end-position) 'outline))))
+        (outline (save-excursion
+                   (org-back-to-heading t)
+                   (org-fold-core-get-region-at-point 'outline (line-end-position)))))
     (unless (equal new (zwanenzang--body))
       (save-excursion
         (org-back-to-heading t)
         (end-of-line)
         (when (eobp) (insert "\n"))
-        (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
-          (goto-char start)
-          (delete-region start end)
-          (insert new))))
-    (zwanenzang--restore-drawers before)
-    ;; Insertion can escape the outline fold even though the heading remains
-    ;; folded.  Keep replacement text hidden under its own or an ancestor fold.
-    (when outline-hidden
-      (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
-        (org-fold-region start end t 'outline)))))
+        (pcase-let* ((`(,start . ,end) (zwanenzang--body-bounds))
+                     (fold-start (and outline (copy-marker (car outline))))
+                     (fold-end (and outline (copy-marker (max end (cdr outline)) t)))
+                     ;; An entry fold can end on the newline before the next
+                     ;; heading.  Anchor outside deletion, retaining that offset.
+                     (fold-end-offset (and outline (min 0 (- (cdr outline) end)))))
+          (unwind-protect
+              (progn
+                (goto-char start)
+                (delete-region start end)
+                (insert new)
+                ;; Re-fold the original enclosing extent, not an interior body
+                ;; range: splitting an ancestor overlay breaks later reveals.
+                (when outline
+                  (let ((finish (+ fold-end fold-end-offset)))
+                    (if (< fold-start finish)
+                        (org-fold-region fold-start finish t 'outline)
+                      ;; An empty entry must not hide its child's separator.
+                      (org-fold-region fold-start fold-end nil 'outline)))))
+            (when fold-start (set-marker fold-start nil))
+            (when fold-end (set-marker fold-end nil))))))
+    (zwanenzang--restore-drawers before)))
 
 (defun zwanenzang--put (property value)
   "Set PROPERTY of the entry at point to VALUE, or remove it when nil.

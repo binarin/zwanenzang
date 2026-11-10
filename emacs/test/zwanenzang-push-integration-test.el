@@ -8,8 +8,11 @@
 ;;; Code:
 
 (require 'ert)
+(require 'org-archive)
+(require 'org-attach)
 (require 'zwanenzang)
 (require 'zwanenzang-test-helpers)
+(require 'zwanenzang-pull-test)
 
 (defconst zwanenzang-test--push-org
   (concat "#+TODO: TODO NEXT WAIT | DONE CNCL\n"
@@ -637,6 +640,66 @@
       (when-let* ((buf (get-file-buffer file)))
         (with-current-buffer buf (set-buffer-modified-p nil))
         (kill-buffer buf)))))
+
+(ert-deftest zwanenzang-archive-after-pull-matches-native-visibility ()
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (dolist (failure '(nil refusal quit))
+      (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+        (let ((first (zwanenzang-test-create trk "First"))
+              (later (zwanenzang-test-create trk "Later"))
+              (control-file (expand-file-name "control.org" net))
+              (org-attach-archive-delete nil)
+              control warnings)
+          (zwanenzang-test-set-doc trk first "plan" "A plan\n")
+          (zwanenzang-test-set-doc trk later "plan" "Later plan\n")
+          (zwanenzang-test-at-root #'zwanenzang-pull)
+          (with-temp-file control-file
+            (insert (with-current-buffer buf
+                      (buffer-substring-no-properties (point-min) (point-max)))))
+          (setq control (find-file-noselect control-file))
+          (unwind-protect
+              (cl-labels
+                  ((archive-state ()
+                     (goto-char (point-min)) (outline-next-heading)
+                     (org-fold-subtree t)
+                     (org-narrow-to-subtree)
+                     (when (eq (current-buffer) buf)
+                       (zwanenzang-pull)
+                       (should (equal (list (cons (line-end-position) (point-max)))
+                                      (zwanenzang-test--outline-ranges))))
+                     (zwanenzang-test-goto first)
+                     (let* ((file (concat buffer-file-name "_archive"))
+                            (org-archive-location (concat file "::* Saved"))
+                            (org-archive-subtree-save-file-p t))
+                       (unwind-protect (org-archive-subtree)
+                         (when-let* ((archive (get-file-buffer file)))
+                           (with-current-buffer archive
+                             (should-not (buffer-modified-p)))
+                           (kill-buffer archive))))
+                     (widen)
+                     (org-copy-visible (point-min) (point-max))
+                     (list (buffer-substring-no-properties (point-min) (point-max))
+                           (zwanenzang-test--outline-ranges)
+                           (substring-no-properties (current-kill 0)))))
+                (let ((native (with-current-buffer control
+                                (let ((org-archive-hook '(org-attach-archive-delete-maybe)))
+                                  (archive-state))))
+                      (zwanenzang--call
+                       (lambda (dir args &optional input)
+                         (cond
+                          ((and failure (equal args '("apply")))
+                           (if (eq failure 'quit) (signal 'quit nil)
+                             (user-error "Synthetic refusal")))
+                          (t (zwanenzang-test-call dir args input))))))
+                  (cl-letf (((symbol-function 'display-warning)
+                             (lambda (&rest args) (push args warnings))))
+                    (should (equal native (archive-state))))
+                  (should (eq (not (null warnings)) (not (null failure))))))
+            (with-current-buffer control (set-buffer-modified-p nil))
+            (kill-buffer control))
+          (should (eq (alist-get 'archived (zwanenzang-test-show trk first))
+                      (if failure :false t)))
+          (should (eq (alist-get 'archived (zwanenzang-test-show trk later)) :false)))))))
 
 (ert-deftest zwanenzang-archive-closes-subtree-without-pushing-other-edits ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
