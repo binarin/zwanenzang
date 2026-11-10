@@ -685,8 +685,18 @@ priority is sent after its create. Heading rewrites preserve numeric as well
 as alphabetical cookies. Scope pull/push refuses mismatched Org buffer and
 tracker range/default settings with guidance; it never silently overwrites
 Org settings or TOML. Align `#+PRIORITIES` or buffer-local Org settings and
-TOML manually. Automated configuration export is optional future convenience,
-not necessary for synchronization.
+TOML manually. A priority refusal includes a complete `[priority]` replacement
+section using the running buffer's Org values (including `#+PRIORITIES`).
+Reporting the refusal copies that section to the kill-ring; interactive Emacs
+asks whether to visit the tracker's `zwanenzang.toml`, with the mismatch and
+copy notice in the prompt. After declining or visiting, the copy notice is
+shown again with a pointer to `*zwanenzang*`. Declining still leaves the snippet
+available. Visiting never inserts or saves anything. Either align Org to the
+tracker values shown in the report, or replace the existing TOML section with
+the snippet, save, commit and push in the tracker clone, then retry. Changing
+TOML changes the range/default for every user of the tracker; the tool does not
+commit this human configuration edit. Both the report and the copied snippet
+explain that letters are stored as integer character codes, not quoted letters. Tracker-identity refusals do not offer this priority remedy.
 
 Pull projects read-only `ZWANENZANG_ACTIVITY` (selected event timestamp),
 `ZWANENZANG_TAG_SINCE` (JSON current tag interval event references),

@@ -1427,8 +1427,25 @@ RESULT is the read of that tracker; the scope is bound to the first one."
       (unless (and (= (alist-get 'highest priority) org-priority-highest)
                    (= (alist-get 'lowest priority) org-priority-lowest)
                    (= (alist-get 'default priority) org-priority-default))
-        (format "zwanenzang: %s blocked: align Org PRIORITIES / org-priority-{highest,lowest,default} with [priority] in %s/zwanenzang.toml (%S); no settings were overwritten"
-                what dir priority))))))
+        (let ((file (expand-file-name "zwanenzang.toml" dir))
+              (snippet (format "# 0..64 are numeric priorities; 65..90 are character codes A..Z.\n[priority]\nhighest = %d\nlowest = %d\ndefault = %d\n"
+                               org-priority-highest org-priority-lowest
+                               org-priority-default)))
+          (propertize
+           (format "zwanenzang: %s blocked: align Org PRIORITIES / org-priority-{highest,lowest,default} with [priority] in %s (tracker: highest=%d, lowest=%d, default=%d); no settings were overwritten. Either align Org to the tracker values above, or replace the existing [priority] section with these active Org values. Changing TOML changes the range/default for every user of the tracker: save, commit and push in the tracker clone, then retry.\n%s"
+                   what file (alist-get 'highest priority)
+                   (alist-get 'lowest priority) (alist-get 'default priority) snippet)
+           'zwanenzang-priority-remedy (cons file snippet))))))))
+
+(defun zwanenzang--offer-priority-remedy (refusal)
+  "Copy the Org settings in REFUSAL and offer to visit its TOML file.
+Only priority refusals carry this metadata.  Never edit or save the file."
+  (when-let* ((remedy (get-text-property 0 'zwanenzang-priority-remedy refusal)))
+    (kill-new (cdr remedy))
+    (when (and (not noninteractive)
+               (y-or-n-p (format "zwanenzang: priority settings differ; [priority] snippet copied to kill-ring. Open %s? " (car remedy))))
+      (find-file-other-window (car remedy)))
+    (message "zwanenzang: [priority] snippet copied to kill-ring (see *zwanenzang*); align Org to tracker values, or replace the TOML section tracker-wide, save, commit and push, then retry")))
 
 (defun zwanenzang--hide-docs (root)
   "The names in the ZWANENZANG_HIDE_DOCS of the scope at ROOT."
@@ -1540,7 +1557,9 @@ Publication errors and skipped checkouts are not failures, but need a look."
   "Report OUTCOME of a command on the scope at ROOT, saying it VERB the scope."
   (with-current-buffer (marker-buffer root)
     (if (zwanenzang--outcome-refused outcome)
-        (zwanenzang-report (zwanenzang--outcome-refused outcome))
+        (let ((refusal (zwanenzang--outcome-refused outcome)))
+          (prog1 (zwanenzang-report refusal)
+            (zwanenzang--offer-priority-remedy refusal)))
       (let* ((pull (zwanenzang--outcome-pull outcome))
              (parts (append
                      (delq nil
