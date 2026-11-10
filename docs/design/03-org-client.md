@@ -452,9 +452,13 @@ continues through `org-add-log-setup`, untouched. `zwanenzang-comment` is
 also available directly. The optional CLI link field is not exposed;
 ordinary Org links can be included in the comment text.
 
-The compose buffer retains a refused draft. After a locally accepted write
-it closes, even if publication or the subsequent pull fails: retry sync or
-pull, not send. Publication failures use the normal report. A killed,
+The compose buffer retains a refused draft and its compose window. Aborting
+or accepting a write restores the window configuration and source point from
+before composition, including the selected window (also when invoked from an
+agenda). Temporary splits are removed; existing windows and their buffers are
+restored. After a locally accepted write it closes and restores those windows
+even if publication or the subsequent pull fails: retry sync or pull, not send.
+Publication failures use the normal report. A killed,
 retargeted, duplicate or foreign source heading is refused before writing.
 The generated comments drawer remains a one-way projection, not an input;
 manual edits there are overwritten on pull (no new edit warning is added).

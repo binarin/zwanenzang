@@ -1707,6 +1707,12 @@ report appended to the `*zwanenzang*' buffer."
 (defvar-local zwanenzang--comment-target nil
   "Compose target: heading marker, scope marker, ticket id and directory.")
 
+(defvar-local zwanenzang--comment-window-configuration nil
+  "Window configuration before displaying this compose buffer.")
+
+(defvar-local zwanenzang--comment-return-to nil
+  "Source point before composing, which window configurations do not save.")
+
 (defvar zwanenzang-comment-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'zwanenzang-comment-send)
@@ -1729,21 +1735,34 @@ The optional CLI link field is not exposed by this command."
          (dir (zwanenzang--scope-directory root)))
     (unless id
       (user-error "zwanenzang: push this ticket before adding a comment"))
-    (let ((buffer (generate-new-buffer "*zwanenzang comment*")))
+    (let ((buffer (generate-new-buffer "*zwanenzang comment*"))
+          (windows (current-window-configuration))
+          (return-to (point-marker)))
       (pop-to-buffer buffer)
       (zwanenzang-comment-mode)
-      (setq zwanenzang--comment-target (list heading root id dir))
+      (setq zwanenzang--comment-target (list heading root id dir)
+            zwanenzang--comment-window-configuration windows
+            zwanenzang--comment-return-to return-to)
       (setq header-line-format "Comment: C-c C-c send, C-c C-k abort"))))
+
+(defun zwanenzang--comment-close ()
+  "Close the current draft and restore its pre-compose windows and point."
+  (let ((windows zwanenzang--comment-window-configuration)
+        (return-to zwanenzang--comment-return-to))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer))
+    (set-window-configuration windows)
+    (when (marker-buffer return-to)
+      (with-current-buffer (marker-buffer return-to)
+        (goto-char return-to)))
+    (set-marker return-to nil)))
 
 (defun zwanenzang-comment-abort ()
   "Discard this compose buffer without writing a comment."
   (interactive)
   (unless zwanenzang--comment-target
     (user-error "zwanenzang: not a comment compose buffer"))
-  (let ((source (marker-buffer (car zwanenzang--comment-target))))
-    (set-buffer-modified-p nil)
-    (kill-buffer (current-buffer))
-    (when source (pop-to-buffer source))))
+  (zwanenzang--comment-close))
 
 (defun zwanenzang-comment-send ()
   "Send this comment once, then pull its source scope.
@@ -1783,9 +1802,7 @@ closed even if publication or the subsequent pull fails, to avoid resend."
                 (outcome (zwanenzang--outcome-create)))
            ;; Acceptance is the boundary: never offer to resend after this.
            (with-current-buffer draft
-             (set-buffer-modified-p nil)
-             (kill-buffer draft))
-           (pop-to-buffer (marker-buffer heading))
+             (zwanenzang--comment-close))
            (zwanenzang--note-sync outcome (alist-get 'sync result))
            (condition-case err
                (zwanenzang--pull-into outcome root)
