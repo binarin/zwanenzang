@@ -167,7 +167,7 @@
                                     "** TODO [#A] COMMENT Old title :a:zz_conflict:\nbody\n")
     (outline-next-heading)
     (should (equal (zwanenzang--heading)
-                   '(:keyword "TODO" :title "Old title" :tags ("a" "zz_conflict"))))
+                   '(:keyword "TODO" :priority 65 :title "Old title" :tags ("a" "zz_conflict"))))
     (zwanenzang--set-heading "DONE" "New title" '("b"))
     (should (string-match-p "\\`\\*\\* DONE \\[#A\\] COMMENT New title +:b:\\'"
                             (buffer-substring (line-beginning-position) (line-end-position))))

@@ -28,6 +28,50 @@ fn refuses(p: &Path, request: Value, code: &str) {
 }
 
 #[test]
+fn native_priority_is_nullable_batched_and_range_configurable() {
+    let d = tracker();
+    let p = d.path();
+    let out = apply(
+        p,
+        json!([
+            {"op":"create", "data":{"title":"Synthetic priority"}},
+            {"op":"priority", "ticket":{"created":0}, "data":{"to":65}}
+        ]),
+    );
+    let id = out["created"]["0"].as_str().unwrap();
+    assert_eq!(out["tickets"][0]["priority"], 65);
+    let unchanged = ok(p, &["priority", id, "65"]);
+    assert_eq!(unchanged["written"], false);
+    refuses(
+        p,
+        json!({"changes":[
+            {"op":"title","ticket":id,"data":{"to":"Must not land"}},
+            {"op":"priority","ticket":id,"data":{"to":10}}
+        ]}),
+        "invalid-priority",
+    );
+    assert_eq!(ok(p, &["show", id])["title"], "Synthetic priority");
+    assert_eq!(
+        ok(p, &["priority", id, "--clear"])["ticket"]["priority"],
+        Value::Null
+    );
+    assert_disposable(p);
+    let config = std::fs::read_to_string(p.join("zwanenzang.toml"))
+        .unwrap()
+        .replace("highest = 65", "highest = 1")
+        .replace("lowest = 67", "lowest = 12")
+        .replace("default = 66", "default = 5");
+    std::fs::write(p.join("zwanenzang.toml"), config).unwrap();
+    assert_eq!(ok(p, &["priority", id, "12"])["ticket"]["priority"], 12);
+    // Narrowing the live range never retroactively rejects old priority events.
+    assert_eq!(ok(p, &["show", id])["priority"], 12);
+    assert_eq!(
+        ok_stdin(p, &["read"], "{}")["tracker"]["priority"]["default"],
+        5
+    );
+}
+
+#[test]
 fn creations_references_and_results_survive_interleaved_noops() {
     let d = tracker();
     let p = d.path();

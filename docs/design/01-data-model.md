@@ -53,14 +53,30 @@ fatal. The same failure on a live write is an error returned to the caller.
 A `doc` event with a stale base is the one exception: replay keeps it in the
 document's history as a lost edit instead of skipping it (see Documents).
 
+## Derived activity and tag intervals
+
+Ticket views expose `activity`, the event reference (`id`, `actor`, `ts`)
+corresponding to `last_event`: any accepted own-ticket event, including replay
+no-ops and lost document versions. Other-side relationship changes do not
+advance it. `tag_since` records the effective absent-to-present event for each
+currently present tag. Duplicate additions preserve the interval; removal
+clears it, and readdition starts a new interval. These are derived during
+replay, not new operations or writable clocks. Late-arriving history therefore
+recomputes them deterministically. Event order remains ULID order; selected
+wall time need not increase. Neither field claims remote freshness.
+
 ## Operations
 
 Ticket lifecycle and metadata:
 
 - `create` — title; entity id is the event's entity id. Numberless until published.
 - `number` — assigns the human-facing number. Written by the publish step only.
-- `title`, `status`, `kind` — scalar fields. Status must be in the tracker's
-  configured vocabulary.
+- `title`, `status`, `kind`, `priority` — scalar fields. Status must be in
+  the tracker's configured vocabulary. Priority is nullable native Org value
+  0–90 (numeric 0–64, A–Z as 65–90), `{to: integer or null}` with required
+  `to`. Live range/default settings live in `[priority]` in TOML; replay
+  accepts all native values to preserve history when settings change.
+  Unset is distinct from the effective default. See the Org client notes.
 - `parent` — set or clear the parent ticket. Cycles are rejected.
 - `relate` / `unrelate` — undirected relation to another ticket.
 - `depend` / `undepend` — add/remove a same-tracker prerequisite on the
@@ -300,7 +316,7 @@ none changes a decision above.
   at all counts as stale. On a live write a stale base is the error
   `stale-doc-base`.
 - **Concurrent field reports.** For each accepted `title`, `status`,
-  `kind` or `parent` event, every earlier change to the same field of the
+  `kind`, `priority` or `parent` event, every earlier change to the same field of the
   same ticket by another actor that its writer had not seen is reported, if
   the values differ. Two actors choosing the same value is not a conflict.
 - **Numbers.** "Unique and greater than any existing number": a number

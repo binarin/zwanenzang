@@ -25,6 +25,31 @@ pub struct RepoConfig {
     pub url: String,
 }
 
+/// Native Org priority values: numbers 0..=64, then character codes A..=Z.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PriorityConfig {
+    pub highest: u8,
+    pub lowest: u8,
+    pub default: u8,
+}
+
+impl Default for PriorityConfig {
+    fn default() -> Self {
+        Self {
+            highest: b'A',
+            lowest: b'C',
+            default: b'B',
+        }
+    }
+}
+
+impl PriorityConfig {
+    pub fn contains(&self, value: u8) -> bool {
+        (self.highest..=self.lowest).contains(&value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Config {
     /// The tracker root entity.
@@ -36,6 +61,8 @@ pub struct Config {
     pub kinds: Vec<String>,
     #[serde(default)]
     pub repos: BTreeMap<String, RepoConfig>,
+    #[serde(default)]
+    pub priority: PriorityConfig,
 }
 
 impl Config {
@@ -47,6 +74,7 @@ impl Config {
             statuses: DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
             kinds: DEFAULT_KINDS.iter().map(|s| s.to_string()).collect(),
             repos: BTreeMap::new(),
+            priority: PriorityConfig::default(),
         }
     }
 
@@ -57,6 +85,9 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.priority.lowest > b'Z' || !self.priority.contains(self.priority.default) {
+            return Err("priority requires 0 <= highest <= default <= lowest <= 90".into());
+        }
         if !valid_prefix(&self.prefix) {
             return Err(format!(
                 "prefix {:?} must be an uppercase letter followed by up to nine uppercase letters or digits",
@@ -109,6 +140,11 @@ impl Config {
         out.push_str("# The first status is the default for new tickets.\n");
         out.push_str(&format!("statuses = {}\n", list(&self.statuses)));
         out.push_str(&format!("kinds = {}\n\n", list(&self.kinds)));
+        out.push_str("# Native Org priority values: 0..64 numeric, 65..90 letters A..Z.\n");
+        out.push_str(&format!(
+            "[priority]\nhighest = {}\nlowest = {}\ndefault = {}\n\n",
+            self.priority.highest, self.priority.lowest, self.priority.default
+        ));
         out.push_str("# Repository aliases named by branch and mr events, for example:\n");
         out.push_str("# [repos.app]\n# url = \"https://forge.example/owner/app\"\n");
         for (alias, repo) in &self.repos {

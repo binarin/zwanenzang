@@ -2,7 +2,7 @@
 
 ;; Author: Alexey Lebedeff
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "31.1"))
+;; Package-Requires: ((emacs "31.1") (org-ql "0.9"))
 ;; Keywords: outlines, tools
 
 ;; This file is not part of GNU Emacs.
@@ -429,26 +429,28 @@ The client sets and clears it; it is never a tracker tag.")
     (org-back-to-heading t)
     (let ((case-fold-search nil))
       (list :keyword (org-get-todo-state)
+            :priority (nth 3 (org-heading-components))
             :title (string-trim (substring-no-properties (org-get-heading t t t t)))
             :tags (mapcar #'substring-no-properties (org-get-tags nil t))))))
 
-(defun zwanenzang--set-heading (keyword title tags)
+(defun zwanenzang--set-heading (keyword title tags &rest priority)
   "Give the heading at point KEYWORD, TITLE and TAGS.
-Its level, priority and COMMENT marker stay.  Nothing is written when
-the heading already reads that way."
+An optional PRIORITY value sets the native cookie; nil clears it.
+Without that argument the cookie stays.  Level and COMMENT marker stay."
   (save-excursion
     (org-back-to-heading t)
     (let ((case-fold-search nil)
           (old (zwanenzang--heading)))
       (unless (and (equal keyword (plist-get old :keyword))
                    (equal title (plist-get old :title))
-                   (equal tags (plist-get old :tags)))
+                   (equal tags (plist-get old :tags))
+                   (or (null priority) (equal (car priority) (plist-get old :priority))))
         (let* ((parts (org-heading-components))
-               (priority (nth 3 parts))
+               (priority (if priority (car priority) (nth 3 parts)))
                (headline (or (nth 4 parts) ""))
                ;; The stars stay, and with them markers at the heading.
                (line (concat (and keyword (concat " " keyword))
-                             (and priority (format " [#%c]" priority))
+                             (and priority (format " [#%s]" (org-priority-to-string priority)))
                              (and (string-prefix-p (concat org-comment-string " ") headline)
                                   (concat " " org-comment-string))
                              " " title
@@ -788,7 +790,7 @@ Pull rewrites headings directly and therefore never runs this hook."
 ;; heading had then (they differ when the parent has no heading in scope).
 ;; "-" is none; a missing key is unknown.
 
-(defconst zwanenzang--sync-keys '(status title tags depends parent nest))
+(defconst zwanenzang--sync-keys '(status title priority tags depends parent nest))
 
 (defun zwanenzang--parse-sync (value)
   "Parse a ZWANENZANG_SYNC VALUE into an alist; \"-\" becomes nil."
@@ -1008,6 +1010,7 @@ a subheading gets one.  Return the conflicts."
 Every field then counts as unchanged in Org, so TICKET's values apply."
   `((status . ,(car (rassoc (plist-get heading :keyword) (zwanenzang--pull-map pull))))
     (title . ,(zwanenzang--hash (plist-get heading :title)))
+    (priority . ,(number-to-string (or (plist-get heading :priority) -1)))
     (tags . ,(zwanenzang--tags-hash (zwanenzang--tracker-tags (plist-get heading :tags))))
     (parent . ,(zwanenzang--null (alist-get 'parent ticket)))
     (nest . ,nest)))
@@ -1063,6 +1066,7 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
          (new-sync (copy-alist sync))
          (keyword (plist-get heading :keyword))
          (title (plist-get heading :title))
+         (priority (plist-get heading :priority))
          (tags (zwanenzang--tracker-tags (plist-get heading :tags)))
          conflicts description desc-state)
     (cl-flet ((settle (field decision note value key synced)
@@ -1097,6 +1101,15 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                         "tracker title skipped; Org title kept" remote
                         'title (zwanenzang--hash remote))
             (setq title remote)))
+        (let* ((remote (zwanenzang--null (alist-get 'priority ticket)))
+               (remote-key (number-to-string (or remote -1)))
+               ;; Upgrade old clients: missing baseline means no cookie.
+               (base (or (alist-get 'priority sync) "-1")))
+          (when (settle "priority"
+                        (zwanenzang--merge (number-to-string (or priority -1)) base remote-key)
+                        "tracker priority skipped; Org cookie kept" remote-key
+                        'priority remote-key)
+            (setq priority remote)))
         (let ((remote (alist-get 'tags ticket)))
           (when (settle "tags" (zwanenzang--merge (zwanenzang--tags-hash tags)
                                                   (zwanenzang--sync-get sync 'tags)
@@ -1158,6 +1171,17 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
           description))
         (when (integerp (alist-get 'number ticket))
           (zwanenzang--put "ZWANENZANG_NUMBER" (alist-get 'display ticket)))
+        (zwanenzang--put "ZWANENZANG_ACTIVITY" (alist-get 'ts (alist-get 'activity ticket)))
+        (zwanenzang--put "ZWANENZANG_TAG_SINCE"
+                         (and (alist-get 'tag_since ticket)
+                              (zwanenzang--json-encode (alist-get 'tag_since ticket))))
+        (unless (and (org-entry-get nil "ZWANENZANG_READ_AT")
+                     (equal (org-entry-get nil "ZWANENZANG_CURSOR")
+                            (zwanenzang--null (alist-get 'cursor entry))))
+          (zwanenzang--put "ZWANENZANG_READ_AT" (format-time-string "%FT%TZ" nil t)))
+        (zwanenzang--put "ZWANENZANG_INACTIVE"
+                         (and (or (eq (alist-get 'archived ticket) t)
+                                  (eq (alist-get 'tombstoned ticket) t)) "t"))
         (zwanenzang--put "ZWANENZANG_CURSOR" (zwanenzang--null (alist-get 'cursor entry)))
         (zwanenzang--put "ZWANENZANG_SYNC" (zwanenzang--format-sync new-sync))
         (when desc-state
@@ -1167,7 +1191,8 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
          keyword title
          (append tags
                  (and (member org-archive-tag (plist-get heading :tags)) (list org-archive-tag))
-                 (and conflicts (list zwanenzang-conflict-tag))))
+                 (and conflicts (list zwanenzang-conflict-tag)))
+         priority)
         (mapcar #'car conflicts)))))
 
 (defun zwanenzang--conflict-label (ticket)
@@ -1199,6 +1224,7 @@ Sync state and conflict notes are left out."
         (segments (zwanenzang--body-segments (zwanenzang--body))))
     (list (plist-get heading :keyword)
           (plist-get heading :title)
+          (plist-get heading :priority)
           (zwanenzang--dependency-refs)
           (zwanenzang--tracker-tags (plist-get heading :tags))
           (zwanenzang--segments-text segments)
@@ -1387,10 +1413,22 @@ ticket and a note saying why."
   "Why the scope at ROOT must not WHAT with the tracker at DIR, or nil.
 RESULT is the read of that tracker; the scope is bound to the first one."
   (let ((stored (org-entry-get root "ZWANENZANG_TRACKER"))
-        (id (alist-get 'id (alist-get 'tracker result))))
-    (when (and stored (not (equal stored id)))
+        (id (alist-get 'id (alist-get 'tracker result)))
+        (priority (alist-get 'priority (alist-get 'tracker result))))
+    (cond
+     ((and stored (not (equal stored id)))
       (format "zwanenzang: %s of %s blocked: it is bound to tracker %s, %s is %s"
-              what (zwanenzang--scope-name root) stored dir id))))
+              what (zwanenzang--scope-name root) stored dir id))
+     ((and priority
+           (not (equal priority `((highest . ,org-priority-highest)
+                                  (lowest . ,org-priority-lowest)
+                                  (default . ,org-priority-default)))))
+      ;; Compare by key, not JSON object order.
+      (unless (and (= (alist-get 'highest priority) org-priority-highest)
+                   (= (alist-get 'lowest priority) org-priority-lowest)
+                   (= (alist-get 'default priority) org-priority-default))
+        (format "zwanenzang: %s blocked: align Org PRIORITIES / org-priority-{highest,lowest,default} with [priority] in %s/zwanenzang.toml (%S); no settings were overwritten"
+                what dir priority))))))
 
 (defun zwanenzang--hide-docs (root)
   "The names in the ZWANENZANG_HIDE_DOCS of the scope at ROOT."
@@ -1662,6 +1700,12 @@ summaries for resolving dependency numbers, including absent prerequisites."
                                        (zwanenzang--sync-get sync 'title) nil)
                  (not (equal title (string-trim (alist-get 'title ticket)))))
         (zwanenzang--plan-add plan "title" ref `((to . ,title)))))
+    (let* ((priority (plist-get shown :priority))
+           (key (number-to-string (or priority -1)))
+           (base (or (alist-get 'priority sync) "-1")))
+      (when (and (not (equal key base))
+                 (not (equal priority (zwanenzang--null (alist-get 'priority ticket)))))
+        (zwanenzang--plan-add plan "priority" ref `((to . ,(or priority :null))))))
     (when (zwanenzang--edited-p (zwanenzang--tags-hash tags)
                                 (zwanenzang--sync-get sync 'tags) (null tags))
       (let ((remote (alist-get 'tags ticket)))
@@ -2088,6 +2132,8 @@ The tracker is the one of the scope containing point."
     buffer))
 
 (add-hook 'org-blocker-hook #'zwanenzang--block-dependencies)
+
+(autoload 'zwanenzang-queue "zwanenzang-queue" nil t)
 
 (provide 'zwanenzang)
 ;;; zwanenzang.el ends here

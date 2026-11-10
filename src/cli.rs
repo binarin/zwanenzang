@@ -87,6 +87,14 @@ pub enum Command {
         #[arg(long, conflicts_with = "kind")]
         clear: bool,
     },
+    /// Set native Org priority (0..64 numeric; 65..90 = A..Z), or clear it.
+    Priority {
+        ticket: String,
+        #[arg(required_unless_present = "clear")]
+        priority: Option<u8>,
+        #[arg(long, conflicts_with = "priority")]
+        clear: bool,
+    },
     /// Set or clear a ticket's parent.
     Parent {
         ticket: String,
@@ -465,6 +473,14 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
         }),
         Command::Kind { ticket, kind, .. } => ctx.mutate(&ticket, |_, id| {
             Ok(one(id, Op::Kind(KindData { to: kind })))
+        }),
+        Command::Priority {
+            ticket, priority, ..
+        } => ctx.mutate(&ticket, |_, id| {
+            Ok(one(
+                id,
+                Op::Priority(crate::event::PriorityData { to: priority }),
+            ))
         }),
         Command::Parent { ticket, parent, .. } => ctx.mutate(&ticket, |view, id| {
             let to = parent.map(|p| view.resolve(&p)).transpose()?;

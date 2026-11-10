@@ -81,8 +81,8 @@ pub fn apply(
                 let mut data = change.data;
                 let fields: &[&str] = match change.op.as_str() {
                     "create" => &["title", "status", "kind"],
-                    "title" | "status" | "kind" | "parent" | "relate" | "unrelate" | "depend"
-                    | "undepend" => &["to"],
+                    "title" | "status" | "kind" | "priority" | "parent" | "relate" | "unrelate"
+                    | "depend" | "undepend" => &["to"],
                     "tag" | "untag" => &["tag"],
                     "branch" => &["repo", "name"],
                     "mr" => &["repo", "url"],

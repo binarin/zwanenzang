@@ -22,6 +22,96 @@ fn based(dir: &tempfile::TempDir) -> Tracker {
 }
 
 #[test]
+fn activity_and_tag_intervals_follow_accepted_replay_not_wall_time() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let tag = || TagData {
+        tag: "needs_human".into(),
+    };
+    let mut add = ev(u(20), ACTOR_A, Some(u(BASE_LAST)), u(T1), Op::Tag(tag()));
+    add.ts = "2026-11-08T00:00:00Z".into();
+    let mut duplicate = ev(u(22), ACTOR_B, Some(u(BASE_LAST)), u(T1), Op::Tag(tag()));
+    duplicate.ts = "2026-11-06T00:00:00Z".into();
+    append_events(&t, &[duplicate.clone(), add.clone()]);
+    let rp = load(&t);
+    let ticket = &rp.state.tickets[&u(T1)];
+    assert_eq!(ticket.activity.id, duplicate.id);
+    assert_eq!(ticket.activity.ts, duplicate.ts);
+    assert_eq!(ticket.tag_since["needs_human"].id, add.id);
+    // A newly arrived event sorting before the duplicate must recompute the interval.
+    let remove = ev(u(21), ACTOR_A, Some(u(20)), u(T1), Op::Untag(tag()));
+    append_events(&t, &[remove]);
+    let rp = load(&t);
+    assert_eq!(
+        rp.state.tickets[&u(T1)].tag_since["needs_human"].id,
+        duplicate.id
+    );
+    // Rejected own-ticket changes and accepted other-side changes do not advance activity.
+    append_events(
+        &t,
+        &[
+            ev(u(23), ACTOR_A, Some(u(22)), u(T1), status("invalid")),
+            ev(
+                u(24),
+                ACTOR_A,
+                Some(u(23)),
+                u(T2),
+                Op::Relate(RelateData { to: u(T1) }),
+            ),
+        ],
+    );
+    let rp = load(&t);
+    assert_eq!(rp.state.tickets[&u(T1)].activity.id, duplicate.id);
+    assert_eq!(rp.state.tickets[&u(T2)].activity.id, u(24));
+    let view = View::new(&t, &rp);
+    let summary = view.summary(&rp.state.tickets[&u(T1)]);
+    assert_eq!(summary["activity"]["id"], json!(duplicate.id));
+    assert_eq!(
+        summary["tag_since"]["needs_human"]["ts"],
+        json!(duplicate.ts)
+    );
+    append_events(
+        &t,
+        &[ev(u(25), ACTOR_A, Some(u(24)), u(T1), Op::Untag(tag()))],
+    );
+    let rp = load(&t);
+    assert!(rp.state.tickets[&u(T1)].tag_since.is_empty());
+    assert_eq!(rp.state.tickets[&u(T1)].activity.id, u(25));
+}
+
+#[test]
+fn priority_replay_reports_concurrent_changes_and_preserves_native_values() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let priority = |to| Op::Priority(crate::event::PriorityData { to });
+    append_events(
+        &t,
+        &[
+            ev(u(20), ACTOR_A, Some(u(BASE_LAST)), u(T1), priority(Some(1))),
+            ev(
+                u(21),
+                ACTOR_B,
+                Some(u(BASE_LAST)),
+                u(T1),
+                priority(Some(90)),
+            ),
+            ev(u(22), ACTOR_A, Some(u(21)), u(T1), priority(Some(91))),
+        ],
+    );
+    let rp = load(&t);
+    assert_eq!(rp.state.tickets[&u(T1)].priority, Some(90));
+    assert_eq!(rp.state.tickets[&u(T1)].activity.id, u(21));
+    assert_eq!(rp.state.concurrent.len(), 1);
+    assert_eq!(rp.state.concurrent[0].field, "priority");
+    assert_eq!(skipped_codes(&rp), vec!["invalid-priority"]);
+    append_events(
+        &t,
+        &[ev(u(23), ACTOR_A, Some(u(22)), u(T1), priority(None))],
+    );
+    assert_eq!(load(&t).state.tickets[&u(T1)].priority, None);
+}
+
+#[test]
 fn base_fixture_replays_cleanly() {
     let dir = disposable_dir();
     let t = based(&dir);
@@ -801,6 +891,7 @@ fn stale_document_base_is_lost_at_replay() {
     assert_eq!(lost, vec![(u(20), false), (u(21), false), (u(22), true)]);
     assert_eq!(rp.state.lost_docs.len(), 1);
     assert_eq!(rp.state.lost_docs[0].event, u(22));
+    assert_eq!(rp.state.tickets[&u(T1)].activity.id, u(22));
     assert_eq!(rp.state.lost_docs[0].current, Some(u(21)));
     let (report, issues) = lint(&t.config, &rp);
     assert!(issues);

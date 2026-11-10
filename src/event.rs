@@ -36,6 +36,12 @@ pub struct KindData {
     pub to: Option<String>,
 }
 
+/// Native Org priority value; `to: null` removes the explicit priority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriorityData {
+    pub to: Option<u8>,
+}
+
 /// `parent` data; `to: null` clears the parent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParentData {
@@ -106,6 +112,7 @@ pub enum Op {
     Title(TextTo),
     Status(TextTo),
     Kind(KindData),
+    Priority(PriorityData),
     Parent(ParentData),
     Relate(RelateData),
     Unrelate(RelateData),
@@ -131,6 +138,7 @@ pub const OP_NAMES: &[&str] = &[
     "title",
     "status",
     "kind",
+    "priority",
     "parent",
     "relate",
     "unrelate",
@@ -163,6 +171,7 @@ impl Op {
             Op::Title(_) => "title",
             Op::Status(_) => "status",
             Op::Kind(_) => "kind",
+            Op::Priority(_) => "priority",
             Op::Parent(_) => "parent",
             Op::Relate(_) => "relate",
             Op::Unrelate(_) => "unrelate",
@@ -211,6 +220,10 @@ impl Op {
                 require(&data, "to")?;
                 Op::Kind(p(data)?)
             }
+            "priority" => {
+                require(&data, "to")?;
+                Op::Priority(p(data)?)
+            }
             "parent" => {
                 require(&data, "to")?;
                 Op::Parent(p(data)?)
@@ -246,6 +259,7 @@ impl Serialize for Op {
             Op::Number(d) => d.serialize(s),
             Op::Title(d) | Op::Status(d) => d.serialize(s),
             Op::Kind(d) => d.serialize(s),
+            Op::Priority(d) => d.serialize(s),
             Op::Parent(d) => d.serialize(s),
             Op::Relate(d) | Op::Unrelate(d) | Op::Depend(d) | Op::Undepend(d) => d.serialize(s),
             Op::Branch(d) => d.serialize(s),
@@ -378,6 +392,8 @@ mod tests {
             Op::Title(TextTo { to: "x".into() }),
             Op::Status(TextTo { to: "x".into() }),
             Op::Kind(KindData { to: None }),
+            Op::Priority(PriorityData { to: Some(10) }),
+            Op::Priority(PriorityData { to: None }),
             Op::Parent(ParentData { to: Some(u) }),
             Op::Parent(ParentData { to: None }),
             Op::Relate(RelateData { to: u }),

@@ -272,6 +272,18 @@ impl Tracker {
                     ),
                 }));
             }
+            if let Op::Priority(d) = &ev.op
+                && d.to
+                    .is_some_and(|value| !self.config.priority.contains(value))
+            {
+                return Err(Error::Rejected(Rejection {
+                    code: RejectCode::InvalidPriority,
+                    message: format!(
+                        "priority is outside configured range {}..{}",
+                        self.config.priority.highest, self.config.priority.lowest
+                    ),
+                }));
+            }
             let mut trial = state.clone();
             let applied = apply(&mut trial, &ev).map_err(Error::Rejected)?;
             if applied.changed
