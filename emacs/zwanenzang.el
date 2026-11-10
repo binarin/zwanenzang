@@ -2165,6 +2165,103 @@ A scope or file that fails, in any way, is reported and the others run."
     (zwanenzang-report (format "zwanenzang: synced %d scopes, %d failed" done (length failures))
                        (reverse failures))))
 
+;;;; Resolve duplicate tickets
+
+(defun zwanenzang--prose-synced-p (marker)
+  "Whether MARKER's description and all present documents match saved hashes.
+Missing state is not evidence that a copy is unchanged."
+  (save-excursion
+    (goto-char marker)
+    (and (equal (org-entry-get nil "ZWANENZANG_DESC_HASH")
+                (zwanenzang--hash
+                 (zwanenzang--body-description (zwanenzang--body))))
+         (seq-every-p
+          (lambda (doc)
+            (save-excursion
+              (goto-char (cdr doc))
+              (equal (org-entry-get nil "ZWANENZANG_HASH")
+                     (zwanenzang--hash
+                      (zwanenzang--body-description (zwanenzang--body))))))
+          (zwanenzang--doc-headings)))))
+
+(defun zwanenzang--detach-entry ()
+  "Turn the entry at point into untracked Org without deleting its text.
+Remove the keyword too, so push cannot create a replacement ticket."
+  (dolist (property (org-entry-properties nil 'standard))
+    (when (string-prefix-p "ZWANENZANG" (car property))
+      (org-entry-delete nil (car property))))
+  (zwanenzang--write-body
+   (zwanenzang--compose-body (zwanenzang--body) '(("ZWANENZANG_CONFLICT"))))
+  (let ((heading (zwanenzang--heading)))
+    (zwanenzang--set-heading
+     nil (plist-get heading :title)
+     (remove "zz_conflict" (plist-get heading :tags)))))
+
+;;;###autoload
+(defun zwanenzang-resolve-duplicate ()
+  "Choose which duplicate at or above point keeps its tracker identity.
+Offer the sole copy matching saved prose hashes as a default, otherwise
+require an explicit choice.  After confirmation detach all other copies
+in this scope, retaining their text.  Refuse if a copy to detach contains
+ticket headings: move those children first.  No CLI calls or file saves
+are made; the entire edit is undoable."
+  (interactive)
+  (let ((root (zwanenzang--root-at-point)))
+    (org-with-wide-buffer
+     (when buffer-read-only (user-error "zwanenzang: buffer is read-only"))
+     (let* ((start (zwanenzang--ticket-heading-at-point root))
+            (id (org-entry-get start "ZWANENZANG_ID"))
+            (copies (seq-filter
+                     (lambda (h) (equal id (plist-get h :id)))
+                     (car (zwanenzang--scan root))))
+            (choices (mapcar
+                      (lambda (h)
+                        (let ((marker (plist-get h :marker)))
+                          (cons (save-excursion
+                                  (goto-char marker)
+                                  (format "Line %d: %s" (line-number-at-pos)
+                                          (org-get-heading t t t t)))
+                                marker)))
+                      copies))
+            (unchanged (seq-filter
+                        (lambda (choice) (zwanenzang--prose-synced-p (cdr choice)))
+                        choices)))
+       (unless (> (length choices) 1)
+         (user-error "zwanenzang: this ticket has no duplicate in this scope"))
+       (let* ((default (and (= (length unchanged) 1) (caar unchanged)))
+              (choice (completing-read
+                       "Keep tracker identity on: " choices nil t nil nil default))
+              (keep (cdr (assoc choice choices))))
+         (unless keep (user-error "zwanenzang: choose a heading explicitly"))
+         ;; Check every copy before editing any: detaching an ancestor would
+         ;; otherwise silently change its children's parent on the next push.
+         (let ((headings (plist-get (zwanenzang--scan-all root) :headings)))
+           (dolist (copy choices)
+             (unless (eq (cdr copy) keep)
+               (let ((end (zwanenzang--subtree-end (cdr copy))))
+                 (when (seq-some
+                        (lambda (h)
+                          (let ((marker (plist-get h :marker)))
+                            (and (> marker (cdr copy)) (< marker end))))
+                        headings)
+                   (user-error
+                    "zwanenzang: %s contains ticket headings; move them first"
+                    (car copy)))))))
+         (when (yes-or-no-p
+                (format "Keep %s; turn %d other copies into plain Org? "
+                        choice (1- (length copies))))
+           (zwanenzang--one-undo-step
+             (dolist (copy choices)
+               (unless (eq (cdr copy) keep)
+                 (goto-char (cdr copy))
+                 (let ((docs (zwanenzang--doc-headings)))
+                   (zwanenzang--detach-entry)
+                   (dolist (doc docs)
+                     (goto-char (cdr doc))
+                     (zwanenzang--detach-entry))))))
+           (goto-char keep)
+           (message "zwanenzang: duplicate resolved; buffer not saved")))))))
+
 ;;;; Adopt foreign tickets
 
 (defun zwanenzang--clear-foreign-state (&optional document)
