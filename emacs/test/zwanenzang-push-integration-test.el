@@ -56,6 +56,145 @@
       (org-end-of-subtree t t)
       (org-paste-subtree level))))
 
+(ert-deftest zwanenzang-adopt-foreign-creates-only-selected-ticket ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     (concat "** TODO [#A] Imported :alpha:zz_conflict:\n"
+             ":PROPERTIES:\n:ZWANENZANG_ID: foreign-id\n:ID: human-link\n"
+             ":ZWANENZANG_NUMBER: OTHER-0042\n:ZWANENZANG_SYNC: stale\n"
+             ":ZWANENZANG_DEPENDS_ON: OTHER-0001\n:ARCHIVE_TIME: yesterday\n"
+             ":CUSTOM: keep\n:END:\nHuman description\n"
+             ":ZWANENZANG_COMMENTS:\nOld comments\n:END:\n"
+             ":ZWANENZANG_CONFLICT:\nOld conflict\n:END:\n"
+             "*** Plan\n:PROPERTIES:\n:ZWANENZANG_DOC: plan\n"
+             ":ZWANENZANG_VERSION: stale\n:ZWANENZANG_HASH: stale\n:END:\nPlan text\n"
+             "*** TODO Foreign child\n:PROPERTIES:\n:ZWANENZANG_ID: child-id\n:END:\n"
+             "** TODO Unrelated new ticket\n"))
+    (zwanenzang-test--goto-title "Imported")
+    (zwanenzang-adopt-foreign)
+    (let* ((id (zwanenzang-test-id-of "Imported"))
+           (ticket (zwanenzang-test-show trk id)))
+      (should-not (equal id "foreign-id"))
+      (should (equal (alist-get 'tags ticket) '("alpha")))
+      (should (= (alist-get 'priority ticket) ?A))
+      (should (equal (zwanenzang-test-property id "ID") "human-link"))
+      (should (equal (zwanenzang-test-property id "CUSTOM") "keep"))
+      (should-not (zwanenzang-test-property id "ARCHIVE_TIME"))
+      (should-not (zwanenzang-test-property id "ZWANENZANG_DEPENDS_ON"))
+      (should (equal (zwanenzang-test--doc-text trk id "description")
+                     "Human description\n\nFormer tracker id: foreign-id\n"))
+      (should (equal (zwanenzang-test--doc-text trk id "plan") "Plan text\n"))
+      (should-not (string-match-p "Old comments\\|Old conflict" (buffer-string)))
+      (should-not (zwanenzang-test-id-of "Unrelated new ticket"))
+      (should (equal (zwanenzang-test-id-of "Foreign child") "child-id"))
+      (should (string-match-p (regexp-quote id) (zwanenzang-test--on-disk)))
+      (zwanenzang-test-goto id)
+      (let ((before (buffer-string)) (head (zwanenzang-test-head trk)))
+        (should-error (zwanenzang-adopt-foreign) :type 'user-error)
+        (should (equal before (buffer-string)))
+        (should (equal head (zwanenzang-test-head trk)))))))
+
+(ert-deftest zwanenzang-adopt-foreign-fetches-before-deciding-foreign ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let* ((other (zwanenzang-test-clone net "other-test-repo"))
+           (created (zwanenzang-test-cli other "create" "Already exists" "--status" "todo"))
+           (id (alist-get 'id (alist-get 'ticket created))))
+      ;; Org arrived before this clone fetched the corresponding ticket.
+      (should-not (gethash id (zwanenzang--known-tickets trk)))
+      (zwanenzang-test-append
+       (format "** TODO Already exists\n:PROPERTIES:\n:ZWANENZANG_ID: %s\n:END:\nText\n" id))
+      (zwanenzang-test-goto id)
+      (let ((before (buffer-string)))
+        (should-error (zwanenzang-adopt-foreign) :type 'user-error)
+        (should (equal before (buffer-string)))
+        (should (equal (zwanenzang-test-id-of "Already exists") id))
+        (should (= (hash-table-count (zwanenzang--known-tickets trk)) 1))))))
+
+(ert-deftest zwanenzang-adopt-foreign-refuses-unsuccessful-sync ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     "** TODO Foreign\n:PROPERTIES:\n:ZWANENZANG_ID: foreign-id\n:END:\nText\n")
+    (zwanenzang-test--goto-title "Foreign")
+    (let* ((before (buffer-string))
+           (head (zwanenzang-test-head trk))
+           (real zwanenzang--call)
+           (zwanenzang--call
+            (lambda (dir args &optional input)
+              (if (equal args '("sync"))
+                  '((sync . ((error . ((code . "fetch-failed") (message . "offline"))))))
+                (funcall real dir args input)))))
+      (should-error (zwanenzang-adopt-foreign) :type 'user-error)
+      (should (equal before (buffer-string)))
+      (should (equal head (zwanenzang-test-head trk))))))
+
+(ert-deftest zwanenzang-adopt-foreign-without-keyword-is-user-error ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     "** Foreign\n:PROPERTIES:\n:ZWANENZANG_ID: foreign-id\n:END:\nText\n")
+    (zwanenzang-test--goto-title "Foreign")
+    (let ((before (buffer-string)) (head (zwanenzang-test-head trk)))
+      (should-error (zwanenzang-adopt-foreign) :type 'user-error)
+      (should (equal before (buffer-string)))
+      (should (equal head (zwanenzang-test-head trk))))))
+
+(ert-deftest zwanenzang-adopt-foreign-refusal-keeps-original-state ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     "** WAIT Foreign\n:PROPERTIES:\n:ZWANENZANG_ID: foreign-id\n:END:\nText\n")
+    (zwanenzang-test--goto-title "Foreign")
+    (let ((before (buffer-string)) (head (zwanenzang-test-head trk)))
+      (should-error (zwanenzang-adopt-foreign) :type 'user-error)
+      (should (equal before (buffer-string)))
+      (should (equal head (zwanenzang-test-head trk))))))
+
+(ert-deftest zwanenzang-adopt-foreign-apply-failure-keeps-original-state ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     "** TODO Foreign\n:PROPERTIES:\n:ZWANENZANG_ID: foreign-id\n:END:\nText\n")
+    (zwanenzang-test--goto-title "Foreign")
+    (let* ((before (buffer-string))
+           (head (zwanenzang-test-head trk))
+           (real zwanenzang--call)
+           (zwanenzang--call (lambda (dir args &optional input)
+                              (if (equal args '("apply"))
+                                  (user-error "apply refused")
+                                (funcall real dir args input)))))
+      (should-error (zwanenzang-adopt-foreign) :type 'user-error)
+      (should (equal before (buffer-string)))
+      (should (equal head (zwanenzang-test-head trk))))))
+
+(ert-deftest zwanenzang-adopt-foreign-keeps-new-id-after-save-failure ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     "** TODO Foreign\n:PROPERTIES:\n:ZWANENZANG_ID: foreign-id\n:END:\nText\n")
+    (zwanenzang-test--goto-title "Foreign")
+    (cl-letf (((symbol-function 'save-buffer) (lambda (&rest _) (error "save failed"))))
+      (should-error (zwanenzang-adopt-foreign) :type 'user-error))
+    (let ((id (zwanenzang-test-id-of "Foreign")))
+      (should-not (equal id "foreign-id"))
+      (should (equal (alist-get 'title (zwanenzang-test-show trk id)) "Foreign"))
+      (zwanenzang-test-at-root #'zwanenzang-push)
+      (should (equal id (zwanenzang-test-id-of "Foreign"))))))
+
+(ert-deftest zwanenzang-adopt-foreign-keeps-saved-id-after-final-pull-failure ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (zwanenzang-test-append
+     "** TODO Foreign\n:PROPERTIES:\n:ZWANENZANG_ID: foreign-id\n:END:\nText\n")
+    (zwanenzang-test--goto-title "Foreign")
+    (let* ((real zwanenzang--call)
+           applied
+           (zwanenzang--call (lambda (dir args &optional input)
+                              (when (and applied (equal args '("list" "--all")))
+                                (user-error "read failed"))
+                              (prog1 (funcall real dir args input)
+                                (when (equal args '("apply")) (setq applied t))))))
+      (should-error (zwanenzang-adopt-foreign) :type 'user-error))
+    (let ((id (zwanenzang-test-id-of "Foreign")))
+      (should-not (equal id "foreign-id"))
+      (should (string-match-p (regexp-quote id) (zwanenzang-test--on-disk)))
+      (zwanenzang-test-at-root #'zwanenzang-push)
+      (should (equal id (zwanenzang-test-id-of "Foreign"))))))
+
 (ert-deftest zwanenzang-push-saves-new-org-ids-before-followup-pull ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
     (zwanenzang-test-append
