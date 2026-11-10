@@ -436,6 +436,29 @@ standard Org `ID` is only filled in when missing, as described above.
 - Named document: a subheading with `ZWANENZANG_DOC: <name>`,
   `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`.
 
+### Adding comments
+
+On ticket headings inside a scope, `org-add-note` (`C-c C-z`, or agenda
+`z`) opens an Org comment compose buffer. `C-c C-c` appends one tracker
+comment through `apply`, then pulls the scope to render it; `C-c C-k`
+aborts without writing. It never pushes other Org edits. Unpublished
+headings are refused: push them explicitly first. Structural headings and
+headings outside scopes keep ordinary Org note behavior.
+
+The advice is installed on load, gated by the inherited `ZWANENZANG`
+property. A prefix argument bypasses it; setting
+`zwanenzang-redirect-org-notes` to nil disables it. State-change logging
+continues through `org-add-log-setup`, untouched. `zwanenzang-comment` is
+also available directly. The optional CLI link field is not exposed;
+ordinary Org links can be included in the comment text.
+
+The compose buffer retains a refused draft. After a locally accepted write
+it closes, even if publication or the subsequent pull fails: retry sync or
+pull, not send. Publication failures use the normal report. A killed,
+retargeted, duplicate or foreign source heading is refused before writing.
+The generated comments drawer remains a one-way projection, not an input;
+manual edits there are overwritten on pull (no new edit warning is added).
+
 ### Prose, comments and conflicts
 
 - The description is the body before the first subheading, excluding
