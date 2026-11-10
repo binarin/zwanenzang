@@ -29,6 +29,57 @@
       (setq-local org-priority-highest 1 org-priority-lowest 12 org-priority-default 5)
       (should-not (zwanenzang--tracker-mismatch "push" root "/t" result)))))
 
+(ert-deftest zwanenzang-priority-remedy-uses-active-org-and-asks-before-visiting ()
+  (dolist (settings '((65 90 70) (1 12 5)))
+    (zwanenzang-test-with-org
+        (format "#+PRIORITIES: %s %s %s\n* Scope\n"
+                (if (= (car settings) 65) "A" "1")
+                (if (= (car settings) 65) "Z" "12")
+                (if (= (car settings) 65) "F" "5"))
+      (goto-char (point-max))
+      (org-back-to-heading)
+      (let* ((root (point-marker))
+             (before (buffer-string))
+             (kill-ring nil)
+             (noninteractive nil)
+             (result '((tracker (id . "synthetic")
+                                (priority (highest . 65) (lowest . 67) (default . 66)))))
+             (refusal (zwanenzang--tracker-mismatch "push" root "/ssh:host:/tracker/" result))
+             (expected (apply #'format "# 0..64 are numeric priorities; 65..90 are character codes A..Z.\n[priority]\nhighest = %d\nlowest = %d\ndefault = %d\n" settings))
+             opened asked notice)
+        (should (string-match-p (regexp-quote expected) refusal))
+        (should (string-match-p "character codes A..Z" refusal))
+        (should (string-match-p "Either align Org to the tracker values" refusal))
+        (should (string-match-p "every user of the tracker" refusal))
+        (should (string-match-p "save, commit and push in the tracker clone, then retry" refusal))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (text &rest args) (setq notice (apply #'format text args))))
+                  ((symbol-function 'y-or-n-p)
+                   (lambda (prompt) (setq asked prompt notice nil) nil))
+                  ((symbol-function 'find-file-other-window)
+                   (lambda (file) (setq opened file))))
+          (cl-letf (((symbol-function 'zwanenzang-report) (lambda (text) text)))
+            (should (equal
+                     (zwanenzang--report-outcome
+                      "pushed" root (zwanenzang--outcome-create :refused refusal))
+                     refusal)))
+          (should (equal (car kill-ring) expected))
+          (should (string-match-p "/ssh:host:/tracker/zwanenzang.toml" asked))
+          (should (string-match-p "priority settings differ;.*copied to kill-ring" asked))
+          (should-not opened)
+          (should (string-match-p "copied to kill-ring (see \\*zwanenzang\\*)" notice))
+          (should (string-match-p "save, commit and push, then retry" notice))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (setq notice nil) t)))
+            (zwanenzang--offer-priority-remedy refusal))
+          (should (equal opened "/ssh:host:/tracker/zwanenzang.toml"))
+          (should (string-match-p "copied to kill-ring" notice)))
+        (should (equal before (buffer-string)))
+        ;; A tracker identity mismatch takes precedence and has no remedy.
+        (org-entry-put root "ZWANENZANG_TRACKER" "other")
+        (should-not (get-text-property
+                     0 'zwanenzang-priority-remedy
+                     (zwanenzang--tracker-mismatch "pull" root "/t" result)))))))
+
 (defun zwanenzang-queue-test--ticket (id priority activity waiting &optional tags)
   "Synthetic Org ticket ID with PRIORITY, ACTIVITY, WAITING and TAGS."
   (concat "** TODO " (if priority (format "[#%s] " priority) "") id
