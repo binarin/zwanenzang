@@ -280,9 +280,12 @@ The CLI stays format-blind and nothing converts it.
 
 - The description is the human's. Pull overwrites it only when the local text
   is unchanged since the cursor. Agents cannot write it.
-- Named documents render as subheadings carrying a document property. The
-  human edits them freely; push sends a new version. Pull applies an agent's
-  new version only when the local text is unchanged; otherwise conflict tag,
+- Named documents render as subheadings carrying a document property, with
+  editable inline `org` source blocks. `C-c '` opens the ordinary Org source
+  editor with real, unshifted headings; return with `C-c C-c`, or abort with
+  `C-c C-k`. Returning edits the host buffer only; push sends a new version.
+  Pull applies an agent's new version only when the local text is unchanged;
+  otherwise conflict tag,
   the agent's text in a drawer, and the agent will have to rebase on its next
   write anyway.
 - Comments render read-only, newest last, each with a link to any file or URL
@@ -434,7 +437,9 @@ standard Org `ID` is only filled in when missing, as described above.
   tags=<hash> depends=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
   stores the tracker status, so a draft shown as TODO stays draft.
 - Named document: a subheading with `ZWANENZANG_DOC: <name>`,
-  `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`.
+  `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`. `ZWANENZANG_DOC_FORMAT`
+  set to `org-src-v1` identifies its literal source-block body (not tracker
+  metadata).
 
 ### Adding comments
 
@@ -547,7 +552,7 @@ tracker.
   mapped. Pull never adds the tag, keeps it where the human set it, and
   `archived` is not part of `ZWANENZANG_SYNC`.
 - Prose: the description and named documents are compared normalized,
-  without leading blank lines or trailing whitespace. They are written
+  without leading blank lines or trailing whitespace. Descriptions are written
   verbatim (`#+begin_src`, links and other Org included) except for what
   would break the body. A heading line and every drawer-like line (`:word:`
   alone on a line, `:END:` too) get a leading comma, whatever follows them,
@@ -555,9 +560,31 @@ tracker.
   in the text was not enough: a human can add a drawer below later, the line
   then read as its opening, and the push truncated the description. The
   cost is a comma on `:wip:`-shaped lines of prose. In comments, heading
-  lines and `:END:` lines get the comma. Heading lines in named documents
-  stay escaped for now; levels are not shifted. Skipped values are
-  fixed-width `: ` lines. Drawers end at `:END:` in any case, as in Org.
+  lines and `:END:` lines get the comma. Skipped values are fixed-width
+  `: ` lines. Drawers end at `:END:` in any case, as in Org.
+- Visible named documents use a dedicated codec, not the description/drawer
+  parser. `org-src-v1` bodies end in one `#+begin_src org -i :eval never
+  :exports code :noweb no` block. Org's source escaping protects headings,
+  nested source delimiters and comma runs; its parsed source value is already
+  decoded. Only decoded, normalized prose is hashed, compared and sent to the
+  CLI. Drawers within that prose are literal content, never host metadata.
+  Host properties and human drawers remain outside the block. Prose does not
+  execute or become host tickets/scopes, and source blocks export as code.
+  Parent moves and refiles do not shift contained prose headings. Links keep
+  their existing Org-file base; no checkout projection is introduced.
+- An absent format property means the legacy comma-escaped representation,
+  even if its prose contains source blocks. Pull migrates visible documents,
+  preserving unsynced local edits and their decoded baseline; migration alone
+  writes no tracker version. Adoption retains the codec while clearing old
+  state; duplicate detachment preserves literal prose before dropping client
+  properties. Unknown formats or malformed wrappers refuse sync before any
+  apply, rather than publishing fences or truncated text. Repair the wrapper
+  (including its final closing fence) before retrying.
+- Finish or abort an active source editor before client operations on its
+  host buffer. The client refuses those operations, preserving both buffers
+  and in-flight edits, rather than reading stale host text or invalidating
+  editor markers. Standalone source editors are prose, not tracker scopes;
+  note capture there is not extended to the host ticket.
 - Reading is lenient about files earlier versions wrote. Drawers do not
   nest, so a drawer-like line with another one before its `:END:` is text;
   only the property drawer, the logbook and the client's own drawers run
