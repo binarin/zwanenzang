@@ -2360,6 +2360,143 @@ create-on-push, save the file as soon as the new identity lands."
        (zwanenzang--pull-into outcome root)))
     (zwanenzang--report-outcome "adopted in" root outcome)))
 
+;;;; Archive
+
+(defun zwanenzang--archive-status (ticket map)
+  "The closing status to send for TICKET at point, or nil to keep it.
+MAP maps statuses to keywords.  Preserve remote done statuses unless the
+human explicitly changed to a different done keyword since the last sync."
+  (let* ((keyword (org-get-todo-state))
+         (sync (zwanenzang--parse-sync (org-entry-get nil "ZWANENZANG_SYNC")))
+         (base (cdr (assoc (zwanenzang--sync-get sync 'status) map)))
+         (status (alist-get 'status ticket))
+         (remote (cdr (assoc status map)))
+         (local-done (member keyword org-done-keywords)))
+    (unless (and (member remote org-done-keywords)
+                 (not (and local-done
+                           (not (equal keyword base))
+                           (not (equal keyword remote)))))
+      (let ((closing (car (rassoc (if local-done keyword (car org-done-keywords)) map))))
+        (unless closing
+          (user-error "zwanenzang: no mapped done keyword for archiving %s"
+                      (alist-get 'id ticket)))
+        (unless (equal closing status) closing)))))
+
+(defun zwanenzang--archive-unpushed (heading)
+  "Names of locally edited non-status fields on HEADING at point.
+Compare with saved sync hashes, without compiling or sending a push."
+  (let* ((shown (zwanenzang--heading))
+         (sync (zwanenzang--parse-sync (org-entry-get nil "ZWANENZANG_SYNC")))
+         (title (plist-get shown :title))
+         (tags (zwanenzang--tracker-tags (plist-get shown :tags)))
+         (depends (zwanenzang--dependency-refs))
+         fields)
+    (dolist (field `((title ,(zwanenzang--hash title) ,(string-empty-p title))
+                     (tags ,(zwanenzang--tags-hash tags) ,(null tags))
+                     (depends ,(zwanenzang--tags-hash depends) ,(null depends))))
+      (when (zwanenzang--edited-p (nth 1 field)
+                                 (zwanenzang--sync-get sync (car field))
+                                 (nth 2 field))
+        (push (symbol-name (car field)) fields)))
+    (unless (equal (number-to-string (or (plist-get shown :priority) -1))
+                   (or (alist-get 'priority sync) "-1"))
+      (push "priority" fields))
+    (let ((base (zwanenzang--sync-get sync 'nest))
+          (nest (plist-get heading :nest)))
+      (when (if (eq base :unknown) nest (not (equal base nest)))
+        (push "parent" fields)))
+    (cl-labels ((edited-text (property)
+                 (let ((text (zwanenzang--body-description (zwanenzang--body))))
+                   (zwanenzang--edited-p (zwanenzang--hash text)
+                                        (or (org-entry-get nil property) :unknown)
+                                        (string-empty-p text)))))
+      (when (edited-text "ZWANENZANG_DESC_HASH") (push "description" fields))
+      (dolist (doc (zwanenzang--doc-headings))
+        (save-excursion
+          (goto-char (cdr doc))
+          (when (edited-text "ZWANENZANG_HASH")
+            (push (format "document %s" (car doc)) fields)))))
+    (nreverse fields)))
+
+(defun zwanenzang--archive-subtree (root start end)
+  "Close and archive known tickets between START and END in scope ROOT.
+Only status and archive operations are sent; Org text is never rewritten."
+  (when (<= start root)
+    (user-error "zwanenzang: archiving a scope root is not supported"))
+  (save-excursion
+    (goto-char start)
+    (outline-next-heading)
+    (while (< (point) end)
+      (when (org-entry-get nil "ZWANENZANG")
+        (user-error "zwanenzang: archived subtree contains a nested scope"))
+      (outline-next-heading)))
+  (let* ((tickets (car (zwanenzang--scan root)))
+         (selected (seq-filter (lambda (tk)
+                                 (let ((pos (plist-get tk :marker)))
+                                   (and (<= start pos) (< pos end))))
+                               tickets)))
+    (when selected
+      (let* ((dir (zwanenzang--scope-directory root))
+             (known (zwanenzang--known-tickets dir))
+             (blocked (zwanenzang--blocked-headings tickets known))
+             (result (zwanenzang--read-scope root dir selected blocked))
+             (refused (zwanenzang--tracker-mismatch "archive" root dir result))
+             (mapping (zwanenzang--keyword-map
+                       (org-entry-get root "ZWANENZANG_KEYWORDS")
+                       (alist-get 'statuses (alist-get 'tracker result))
+                       org-todo-keywords-1))
+             (map (car mapping))
+             (plan (zwanenzang--plan-create))
+             (outcome (zwanenzang--outcome-create
+                       :pull (zwanenzang--pull-create :root root :dir dir))))
+        (when refused (user-error "%s" refused))
+        (when (cdr mapping)
+          (user-error "zwanenzang: %s" (string-join (cdr mapping) "; ")))
+        (dolist (tk selected)
+          (when (assq tk blocked)
+            (user-error "zwanenzang: %s" (cdr (assq tk blocked)))))
+        (dolist (tk selected)
+          (save-excursion
+            (goto-char (plist-get tk :marker))
+            (let* ((id (plist-get tk :id))
+                   (entry (seq-find (lambda (e)
+                                      (equal id (alist-get 'id (alist-get 'ticket e))))
+                                    (alist-get 'tickets result)))
+                   (ticket (alist-get 'ticket entry))
+                   (status (zwanenzang--archive-status ticket map))
+                   (unpushed (zwanenzang--archive-unpushed tk)))
+              (when (eq (alist-get 'tombstoned ticket) t)
+                (user-error "zwanenzang: cannot archive tombstoned ticket %s" id))
+              (when status
+                (zwanenzang--plan-add plan "status" id `((to . ,status))))
+              (zwanenzang--plan-add plan "archive" id nil)
+              (when unpushed
+                (push (format "%s: not pushed: %s; edits remain only in the Org archive. Push before archiving to send them to the tracker."
+                              (zwanenzang--heading-label) (string-join unpushed ", "))
+                      (zwanenzang--outcome-problems outcome))))))
+        (zwanenzang--send-plan plan dir outcome)
+        (zwanenzang--report-outcome "archived in" root outcome)))))
+
+(defun zwanenzang--archive-hook ()
+  "Record Org subtree archival, without interfering with Org's move.
+Org runs this hook in the original subtree after copying it but before
+removing it.  Failures must not abort removal and leave duplicate copies."
+  (when (derived-mode-p 'org-mode)
+    (org-with-wide-buffer
+     (let ((root (ignore-errors (zwanenzang--scope-root))))
+       (when root
+         (condition-case err
+             (save-excursion
+               (org-back-to-heading t)
+               (zwanenzang--archive-subtree root (point)
+                                           (zwanenzang--subtree-end (point))))
+           ((error quit)
+            (display-warning
+             'zwanenzang
+             (format "Org archive continues; tracker archive failed or was interrupted: %s. Check tracker state, set a closing status and run `zwanenzang archive' manually if needed after correcting the problem."
+                     (error-message-string err))
+             :warning))))))))
+
 ;;;; Unarchive
 
 (defun zwanenzang--ticket-heading-at-point (root)
@@ -2444,6 +2581,7 @@ The tracker is the one of the scope containing point."
     buffer))
 
 (add-hook 'org-blocker-hook #'zwanenzang--block-dependencies)
+(add-hook 'org-archive-hook #'zwanenzang--archive-hook)
 
 (autoload 'zwanenzang-queue "zwanenzang-queue" nil t)
 
