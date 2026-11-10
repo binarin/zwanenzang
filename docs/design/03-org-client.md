@@ -193,6 +193,34 @@ document hashes still match the sync state is proposed as the original; the
 other becomes plain text when the human confirms. If both copies were edited,
 the client asks and never guesses.
 
+`zwanenzang-resolve-duplicate` acts on the ticket at or above point, within
+its scope only (nested scopes are excluded), and supports more than two
+copies. It always asks which heading keeps the identity, labeling choices
+by line and title, then asks for confirmation before changing anything.
+Exactly one copy whose description and every present direct named document
+match their saved hashes is offered as the default; missing hashes count as
+unknown. These hashes are only a suggestion, not proof of origin (deleted
+named documents cannot be detected from their former headings' properties).
+With zero or multiple matches there is no default, even when all text agrees.
+
+Detached copies and their direct named-document headings lose all
+`ZWANENZANG*` properties, the conflict tag and their TODO keywords. Removing
+the keywords prevents the next push from creating replacement tickets.
+Text, drawers other than the generated `ZWANENZANG_CONFLICT` drawer
+(including previously rendered comments), ordinary Org IDs, priority and
+other tags/properties remain. The generated conflict drawer is removed
+from detached entries and their direct named documents.
+
+If any copy selected for detachment contains ticket headings (known tickets
+or new TODO headings, including descendants under grouping headings), the
+command refuses before changing anything and asks the human to move them
+first. Otherwise the next push could silently change those children's
+tracker parents. There is no warning-and-proceed or automatic refiling;
+children under the retained copy do not prevent resolution. Nested scopes
+remain separate. The retained heading's sync state remains intact; the next
+pull recomputes its old duplicate diagnostic. No tracker calls or events occur, no file is
+saved, and the edit is one undo step. Cancellation changes nothing.
+
 ## Archive, not delete
 
 The human archives headings rather than deleting them. Archiving moves the
