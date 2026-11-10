@@ -27,6 +27,32 @@
   (let ((file buffer-file-name))
     (with-temp-buffer (insert-file-contents file) (buffer-string))))
 
+(ert-deftest zwanenzang-sync-keeps-unchanged-comments-folded ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-cli trk "comment" id "First comment")
+      (zwanenzang-test-pull)
+      (org-fold-hide-drawer-all)
+      ;; An unrelated remote body update rewrites the whole entry body.
+      (zwanenzang-test-set-doc trk id "description" "New description\n")
+      (zwanenzang-test-goto id)
+      (zwanenzang-sync)
+      (zwanenzang-test-goto id)
+      (should (nth 2 (assoc "PROPERTIES" (zwanenzang--drawer-visibility))))
+      (should (nth 2 (assoc "ZWANENZANG_COMMENTS" (zwanenzang--drawer-visibility))))
+      ;; Repeating sync must not reveal either drawer or dirty clean text.
+      (let ((before (buffer-string)))
+        (zwanenzang-sync)
+        (should (equal before (buffer-string))))
+      (zwanenzang-test-goto id)
+      (should (nth 2 (assoc "ZWANENZANG_COMMENTS" (zwanenzang--drawer-visibility))))
+      (zwanenzang-test-cli trk "comment" id "Second comment")
+      (zwanenzang-sync)
+      (zwanenzang-test-goto id)
+      (should (nth 2 (assoc "PROPERTIES" (zwanenzang--drawer-visibility))))
+      (should-not (nth 2 (assoc "ZWANENZANG_COMMENTS"
+                               (zwanenzang--drawer-visibility)))))))
+
 (ert-deftest zwanenzang-pull-discovers-tickets-with-state ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let* ((parent (zwanenzang-test-create trk "Parent" "--tag" "alpha"))

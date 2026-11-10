@@ -461,6 +461,16 @@ tracker.
   the text moves down the next time the body is written. Human text around
   drawers moves, verbatim, in front of the tail drawers; the description it
   forms is unchanged.
+- Drawer visibility is local UI state, never tracker data. Property drawers
+  are closed after client updates, including no-op updates. Body rewrites
+  and parent moves preserve unchanged drawers' open/closed state; comments
+  open when their rendered content changes (including first insertion),
+  not merely because another field or the description changed. Trailing
+  blank lines after a drawer are not part of that comparison. Body rewrites
+  retain outline hiding under a folded ticket or ancestor; parent moves
+  retain the moved entries' outline hiding and respect a folded destination.
+  Opening a changed drawer does not reveal it through an outline fold.
+  These visibility updates do not save the file.
 - Named documents are the ticket heading's direct children with
   `ZWANENZANG_DOC`, titled with the document name. A tracker document
   without such a subheading gets one, including one the human deleted:

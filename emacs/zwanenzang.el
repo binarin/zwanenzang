@@ -25,6 +25,8 @@
 
 (require 'cl-lib)
 (require 'org)
+(require 'org-element)
+(require 'org-fold)
 (require 'subr-x)
 
 (defgroup zwanenzang nil
@@ -392,25 +394,85 @@ replaced by DESCRIPTION, escaped."
   (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
     (buffer-substring-no-properties start end)))
 
+(defun zwanenzang--drawer-text (element)
+  "Return drawer ELEMENT's text, excluding post-blank lines."
+  (buffer-substring-no-properties
+   (org-element-begin element)
+   (save-excursion
+     (goto-char (org-element-end element))
+     (skip-chars-backward " \t\n\r")
+     (line-end-position))))
+
+(defun zwanenzang--drawer-visibility ()
+  "Return (NAME TEXT FOLDED) for each drawer in the current entry."
+  (save-excursion
+    (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
+      (goto-char start)
+      (let (drawers)
+        (while (re-search-forward org-drawer-regexp end t)
+          (beginning-of-line)
+          (let ((name (match-string-no-properties 1))
+                (element (org-element-at-point)))
+            (if (memq (org-element-type element) '(drawer property-drawer))
+                (let ((finish (org-element-end element)))
+                  (push (list name
+                              (zwanenzang--drawer-text element)
+                              (org-fold-folded-p (line-end-position) 'drawer))
+                        drawers)
+                  (goto-char finish))
+              (forward-line 1))))
+        (nreverse drawers)))))
+
+(defun zwanenzang--restore-drawers (before)
+  "Restore unchanged drawers from BEFORE; always close property drawers.
+New or changed drawers are opened, but unchanged drawers retain their fold."
+  (save-excursion
+    (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
+      (goto-char start)
+      (while (re-search-forward org-drawer-regexp end t)
+        (beginning-of-line)
+        (let* ((name (match-string-no-properties 1))
+               (element (org-element-at-point)))
+          (if (memq (org-element-type element) '(drawer property-drawer))
+              (let* ((finish (org-element-end element))
+                     (old (assoc name before))
+                     (same (equal (cadr old) (zwanenzang--drawer-text element))))
+                (org-fold-hide-drawer-toggle
+                 (if (or (equal name "PROPERTIES") (and same (nth 2 old))) t 'off)
+                 nil element)
+                (goto-char finish))
+            (forward-line 1)))))))
+
 (defun zwanenzang--write-body (new)
-  "Replace the body of the heading at point with NEW, if it differs."
-  (unless (equal new (zwanenzang--body))
-    (save-excursion
-      (org-back-to-heading t)
-      (end-of-line)
-      (when (eobp) (insert "\n"))
+  "Replace the body with NEW, preserving unchanged drawers' visibility."
+  (let ((before (zwanenzang--drawer-visibility))
+        (outline-hidden (save-excursion
+                          (org-back-to-heading t)
+                          (org-fold-folded-p (line-end-position) 'outline))))
+    (unless (equal new (zwanenzang--body))
+      (save-excursion
+        (org-back-to-heading t)
+        (end-of-line)
+        (when (eobp) (insert "\n"))
+        (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
+          (goto-char start)
+          (delete-region start end)
+          (insert new))))
+    (zwanenzang--restore-drawers before)
+    ;; Insertion can escape the outline fold even though the heading remains
+    ;; folded.  Keep replacement text hidden under its own or an ancestor fold.
+    (when outline-hidden
       (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
-        (goto-char start)
-        (delete-region start end)
-        (insert new)))))
+        (org-fold-region start end t 'outline)))))
 
 (defun zwanenzang--put (property value)
   "Set PROPERTY of the entry at point to VALUE, or remove it when nil.
-Nothing changes when it already has that value."
+Text is unchanged when it already has that value; properties stay folded."
   (unless (equal (org-entry-get nil property) value)
     (if value
         (org-entry-put nil property value)
-      (org-entry-delete nil property))))
+      (org-entry-delete nil property)))
+  (zwanenzang--restore-drawers (zwanenzang--drawer-visibility)))
 
 ;;;; Headings
 
@@ -491,6 +553,8 @@ an alist of property names and values."
       (insert (make-string level ?*) " " title "\n:PROPERTIES:\n"
               (mapconcat (lambda (p) (format ":%s: %s\n" (car p) (cdr p))) properties "")
               ":END:\n")
+      (goto-char start)
+      (zwanenzang--restore-drawers nil)
       (set-marker-insertion-type start t)
       start)))
 
@@ -512,15 +576,38 @@ That is the next heading after it, or the end of the buffer."
   "Move the subtree at FROM to be the last child of the heading at TO."
   (let* ((end (zwanenzang--subtree-end from))
          (from-level (save-excursion (goto-char from) (org-current-level)))
-         (text (buffer-substring-no-properties from end)))
+         (text (buffer-substring-no-properties from end))
+         (drawers (save-excursion
+                    (goto-char from)
+                    (let (states)
+                      (while (< (point) end)
+                        (push (list (zwanenzang--drawer-visibility)
+                                    (org-fold-folded-p (line-beginning-position) 'outline)
+                                    (org-fold-folded-p (line-end-position) 'outline))
+                              states)
+                        (outline-next-heading))
+                      (nreverse states)))))
     (unless (string-suffix-p "\n" text) (setq text (concat text "\n")))
     (delete-region from end)
     (save-excursion
       (goto-char to)
-      (let ((delta (- (1+ (org-current-level)) from-level)))
+      (let ((delta (- (1+ (org-current-level)) from-level))
+            (destination-hidden (org-fold-folded-p (line-end-position) 'outline)))
         (goto-char (zwanenzang--subtree-end to))
         (unless (bolp) (insert "\n"))
-        (insert (zwanenzang--relevel text delta))))))
+        (let ((start (point)))
+          (insert (zwanenzang--relevel text delta))
+          (when destination-hidden
+            (org-fold-region start (point) t 'outline))
+          (goto-char start)
+          (dolist (state drawers)
+            (zwanenzang--restore-drawers (car state))
+            (when (nth 1 state)
+              (org-fold-region (line-beginning-position) (line-end-position) t 'outline))
+            (when (nth 2 state)
+              (org-fold-region (line-end-position) (cdr (zwanenzang--body-bounds))
+                               t 'outline))
+            (outline-next-heading)))))))
 
 (defmacro zwanenzang--one-undo-step (&rest body)
   "Run BODY so that its buffer changes undo as one step.

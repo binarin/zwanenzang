@@ -19,6 +19,93 @@
      (goto-char (point-min))
      ,@body))
 
+;;;; Drawer visibility
+
+(ert-deftest zwanenzang-body-rewrite-preserves-drawer-visibility ()
+  (dolist (closed '(nil t))
+    (zwanenzang-test-with-org
+        "* Ticket\n:PROPERTIES:\n:ZWANENZANG_ID: synthetic\n:END:\nOld text\n:ZWANENZANG_COMMENTS:\nA comment\n:END:\n\n\n* Next\n"
+      (org-fold-show-all)
+      (when closed
+        (save-excursion
+          (search-forward ":ZWANENZANG_COMMENTS:")
+          (org-fold-hide-drawer-toggle t)))
+      (zwanenzang--write-body
+       (zwanenzang--compose-body (zwanenzang--body) nil "New text\n"))
+      (let ((states (zwanenzang--drawer-visibility)))
+        (should (nth 2 (assoc "PROPERTIES" states)))
+        (should (eq (not (null (nth 2 (assoc "ZWANENZANG_COMMENTS" states)))) closed)))
+      ;; Property updates, including no-ops, must not reveal comments.
+      (zwanenzang--put "ZWANENZANG_CURSOR" "cursor")
+      (zwanenzang--put "ZWANENZANG_CURSOR" "cursor")
+      (should (eq (not (null (nth 2 (assoc "ZWANENZANG_COMMENTS"
+                                          (zwanenzang--drawer-visibility))))) closed))
+      ;; Newly received comments are visible even when the drawer was closed.
+      (zwanenzang--write-body
+       (zwanenzang--compose-body (zwanenzang--body)
+                                '(("ZWANENZANG_COMMENTS" . "A comment\nNew comment\n"))))
+      (should-not (nth 2 (assoc "ZWANENZANG_COMMENTS"
+                               (zwanenzang--drawer-visibility)))))))
+
+(ert-deftest zwanenzang-body-rewrite-stays-under-outline-fold ()
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (dolist (fold-parent '(nil t))
+      (zwanenzang-test-with-org
+          "* Parent\n** Ticket\n:PROPERTIES:\n:ZWANENZANG_ID: synthetic\n:END:\nOld description\n"
+        (unless fold-parent (outline-next-heading))
+        (org-fold-subtree t)
+        (goto-char (point-min))
+        (outline-next-heading)
+        (zwanenzang--write-body
+         (zwanenzang--compose-body
+          (zwanenzang--body) '(("ZWANENZANG_COMMENTS" . "New comment\n"))
+          "New description\n"))
+        (search-forward "New description")
+        (should (org-fold-folded-p (1- (point)) 'outline))
+        (should (invisible-p (1- (point))))
+        (search-forward "New comment")
+        (should (org-fold-folded-p (1- (point)) 'outline))
+        (should (invisible-p (1- (point))))))))
+
+(ert-deftest zwanenzang-move-preserves-outline-folds ()
+  (dolist (org-fold-core-style '(overlays text-properties))
+    (zwanenzang-test-with-org
+        "* Destination\n* Ticket\nTicket description\n** Child\nChild description\n* Next\n"
+      (let ((target (point-marker)))
+        (outline-next-heading)
+        (org-fold-subtree t)
+        (zwanenzang--move-subtree (point-marker) target))
+      (goto-char (point-min))
+      (search-forward "Ticket description")
+      (should (invisible-p (1- (point))))
+      (search-forward "Child")
+      (should (invisible-p (1- (point))))
+      (search-forward "Child description")
+      (should (invisible-p (1- (point))))))
+  (zwanenzang-test-with-org
+      "* Destination\nDestination body\n* Ticket\nTicket description\n"
+    (org-fold-subtree t)
+    (let ((target (point-marker)))
+      (outline-next-heading)
+      (zwanenzang--move-subtree (point-marker) target))
+    (goto-char (point-min))
+    (search-forward "Ticket")
+    (should (invisible-p (1- (point))))
+    (search-forward "Ticket description")
+    (should (invisible-p (1- (point))))))
+
+(ert-deftest zwanenzang-move-keeps-comments-closed ()
+  (zwanenzang-test-with-org
+      "* Parent\n* Ticket\n:PROPERTIES:\n:ZWANENZANG_ID: synthetic\n:END:\n:ZWANENZANG_COMMENTS:\nA comment\n:END:\n"
+    (org-fold-hide-drawer-all)
+    (let ((target (point-marker)))
+      (outline-next-heading)
+      (zwanenzang--move-subtree (point-marker) target))
+    (goto-char (point-min))
+    (outline-next-heading)
+    (should (nth 2 (assoc "PROPERTIES" (zwanenzang--drawer-visibility))))
+    (should (nth 2 (assoc "ZWANENZANG_COMMENTS" (zwanenzang--drawer-visibility))))))
+
 ;;;; Text
 
 (ert-deftest zwanenzang-escape-keeps-headings-out-and-org-verbatim ()
