@@ -165,6 +165,7 @@ pub fn read(tracker: &Tracker, request: Request) -> Result<Value> {
             "prefix": tracker.config.prefix,
             "statuses": rp.state.statuses,
             "kinds": rp.state.kinds,
+            "priority": tracker.config.priority,
             "actors": actors,
         },
         "cursor": cursor(tracker.config.id, &all),

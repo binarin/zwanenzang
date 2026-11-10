@@ -89,6 +89,7 @@ them; any change to them fails with `tombstoned`.
 | `status T STATUS` | `status` | mutation object |
 | `title T TITLE` | `title` | mutation object |
 | `kind T KIND` / `kind T --clear` | `kind` | mutation object |
+| `priority T VALUE` / `priority T --clear` | `priority` | mutation object |
 | `parent T P` / `parent T --clear` | `parent` | mutation object |
 | `relate T OTHER [--remove]` | `relate` / `unrelate` | mutation object |
 | `depend T PREREQUISITE [--remove]` | `depend` / `undepend` | mutation object |
@@ -212,6 +213,7 @@ Supported operations and their complete input data fields:
 | `create` | `{title, status?, kind?}`; default status is the first replayed vocabulary entry; kind defaults to null; ticket absent or null |
 | `title`, `status` | `{to: string}` |
 | `kind` | `{to: string or null}`; required, null clears |
+| `priority` | `{to: integer or null}`; required, null clears explicit priority |
 | `parent` | `{to: reference or null}`; required, null clears |
 | `relate`, `unrelate`, `depend`, `undepend` | `{to: reference}` |
 | `tag`, `untag` | `{tag: string}` |
@@ -296,6 +298,7 @@ No actor is allocated; no git repository is needed.
 ```json
 {"tracker": {"id": "<tracker ULID>", "name": "...", "prefix": "ZZ",
              "statuses": ["draft", "..."], "kinds": ["task", "..."],
+             "priority": {"highest": 65, "lowest": 67, "default": 66},
              "actors": {"<actor ULID>": "<display name>"}},
  "cursor": "<opaque scope cursor>" | null,
  "reset": false,
@@ -520,6 +523,7 @@ Operation data:
 | `number` | `{number}` |
 | `title`, `status` | `{to}` |
 | `kind` | `{to: name \| null}` |
+| `priority` | `{to: integer \| null}`; native Org value |
 | `parent` | `{to: ticket id \| null}` |
 | `relate`, `unrelate` | `{to: ticket id}` |
 | `branch` | `{repo, name}` |
@@ -539,12 +543,15 @@ Operation data:
 {"id": "<ULID>", "short_id": "01JC3V5N0T", "number": 42 | null,
  "display": "ZZ-0042" | "<short_id>",
  "title": "...", "status": "doing", "kind": "bug" | null,
+ "priority": 65 | null,
  "parent": "<ULID>" | null, "children": ["<ULID>", ...], "related": ["<ULID>", ...],
  "tags": ["..."], "branches": [{"repo": "app", "name": "..."}],
  "mrs": [{"repo": "app", "url": "..."}],
  "archived": false, "tombstoned": false,
  "created": {"id": "<ULID>", "actor": "<ULID>", "ts": "..."},
  "last_event": "<ULID>",
+ "activity": {"id": "<ULID>", "actor": "<ULID>", "ts": "..."},
+ "tag_since": {"example": {"id": "<ULID>", "actor": "<ULID>", "ts": "..."}},
  "documents": {"description": {"current": "<version id>" | null, "blob": "<sha256>" | null,
                                "versions": [{"id", "actor", "ts", "blob", "base", "lost"}]}},
  "comments": [{"id", "actor", "ts", "text", "blob", "link"}]}
@@ -552,19 +559,36 @@ Operation data:
 
 - `short_id` is the shortest unique prefix of the id among all entities, at
   least 10 characters. `display` is the number when there is one.
+- `priority` is an explicit native Org value: 0–64 means numeric cookies,
+  65–90 means A–Z. Null means no cookie, not an explicit default. Effective
+  priority uses `[priority].default` in `zwanenzang.toml`; `highest`, `lowest`
+  and `default` are configurable integers with `0 <= highest <= default <=
+  lowest <= 90`, defaulting to 65/67/66. Live priority writes outside that
+  range return `invalid-priority`. Replay accepts any native value 0–90,
+  so changing settings does not invalidate old events. `read.tracker.priority`
+  exposes the three settings. Clearing priority never materializes a default.
 - `children` and `related` leave out tombstoned tickets. `parent` is the
   field's value even if that ticket is tombstoned.
 - `last_event` is the id of the latest accepted event whose entity is this
   ticket. Changes made from the other side (a relation, a child's parent)
   do not move it.
+- `activity` references the same event as `last_event`, including its original
+  wall-clock `ts`. It includes accepted replay no-ops and lost document versions,
+  not rejected events. Live no-ops write nothing. It is not a sync/freshness time;
+  timestamps may be skewed and must not be inferred from ULID bits or Git dates.
+- `tag_since` maps each currently present tag to the accepted event that began
+  its current uninterrupted membership interval. Duplicate additions do not
+  reset it; removal clears it; readdition starts a new interval. Ordinary
+  activity does not reset it. Both fields are derived by full replay, including
+  late-arriving older events; they are not writable metadata.
 - `documents.*.versions` is the full history in replay order. `lost: true`
   marks a version written against a stale base; it never became current.
 - `comments.*.text` is always the comment's text, read from its blob when it
   has one; `blob` is `null` for inline comments.
 
 A summary (in `list`, and in `query --summary`) has the fields `id`, `short_id`, `number`, `display`,
-`title`, `status`, `kind`, `parent`, `tags`, `depends_on`, `blocks`, `archived`,
-`tombstoned` and `last_event`. Full ticket objects include these fields too.
+`title`, `status`, `kind`, `priority`, `parent`, `tags`, `depends_on`, `blocks`, `archived`,
+`tombstoned`, `last_event`, `activity` and `tag_since`. Full ticket objects include these fields too.
 `depends_on` contains prerequisite ULIDs; `blocks` contains dependent ULIDs,
 computed from forward edges. Both arrays are sorted, include archived and
 tombstoned endpoints, and contain no cross-tracker identities.
@@ -601,7 +625,7 @@ and the other is marked `lost` in `versions`.
   UTF-8, which is skipped as `malformed`). `log` is the log file name without `.jsonl`,
   `line` is 1-based; `id` and `op` are `null` when they could not be read.
 - `concurrent`: two changes by different actors to the same field (`title`,
-  `status`, `kind`, `parent`) of one ticket where the later writer had not
+  `status`, `kind`, `priority`, `parent`) of one ticket where the later writer had not
   seen the earlier change, with different values. The later one won.
   Directed dependency add/remove disagreements on the same edge use field
   `depends_on` and values `{to: <prerequisite ULID>, present: boolean}`.
@@ -656,6 +680,7 @@ Rejections: returned as the error code when a write is refused, and as
 | `tombstoned` | the ticket is tombstoned |
 | `invalid-title`, `invalid-tag`, `invalid-name`, `invalid-comment` | a value has the wrong format |
 | `status-not-in-vocabulary`, `kind-not-in-vocabulary` | not in the tracker's vocabulary |
+| `invalid-priority` | outside the configured live range or not a native Org priority value |
 | `unknown-target`, `target-tombstoned` | a parent, relation or dependency target is missing or tombstoned |
 | `parent-cycle`, `self-relation` | the parent chain would loop, or a ticket relates to itself |
 | `dependency-cycle` | a dependency self-edge (write/replay), or an added edge would close a cycle (write only) |

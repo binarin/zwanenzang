@@ -66,6 +66,8 @@ or a unique id prefix.
 ```sh
 zwanenzang -C <dir> create "A title" --status todo --tag example
 zwanenzang -C <dir> status ZZ-0042 doing
+zwanenzang -C <dir> priority ZZ-0042 65   # Native Org A
+zwanenzang -C <dir> priority ZZ-0042 --clear
 zwanenzang -C <dir> mr ZZ-0042 app https://forge.example/app/pulls/7
 zwanenzang -C <dir> depend ZZ-0043 ZZ-0042
 ```
@@ -73,6 +75,13 @@ zwanenzang -C <dir> depend ZZ-0043 ZZ-0042
 Status and kind names, and the repository aliases `branch` and `mr` take, are in
 the clone's `zwanenzang.toml`. An unknown status or kind is refused; an unknown
 alias is written anyway and only `lint` reports it.
+
+Priority is separate from tags and title. Native Org values are numeric
+0–64 or letter codes 65–90 (A–Z); `read` exposes the tracker's configured
+range/default under `tracker.priority`. Null/unset uses that default for
+ranking but stays unset. Batch `priority` takes a required nullable `to`.
+Ticket views expose `activity` and `tag_since` event references for local
+activity age and current tag-membership interval age, not remote freshness.
 
 `depend T P` records T's prerequisite P; `--remove` removes it. Ticket
 objects expose `depends_on` and reverse `blocks` as stable ticket ids.

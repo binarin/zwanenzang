@@ -45,6 +45,7 @@ pub enum RejectCode {
     InvalidTitle,
     StatusNotInVocabulary,
     KindNotInVocabulary,
+    InvalidPriority,
     InvalidTag,
     InvalidName,
     UnknownTarget,
@@ -80,6 +81,7 @@ impl RejectCode {
             RejectCode::InvalidTitle => "invalid-title",
             RejectCode::StatusNotInVocabulary => "status-not-in-vocabulary",
             RejectCode::KindNotInVocabulary => "kind-not-in-vocabulary",
+            RejectCode::InvalidPriority => "invalid-priority",
             RejectCode::InvalidTag => "invalid-tag",
             RejectCode::InvalidName => "invalid-name",
             RejectCode::UnknownTarget => "unknown-target",
@@ -182,10 +184,13 @@ pub struct Ticket {
     pub title: String,
     pub status: String,
     pub kind: Option<String>,
+    pub priority: Option<u8>,
     pub parent: Option<Ulid>,
     pub related: BTreeSet<Ulid>,
     pub depends_on: BTreeSet<Ulid>,
     pub tags: BTreeSet<String>,
+    /// Effective absent-to-present transitions for currently present tags.
+    pub tag_since: BTreeMap<String, EventRef>,
     pub branches: BTreeSet<(String, String)>,
     pub mrs: BTreeSet<(String, String)>,
     pub archived: bool,
@@ -195,6 +200,8 @@ pub struct Ticket {
     pub created: EventRef,
     /// The latest accepted event whose entity is this ticket.
     pub last_event: Ulid,
+    /// The event reference corresponding to `last_event`, including wall time.
+    pub activity: EventRef,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -210,6 +217,7 @@ pub enum Field {
     Title,
     Status,
     Kind,
+    Priority,
     Parent,
     Dependency(Ulid),
 }
@@ -220,6 +228,7 @@ impl Field {
             Field::Title => "title",
             Field::Status => "status",
             Field::Kind => "kind",
+            Field::Priority => "priority",
             Field::Parent => "parent",
             Field::Dependency(_) => "depends_on",
         }
@@ -498,10 +507,12 @@ pub fn apply(state: &mut State, ev: &Event) -> Result<Applied, Rejection> {
                 title: d.title.clone(),
                 status: d.status.clone(),
                 kind: d.kind.clone(),
+                priority: None,
                 parent: None,
                 related: BTreeSet::new(),
                 depends_on: BTreeSet::new(),
                 tags: BTreeSet::new(),
+                tag_since: BTreeMap::new(),
                 branches: BTreeSet::new(),
                 mrs: BTreeSet::new(),
                 archived: false,
@@ -510,6 +521,7 @@ pub fn apply(state: &mut State, ev: &Event) -> Result<Applied, Rejection> {
                 documents: BTreeMap::new(),
                 created: EventRef::of(ev),
                 last_event: ev.id,
+                activity: EventRef::of(ev),
             },
         );
         true
@@ -533,6 +545,7 @@ pub fn apply(state: &mut State, ev: &Event) -> Result<Applied, Rejection> {
         lost = l;
         if let Some(t) = state.tickets.get_mut(&ev.entity) {
             t.last_event = ev.id;
+            t.activity = EventRef::of(ev);
         }
         changed
     };
@@ -633,6 +646,20 @@ fn apply_ticket_op(state: &mut State, ev: &Event) -> Result<(bool, Option<LostDo
             let changed = t.kind != d.to;
             state.tickets.get_mut(&id).unwrap().kind = d.to.clone();
             state.note_field(ev, Field::Kind, json!(d.to));
+            changed
+        }
+        Op::Priority(d) => {
+            // Replay accepts all native Org values, independent of today's
+            // configured range. Narrowing that range must not erase history.
+            if d.to.is_some_and(|value| value > b'Z') {
+                return reject(
+                    RejectCode::InvalidPriority,
+                    "priority must be a native Org value (0..90)",
+                );
+            }
+            let changed = t.priority != d.to;
+            state.tickets.get_mut(&id).unwrap().priority = d.to;
+            state.note_field(ev, Field::Priority, json!(d.to));
             changed
         }
         Op::Parent(d) => {
@@ -737,11 +764,16 @@ fn apply_ticket_op(state: &mut State, ev: &Event) -> Result<(bool, Option<LostDo
             if !valid_tag(&d.tag) {
                 return reject(RejectCode::InvalidTag, format!("invalid tag {:?}", d.tag));
             }
-            let tags = &mut state.tickets.get_mut(&id).unwrap().tags;
+            let t = state.tickets.get_mut(&id).unwrap();
             if matches!(ev.op, Op::Tag(_)) {
-                tags.insert(d.tag.clone())
+                let changed = t.tags.insert(d.tag.clone());
+                if changed {
+                    t.tag_since.insert(d.tag.clone(), EventRef::of(ev));
+                }
+                changed
             } else {
-                tags.remove(&d.tag)
+                t.tag_since.remove(&d.tag);
+                t.tags.remove(&d.tag)
             }
         }
         Op::Archive(_) => {

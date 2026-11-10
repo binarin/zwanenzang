@@ -133,6 +133,7 @@ impl<'a> View<'a> {
             "title": t.title,
             "status": t.status,
             "kind": t.kind,
+            "priority": t.priority,
             "parent": t.parent,
             "tags": t.tags,
             "depends_on": t.depends_on,
@@ -142,6 +143,8 @@ impl<'a> View<'a> {
             "archived": t.archived,
             "tombstoned": t.tombstoned,
             "last_event": t.last_event,
+            "activity": t.activity,
+            "tag_since": t.tag_since,
         })
     }
 
