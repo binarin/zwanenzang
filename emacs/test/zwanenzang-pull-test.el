@@ -19,6 +19,27 @@
      (goto-char (point-min))
      ,@body))
 
+(ert-deftest zwanenzang-org-id-generation-is-local-and-idempotent ()
+  (zwanenzang-test-with-org
+      "* Parent\n:PROPERTIES:\n:ID: parent-id\n:END:\n** Ticket\n:PROPERTIES:\n:ZWANENZANG_ID: tracker-id\n:END:\n"
+    (outline-next-heading)
+    (cl-letf (((symbol-function 'org-id-add-location)
+               (lambda (&rest _) (ert-fail "Must not register Org IDs")))
+              ((symbol-function 'org-id-find)
+               (lambda (&rest _) (ert-fail "Must not look up Org IDs"))))
+      (zwanenzang--ensure-org-id)
+      (let ((id (org-entry-get nil "ID"))
+            (before (buffer-string)))
+        (should id)
+        (should-not (member id '("parent-id" "tracker-id")))
+        (zwanenzang--ensure-org-id)
+        (should (equal before (buffer-string)))
+        (should (equal (org-entry-get nil "ZWANENZANG_ID") "tracker-id"))
+        (should (nth 2 (assoc "PROPERTIES" (zwanenzang--drawer-visibility))))))
+    (org-entry-put nil "ID" "human-id")
+    (zwanenzang--ensure-org-id)
+    (should (equal (org-entry-get nil "ID") "human-id"))))
+
 ;;;; Drawer visibility
 
 (ert-deftest zwanenzang-body-rewrite-preserves-drawer-visibility ()
