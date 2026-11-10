@@ -121,6 +121,146 @@ fn clones_share_one_numbering() {
 }
 
 #[test]
+fn sync_without_upstream_changes_leaves_edited_config_untouched() {
+    for staged in [false, true] {
+        let net = Net::new();
+        let a = net.path("a");
+        let config = format!("{}\n# Local edit\n", read(&a, "zwanenzang.toml"));
+        write_file(&a, "zwanenzang.toml", &config);
+        if staged {
+            git(&a, &["add", "zwanenzang.toml"]);
+        }
+        // A fixed old timestamp detects even a same-content rewrite without
+        // relying on filesystem timestamp resolution or sleeps.
+        let path = a.join("zwanenzang.toml");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000),
+                ),
+            )
+            .unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let index = git(&a, &["diff", "--cached"]);
+        // Explicit sync has equal heads; create also tests local commits ahead
+        // of the fetched head, before numbering and pushing.
+        for args in [vec!["sync"], vec!["create", "Local ticket"], vec!["sync"]] {
+            let out = ok(&a, &args);
+            assert_eq!(out["sync"]["error"], Value::Null, "{out}");
+            assert_eq!(out["sync"]["pushed"], true, "{out}");
+            assert_eq!(read(&a, "zwanenzang.toml"), config);
+            assert_eq!(git(&a, &["diff", "--cached"]), index);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().modified().unwrap(),
+                before
+            );
+        }
+    }
+}
+
+#[test]
+fn fast_forward_keeps_unrelated_edited_config_untouched() {
+    for staged in [false, true] {
+        let net = Net::new();
+        let a = net.path("a");
+        let b = net.clone_as("b");
+        let config = format!("{}\n# Local edit\n", read(&a, "zwanenzang.toml"));
+        write_file(&a, "zwanenzang.toml", &config);
+        if staged {
+            git(&a, &["add", "zwanenzang.toml"]);
+        }
+        let path = a.join("zwanenzang.toml");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000),
+                ),
+            )
+            .unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let index = git(&a, &["diff", "--cached"]);
+        // Neither user-configured autostash nor hooks may rewrite local edits.
+        git(&a, &["config", "merge.autostash", "true"]);
+        write_file(&a, ".git/hooks/post-merge", "#!/bin/sh\ntouch hook-ran\n");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            a.join(".git/hooks/post-merge"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        ok(&b, &["create", "Remote ticket"]);
+        let out = ok(&a, &["sync"]);
+        assert_eq!(out["sync"]["error"], Value::Null, "{out}");
+        assert_eq!(out["sync"]["pushed"], true);
+        assert_eq!(
+            git(&a, &["rev-parse", "HEAD"]),
+            git(&b, &["rev-parse", "HEAD"])
+        );
+        assert_eq!(read(&a, "zwanenzang.toml"), config);
+        assert_eq!(git(&a, &["diff", "--cached"]), index);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
+        assert!(!a.join("hook-ran").exists());
+    }
+}
+
+#[test]
+fn fast_forward_overlapping_dirty_file_falls_back_to_autostash() {
+    let net = Net::new();
+    let a = net.path("a");
+    let b = net.clone_as("b");
+    let original = read(&a, "zwanenzang.toml");
+    let local = original.replace("name = \"Test\"", "name = \"Edited\"");
+    assert_ne!(local, original);
+    write_file(&a, "zwanenzang.toml", &local);
+    let remote = format!("{original}\n# Remote configuration note\n");
+    write_file(&b, "zwanenzang.toml", &remote);
+    git(&b, &["add", "zwanenzang.toml"]);
+    git(&b, &["commit", "--quiet", "-m", "Update configuration"]);
+    git(&b, &["push", "--quiet"]);
+    let out = ok(&a, &["sync"]);
+    assert_eq!(out["sync"]["error"], Value::Null, "{out}");
+    assert_eq!(out["sync"]["pushed"], true);
+    assert_eq!(
+        git(&a, &["rev-parse", "HEAD"]),
+        git(&b, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(
+        read(&a, "zwanenzang.toml"),
+        format!("{local}\n# Remote configuration note\n")
+    );
+}
+
+#[test]
+fn upstream_changes_still_rebase_and_preserve_edited_config() {
+    let net = Net::new();
+    let a = net.path("a");
+    let b = net.clone_as("b");
+    let config = format!("{}\n# Local edit\n", read(&a, "zwanenzang.toml"));
+    write_file(&a, "zwanenzang.toml", &config);
+    net.offline(&a, true);
+    ok(&a, &["create", "Local offline ticket"]);
+    ok(&b, &["create", "Remote ticket"]);
+    net.offline(&a, false);
+    let out = ok(&a, &["sync"]);
+    assert_eq!(out["sync"]["error"], Value::Null, "{out}");
+    assert_eq!(out["sync"]["pushed"], true);
+    assert_eq!(read(&a, "zwanenzang.toml"), config);
+    assert_eq!(numbers(&a).len(), 2);
+    ok(&b, &["sync"]);
+    assert_eq!(tickets(&a), tickets(&b));
+    assert_eq!(git(&a, &["rev-list", "--merges", "HEAD"]), "");
+}
+
+#[test]
 fn offline_writes_wait_for_their_numbers() {
     let net = Net::new();
     let a = net.path("a");

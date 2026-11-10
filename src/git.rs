@@ -322,6 +322,42 @@ impl Repo {
         onto: &str,
         identity: &Identity,
     ) -> Result<std::result::Result<(), String>> {
+        // Even an otherwise no-op rebase autostashes dirty files, rewriting
+        // them on restore and triggering editor auto-revert notifications.
+        // Equal heads and local-only commits need no work-tree operation.
+        let args = ["merge-base", "--is-ancestor", onto, "HEAD"];
+        let out = self.run(&args, None)?;
+        match out.status.code() {
+            Some(0) => return Ok(Ok(())),
+            Some(1) => {}
+            // The fetched object must exist; inspection failures are internal errors.
+            _ => return Err(failure(&args, &out)),
+        }
+        let args = ["merge-base", "--is-ancestor", "HEAD", onto];
+        let out = self.run(&args, None)?;
+        match out.status.code() {
+            Some(0) => {
+                // Fast-forward without stashing unrelated edits. Disable hooks
+                // as for rebase, including the otherwise new post-merge hook.
+                let args = [
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "merge",
+                    "--ff-only",
+                    "--no-autostash",
+                    "--quiet",
+                    "--no-edit",
+                    onto,
+                ];
+                if self.run(&args, Some(identity))?.status.success() {
+                    return Ok(Ok(()));
+                }
+                // A dirty file may overlap upstream changes. Preserve the
+                // existing autostash integration path when plain FF refuses.
+            }
+            Some(1) => {}
+            _ => return Err(failure(&args, &out)),
+        }
         let args = ["rebase", "--quiet", "--autostash", "--no-verify", onto];
         let out = self.run(&args, Some(identity))?;
         if out.status.success() {
