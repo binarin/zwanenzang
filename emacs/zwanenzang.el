@@ -47,6 +47,12 @@ The symbol `agenda' means the files of `org-agenda-files'."
   :type '(choice (const :tag "Same as `org-agenda-files'" agenda)
                  (repeat :tag "These files" file)))
 
+(defcustom zwanenzang-redirect-org-notes t
+  "Redirect `org-add-note' on tracker tickets to `zwanenzang-comment'.
+A prefix argument always bypasses redirection.  State-change logging
+is unaffected.  Outside ticket headings in scopes, Org behaves normally."
+  :type 'boolean)
+
 (defun zwanenzang--org-files ()
   "The files `zwanenzang-org-files' names, as absolute file names."
   (if (eq zwanenzang-org-files 'agenda)
@@ -1695,6 +1701,116 @@ report appended to the `*zwanenzang*' buffer."
         (outcome (zwanenzang--outcome-create)))
     (zwanenzang--pull-into outcome root)
     (zwanenzang--report-outcome "pulled" root outcome)))
+
+;;;; Comments
+
+(defvar-local zwanenzang--comment-target nil
+  "Compose target: heading marker, scope marker, ticket id and directory.")
+
+(defvar zwanenzang-comment-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'zwanenzang-comment-send)
+    (define-key map (kbd "C-c C-k") #'zwanenzang-comment-abort)
+    map))
+
+(define-derived-mode zwanenzang-comment-mode org-mode "ZW-Comment"
+  "Compose an append-only tracker comment.
+C-c C-c sends; C-c C-k aborts.  The buffer contains only comment text.")
+
+;;;###autoload
+(defun zwanenzang-comment ()
+  "Compose a tracker comment for the published ticket heading at point.
+Sending appends one comment and pulls the scope, without pushing Org edits.
+The optional CLI link field is not exposed by this command."
+  (interactive)
+  (let* ((root (zwanenzang--root-at-point))
+         (heading (save-excursion (org-back-to-heading t) (point-marker)))
+         (id (org-entry-get nil "ZWANENZANG_ID"))
+         (dir (zwanenzang--scope-directory root)))
+    (unless id
+      (user-error "zwanenzang: push this ticket before adding a comment"))
+    (let ((buffer (generate-new-buffer "*zwanenzang comment*")))
+      (pop-to-buffer buffer)
+      (zwanenzang-comment-mode)
+      (setq zwanenzang--comment-target (list heading root id dir))
+      (setq header-line-format "Comment: C-c C-c send, C-c C-k abort"))))
+
+(defun zwanenzang-comment-abort ()
+  "Discard this compose buffer without writing a comment."
+  (interactive)
+  (unless zwanenzang--comment-target
+    (user-error "zwanenzang: not a comment compose buffer"))
+  (let ((source (marker-buffer (car zwanenzang--comment-target))))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer))
+    (when source (pop-to-buffer source))))
+
+(defun zwanenzang-comment-send ()
+  "Send this comment once, then pull its source scope.
+A refused write retains the draft.  Once accepted locally, the draft is
+closed even if publication or the subsequent pull fails, to avoid resend."
+  (interactive)
+  (unless zwanenzang--comment-target
+    (user-error "zwanenzang: not a comment compose buffer"))
+  (pcase-let* ((`(,heading ,root ,id ,dir) zwanenzang--comment-target)
+               (draft (current-buffer))
+               (text (buffer-substring-no-properties (point-min) (point-max))))
+    (when (string-empty-p (string-trim text))
+      (user-error "zwanenzang: comment is empty"))
+    (unless (and (marker-buffer heading) (marker-buffer root))
+      (user-error "zwanenzang: comment source buffer was killed"))
+    (with-current-buffer (marker-buffer heading)
+      (org-with-wide-buffer
+       (goto-char heading)
+       (unless (and (org-at-heading-p)
+                    (equal id (org-entry-get nil "ZWANENZANG_ID"))
+                    (= root (zwanenzang--scope-root))
+                    (equal dir (zwanenzang--scope-directory root)))
+         (user-error "zwanenzang: comment target changed; draft retained"))
+       (let* ((tickets (car (zwanenzang--scan root)))
+              (known (zwanenzang--known-tickets dir))
+              (blocked (zwanenzang--blocked-headings tickets known))
+              (target (seq-find (lambda (tk) (equal id (plist-get tk :id))) tickets))
+              (read (funcall zwanenzang--call dir '("read")
+                             '((cursors . nil) (since . :null))))
+              (refusal (zwanenzang--tracker-mismatch "comment" root dir read)))
+         (when refusal (user-error "%s" refusal))
+         (unless (and target (not (assq target blocked)))
+           (user-error "zwanenzang: foreign or duplicate comment target; draft retained"))
+         (let* ((result (funcall zwanenzang--call dir '("apply")
+                                 `((changes . [((op . "comment") (ticket . ,id)
+                                               (data . ((text . ,text))))]))))
+                (outcome (zwanenzang--outcome-create)))
+           ;; Acceptance is the boundary: never offer to resend after this.
+           (with-current-buffer draft
+             (set-buffer-modified-p nil)
+             (kill-buffer draft))
+           (pop-to-buffer (marker-buffer heading))
+           (zwanenzang--note-sync outcome (alist-get 'sync result))
+           (condition-case err
+               (zwanenzang--pull-into outcome root)
+             (error
+              (push (format "Comment saved locally; pull failed: %s. Pull again; do not resend."
+                            (error-message-string err))
+                    (zwanenzang--outcome-problems outcome))
+              (setf (zwanenzang--outcome-pull outcome) (zwanenzang--pull-create))))
+           (zwanenzang--report-outcome "comment saved in" root outcome)))))))
+
+(defun zwanenzang--org-add-note (original &rest args)
+  "Redirect ORIGINAL with ARGS only on ticket headings inside scopes."
+  (if (and zwanenzang-redirect-org-notes (not current-prefix-arg)
+           (derived-mode-p 'org-mode)
+           (not (org-before-first-heading-p))
+           (org-entry-get nil "ZWANENZANG" t)
+           (or (org-entry-get nil "ZWANENZANG_ID")
+               (and (org-get-todo-state)
+                    (not (org-entry-get nil "ZWANENZANG"))
+                    (not (org-entry-get nil "ZWANENZANG_DOC"))
+                    (not (org-entry-get nil "ZWANENZANG_INBOX")))))
+      (zwanenzang-comment)
+    (apply original args)))
+
+(advice-add 'org-add-note :around #'zwanenzang--org-add-note)
 
 ;;;; Push
 
