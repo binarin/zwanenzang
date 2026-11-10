@@ -4,6 +4,7 @@
 {
   lib,
   trivialBuild,
+  org-ql,
   zwanenzang,
 }:
 trivialBuild {
@@ -11,13 +12,14 @@ trivialBuild {
   inherit (zwanenzang) version;
   src = lib.fileset.toSource {
     root = ../../emacs;
-    fileset = ../../emacs/zwanenzang.el;
+    fileset = lib.fileset.unions [ ../../emacs/zwanenzang.el ../../emacs/zwanenzang-queue.el ];
   };
   postPatch = ''
     substituteInPlace zwanenzang.el --replace-fail \
       '(defcustom zwanenzang-program "zwanenzang"' \
       '(defcustom zwanenzang-program "${lib.getExe zwanenzang}"'
   '';
+  packageRequires = [ org-ql ];
   turnCompilationWarningToError = true;
   passthru.cli = zwanenzang;
 }

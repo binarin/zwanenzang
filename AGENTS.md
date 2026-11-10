@@ -59,7 +59,10 @@ by zwanenzang or imposed on other projects using it.
 Tracking only. If a change would add process rules, stages, approvals,
 scheduling or reminders, it does not belong here; the design overview lists
 non-goals. The Emacs client is developed here, as the `zwanenzang` package
-in `emacs/` (Emacs 31+, built-in libraries only); `swan-lake-common` only
+in `emacs/` (Emacs 31+, built-in libraries plus the specifically accepted
+`org-ql` dependency and its required closure). Other direct external packages
+require individual human acceptance; this is not blanket permission.
+`swan-lake-common` only
 installs it through the overlay and points it at org files. The CLI's JSON
 contract stays documented, since agents and scripts use it too.
 

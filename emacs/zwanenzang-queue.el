@@ -9,6 +9,8 @@
 (require 'zwanenzang)
 (require 'org-ql-search)
 
+(declare-function org-ql--normalize-query "org-ql" t t)
+
 (defcustom zwanenzang-queue-attention-tag "needs_human"
   "Local ticket tag identifying the human-attention queue."
   :type 'string :group 'zwanenzang)
@@ -92,18 +94,31 @@ Use a to select age mode and g to rebuild from local Org buffers.  Sync
 explicitly in the source scope for remote freshness; g never fetches."
   :lighter " ZZ-queue" :keymap zwanenzang-queue-mode-map)
 
+(defun zwanenzang-queue--format-element (formatter element)
+  "Use FORMATTER on ELEMENT, correcting older org-ql numeric-cookie display."
+  (let ((text (funcall formatter element))
+        (value (org-element-property :priority element)))
+    (if (and value (org-priority-number-p value))
+        (replace-regexp-in-string (regexp-quote (format "[#%c]" value))
+                                  (format "[#%d]" value) text t t)
+      text)))
+
 (defun zwanenzang-queue--render (sources mode &optional selected)
   "Render SOURCES with age MODE, retaining SELECTED identity if possible."
   (let ((tag zwanenzang-queue-attention-tag)
         (org-agenda-dim-blocked-tasks nil)
         (org-agenda-skip-archived-trees t))
-    (org-ql-search sources
+    (cl-letf (((symbol-function 'org-ql-view--format-element)
+               (apply-partially #'zwanenzang-queue--format-element
+                                (symbol-function 'org-ql-view--format-element))))
+      (org-ql-search sources
       `(and ,zwanenzang-queue-query (tags-local ,tag)
             (zwanenzang-queue--eligible-p))
       :sort (apply-partially #'zwanenzang-queue--less-p mode tag)
       :super-groups nil :buffer "*zwanenzang queue*"
       :title (format "Human attention — %s (a: age; g: local refresh; sync sources explicitly)"
-                     (if (eq mode 'activity) "last activity" "waiting for human")))
+                     (if (eq mode 'activity) "last activity" "waiting for human"))))
+    (pop-to-buffer "*zwanenzang queue*")
     (setq-local zwanenzang-queue--sources sources
                 zwanenzang-queue-age-mode mode)
     (zwanenzang-queue-mode 1)
@@ -116,7 +131,7 @@ explicitly in the source scope for remote freshness; g never fetches."
           (let* ((props (text-properties-at (point)))
                  (prefix
                   (org-with-point-at marker
-                    (format "[%s; read %s] "
+                    (format "[%s; snapshot read %s] "
                             (zwanenzang-queue--age (zwanenzang-queue--timestamp mode tag))
                             (or (org-entry-get nil "ZWANENZANG_READ_AT") "unknown")))))
             (insert (apply #'propertize prefix props))

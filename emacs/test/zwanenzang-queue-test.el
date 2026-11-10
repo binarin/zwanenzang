@@ -4,6 +4,7 @@
 (require 'ert)
 (require 'zwanenzang-queue)
 (require 'zwanenzang-pull-test)
+(declare-function org-ql--normalize-query "org-ql" t t)
 
 (ert-deftest zwanenzang-priority-numeric-cookies-and-unset ()
   (zwanenzang-test-with-org "* TODO [#12] Numeric\n"
@@ -47,7 +48,7 @@
       (nreverse ids))))
 
 (ert-deftest zwanenzang-queue-real-org-ql-sorts-switches-and-never-writes ()
-  (let ((source (generate-new-buffer " *zz-queue-source*"))
+  (let ((source (generate-new-buffer "*zz-queue-source*"))
         (old "2026-01-01T00:00:00Z") (new "2026-02-01T00:00:00Z"))
     (unwind-protect
         (progn
@@ -83,6 +84,22 @@
               (zwanenzang-queue-refresh)
               (should (equal (zwanenzang-queue-test--ids) '("a" "c" "d" "b"))))
             (should (equal before (with-current-buffer source (buffer-string))))))
+      (kill-buffer source)
+      (when (get-buffer "*zwanenzang queue*") (kill-buffer "*zwanenzang queue*")))))
+
+(ert-deftest zwanenzang-queue-native-numeric-default-and-display ()
+  (let ((source (generate-new-buffer "*zz-numeric-source*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer source
+            (insert "#+TODO: TODO | DONE\n#+PRIORITIES: 1 12 5\n* Scope\n:PROPERTIES:\n:ZWANENZANG: /synthetic\n:END:\n"
+                    (zwanenzang-queue-test--ticket "low" "12" "2026-01-01T00:00:00Z" nil)
+                    (zwanenzang-queue-test--ticket "default" nil "2026-02-01T00:00:00Z" nil))
+            (org-mode))
+          (save-window-excursion
+            (zwanenzang-queue--render (list source) 'activity)
+            (should (equal (zwanenzang-queue-test--ids) '("default" "low")))
+            (should (string-match-p (regexp-quote "[#12]") (buffer-string)))))
       (kill-buffer source)
       (when (get-buffer "*zwanenzang queue*") (kill-buffer "*zwanenzang queue*")))))
 

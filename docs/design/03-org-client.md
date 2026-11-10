@@ -298,7 +298,13 @@ Decided 2026-11-07 for the first Emacs implementation.
 - The client is developed in this repository as the Emacs package
   `zwanenzang` in `emacs/`: one `zwanenzang.el` to start, symbol prefix
   `zwanenzang-`, tests in `emacs/test/`. It requires Emacs 31.1 and uses
-  built-in libraries only (org, native JSON, `secure-hash`).
+  built-in libraries (org, native JSON, `secure-hash`) plus the specifically
+  accepted `org-ql` dependency for the attention queue. Other direct external
+  dependencies require individual human acceptance. The pinned package's
+  required direct closure is compat, dash, f, map, org, org-super-agenda, ov,
+  peg, s, transient and ts; its further transitive closure is ht, cond-let,
+  llama and seq, supplied by Nix. This does not
+  authorize unrelated use of those libraries or additional flake inputs.
 - The flake's `overlays.default` adds `pkgs.zwanenzang` (the CLI) and
   extends `emacsPackagesFor` so every Emacs package set has
   `epkgs.zwanenzang`. `packages.zwanenzang-el` is built against
@@ -658,6 +664,58 @@ stores stable identities; the property always shows published ticket numbers.
 - The blocker and snapshot rules above are unchanged: no CLI completion
   vetoes, implicit terminal-status vocabulary, automatic status changes,
   any-of dependencies, triggers, cascading reopening or cross-tracker lookup.
+
+## Priority and attention queue
+
+Native Org priority cookies synchronize as a separate nullable `priority`
+scalar, not title text or tags. Unset stays unset; effective ranking uses
+`org-priority-default`. Numeric priorities (0–64) and alphabetical priorities
+(A–Z, integer codes 65–90) use Org's own representation. `zwanenzang.toml`
+may configure `[priority]` with `highest`, `lowest`, `default` integer values;
+absent settings use Org's standard 65/67/66 defaults. Live writes validate
+against that range. Replay validates against all native Org values, so a
+later range change does not erase historical choices. Concurrent priority
+changes are reported like other scalar fields.
+
+Org retains authority over edited cookies. `priority=` in the sync snapshot
+stores the explicit value, or `-1` for unset. Upgrading a missing baseline
+means unset, preserving existing local cookies. Pull merges priority field by
+field; push sends edited cookies, including explicit clearing. A new heading's
+priority is sent after its create. Heading rewrites preserve numeric as well
+as alphabetical cookies. Scope pull/push refuses mismatched Org buffer and
+tracker range/default settings with guidance; it never silently overwrites
+Org settings or TOML. Align `#+PRIORITIES` or buffer-local Org settings and
+TOML manually. Automated configuration export is optional future convenience,
+not necessary for synchronization.
+
+Pull projects read-only `ZWANENZANG_ACTIVITY` (selected event timestamp),
+`ZWANENZANG_TAG_SINCE` (JSON current tag interval event references),
+`ZWANENZANG_INACTIVE` (archive/tombstone eligibility), and
+`ZWANENZANG_READ_AT` (time this event snapshot was first read, NOT last
+fetch; unchanged cursors keep it so no-op pulls do not dirty the buffer). Incremental reads and
+cursor resets both use the full replay-derived values; ordinary agent
+activity does not reset waiting age. No new timestamp events are introduced.
+
+`M-x zwanenzang-queue` uses org-ql over `zwanenzang-org-files`. Membership is
+an explicit local attention tag (`needs_human` by default, configurable),
+combined with an additional org-ql query (unfinished TODO by default).
+Only actual active ticket headings in tracker scopes qualify; inherited
+tags, document headings and archived/tombstoned tickets do not. Native Org
+priority (including configured default) sorts first, oldest selected wall
+time second, unknown times last within priority, stable ticket identity last.
+Future clocks are visibly flagged. Across trackers, location breaks identity
+ties. These are views of local projections and unsynced human edits, never a
+claim of live remote knowledge.
+
+In the view, `a` selects last-activity or waiting-for-human age interactively;
+`g` rebuilds locally. Both preserve the selected ticket where possible and
+write no events or source buffers. The active mode is in the header; entries
+show age separately from the snapshot's local read time. Waiting age uses the current
+uninterrupted attention-tag membership interval. Sync explicitly in the source
+scope to refresh remote state. No per-entry CLI calls, timers, auto-clear,
+stage transitions, approval gates or new completion policies are added.
+org-ql retains query, saved-view and navigation capabilities; this adapter
+adds no query language or generic view framework.
 
 ## Open questions
 

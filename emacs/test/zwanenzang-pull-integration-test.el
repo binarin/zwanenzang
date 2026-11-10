@@ -371,6 +371,7 @@
       (should (equal (zwanenzang-test-property id "ZWANENZANG_SYNC")
                      (zwanenzang--format-sync
                       `((status . "draft") (title . ,(zwanenzang--hash "New"))
+                        (priority . "-1")
                         (tags . ,(zwanenzang--tags-hash '("a" "b" "c")))
                         (depends . ,(zwanenzang--tags-hash nil))
                         (parent . nil) (nest . nil))))))))
