@@ -2165,6 +2165,104 @@ A scope or file that fails, in any way, is reported and the others run."
     (zwanenzang-report (format "zwanenzang: synced %d scopes, %d failed" done (length failures))
                        (reverse failures))))
 
+;;;; Adopt foreign tickets
+
+(defun zwanenzang--clear-foreign-state (&optional document)
+  "Remove tracker state on this entry, keeping DOCUMENT's name when non-nil.
+Human properties, Org IDs and body text are retained."
+  (dolist (property (org-entry-properties nil 'standard))
+    (when (and (string-prefix-p "ZWANENZANG" (car property))
+               (not (and document (equal (car property) "ZWANENZANG_DOC"))))
+      (org-entry-delete nil (car property))))
+  (zwanenzang--drop-archive-properties)
+  (when (member "zz_conflict" (org-get-tags nil t))
+    (org-set-tags (remove "zz_conflict" (org-get-tags nil t))))
+  (zwanenzang--write-body
+   (zwanenzang--compose-body
+    (zwanenzang--body)
+    '(("ZWANENZANG_CONFLICT") ("ZWANENZANG_COMMENTS") ("ZWANENZANG_HIDDEN")))))
+
+;;;###autoload
+(defun zwanenzang-adopt-foreign ()
+  "Create the foreign ticket at point in this scope's tracker.
+Keep its old tracker id as description text, not as identity.  Named
+documents become new versions; child tickets are not adopted.  Like
+create-on-push, save the file as soon as the new identity lands."
+  (interactive)
+  (let ((root (zwanenzang--root-at-point))
+        (outcome (zwanenzang--outcome-create)))
+    (org-with-wide-buffer
+     (let* ((case-fold-search nil)
+            (start (zwanenzang--ticket-heading-at-point root))
+            (dir (zwanenzang--scope-directory root))
+            (id (org-entry-get start "ZWANENZANG_ID"))
+            (tickets (car (zwanenzang--scan root)))
+            (known
+             (progn
+               (let* ((sync (alist-get 'sync (funcall zwanenzang--call dir '("sync"))))
+                      (error (zwanenzang--null (alist-get 'error sync))))
+                 (when error
+                   (user-error "zwanenzang: cannot adopt without successful sync: %s"
+                               error))
+                 (zwanenzang--note-sync outcome sync))
+               (zwanenzang--known-tickets dir)))
+            (blocked (zwanenzang--blocked-headings tickets known))
+            (result (zwanenzang--read-scope root dir tickets blocked))
+            (refused (zwanenzang--tracker-mismatch "adopt" root dir result)))
+       (when buffer-read-only
+         (user-error "zwanenzang: buffer is read-only"))
+       (when refused (user-error "%s" refused))
+       (when (gethash id known)
+         (user-error "zwanenzang: this ticket is known here, not foreign"))
+       (goto-char start)
+       (unless (org-get-todo-state)
+         (user-error "zwanenzang: cannot adopt: the heading has no TODO keyword"))
+       (let ((docs (zwanenzang--doc-headings))
+             write-back-error
+             (map (car (zwanenzang--keyword-map
+                        (org-entry-get root "ZWANENZANG_KEYWORDS")
+                        (alist-get 'statuses (alist-get 'tracker result))
+                        org-todo-keywords-1))))
+         (atomic-change-group
+           (zwanenzang--clear-foreign-state)
+           (zwanenzang--write-body
+            (zwanenzang--compose-body
+             (zwanenzang--body) nil
+             (concat (string-trim-right
+                      (zwanenzang--body-description (zwanenzang--body)))
+                     "\n\nFormer tracker id: " id "\n")))
+           (dolist (doc docs)
+             (save-excursion
+               (goto-char (cdr doc))
+               (zwanenzang--clear-foreign-state t)))
+           (let* ((headings (plist-get (zwanenzang--scan-all root) :headings))
+                  (heading (seq-find (lambda (h) (= start (plist-get h :marker))) headings))
+                  (plan (zwanenzang--plan-push
+                         (list heading) blocked (alist-get 'tickets result) map
+                         (remove "description" (zwanenzang--hide-docs root)) known)))
+             (unless (zwanenzang--plan-news plan)
+               (user-error "zwanenzang: cannot adopt: %s"
+                           (string-join (zwanenzang--plan-lines plan) "; ")))
+             (setf (zwanenzang--outcome-problems outcome)
+                   (append (zwanenzang--plan-lines plan)
+                           (zwanenzang--outcome-problems outcome)))
+             ;; Roll back preparation only while the tracker has not taken
+             ;; the create.  A save/write-back failure must retain any new id.
+             (let* ((real zwanenzang--call)
+                    applied
+                    (zwanenzang--call
+                     (lambda (directory args &optional input)
+                       (prog1 (funcall real directory args input)
+                         (when (equal args '("apply")) (setq applied t))))))
+               (condition-case err
+                   (zwanenzang--send-plan plan dir outcome)
+                 (error (if applied (setq write-back-error err)
+                          (signal (car err) (cdr err))))))))
+         (when write-back-error
+           (signal (car write-back-error) (cdr write-back-error))))
+       (zwanenzang--pull-into outcome root)))
+    (zwanenzang--report-outcome "adopted in" root outcome)))
+
 ;;;; Unarchive
 
 (defun zwanenzang--ticket-heading-at-point (root)

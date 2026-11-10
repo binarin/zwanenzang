@@ -163,6 +163,28 @@ sync properties and records the old id as free text in the description. This
 single rule covers both an accidentally reassigned id and a refile from
 another tracker's scope.
 
+`zwanenzang-adopt-foreign` performs this explicitly on the ticket at or
+above point. It first runs CLI sync, refusing adoption on any fetch or
+publication error rather than deciding an identity is foreign from a stale
+clone. It then checks the current tracker's identity and known ids,
+and creates only that heading, using its current keyword, title, priority,
+tags, description, named document text and same-scope parent. It neither
+adopts child tickets nor pushes unrelated edits. Known ids (including
+archived/tombstoned tickets) are refused; duplicates of a foreign id can be
+adopted one at a time. No history is transferred.
+
+Adoption clears the ticket's `ZWANENZANG*` properties, `ARCHIVE_*`
+properties, conflict tag and generated comments/hidden/conflict drawers.
+Direct named-document children keep `ZWANENZANG_DOC`, but lose their old
+tracker state and generated drawers too. Human properties, standard Org
+IDs, text and other children remain. In particular, old dependency numbers
+are not reinterpreted in the destination tracker. The description gains a
+plain `Former tracker id: ...` line. Hidden named documents follow the
+scope's ordinary push rules. New identity and saving follow create-on-push;
+a final scope pull installs fresh sync state. A refused create restores the
+original buffer; failures after successful apply retain the new identity
+and report recovery information, as for ordinary push.
+
 ## Duplicate ids
 
 Two headings in one scope with the same identity property block that ticket's
