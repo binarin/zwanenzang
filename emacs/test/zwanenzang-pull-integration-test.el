@@ -48,6 +48,9 @@
       (should (nth 2 (assoc "ZWANENZANG_COMMENTS" (zwanenzang--drawer-visibility))))
       (zwanenzang-test-cli trk "comment" id "Second comment")
       (zwanenzang-sync)
+      (let ((entry (zwanenzang-test-entry id)))
+        (should (< (string-match "Second comment" entry)
+                   (string-match "First comment" entry))))
       (zwanenzang-test-goto id)
       (should (nth 2 (assoc "PROPERTIES" (zwanenzang--drawer-visibility))))
       (should-not (nth 2 (assoc "ZWANENZANG_COMMENTS"
@@ -124,8 +127,8 @@
                  (concat ":END:\n"
                          "Intro\n,\\* not a heading\n"
                          ":ZWANENZANG_COMMENTS:\n"
-                         "\\[[-0-9T:Z]+\\] tester:\nfirst\n,\\* starred\n,:END:\n"
-                         "\\[[-0-9T:Z]+\\] tester:\nsecond\n:END:\n"
+                         "\\[[-0-9T:Z]+\\] tester:\nsecond\n"
+                         "\\[[-0-9T:Z]+\\] tester:\nfirst\n,\\* starred\n,:END:\n:END:\n"
                          ":ZWANENZANG_HIDDEN:\n"
                          (regexp-quote (format "[[zwanenzang:%s/status][status (hidden)]]" parent))
                          "\n:END:\n\\'")
@@ -641,22 +644,30 @@
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let* ((id (zwanenzang-test-create trk "Ticket"))
            (base (alist-get 'last_event (zwanenzang-test-show trk id))))
-      (zwanenzang-test-cli trk "comment" id "only comment")
+      (zwanenzang-test-cli trk "comment" id "Middle comment")
+      (zwanenzang-test-cli trk "comment" id "Newest comment")
       (zwanenzang-test-pull)
       (let ((actor "00000000000000000000000001"))
         (zwanenzang-test-append-raw
          trk actor
          (json-serialize `((id . ,(zwanenzang-test-ulid-next base)) (actor . ,actor)
                            (parent . ,base) (ts . "2026-11-07T00:00:00Z") (entity . ,id)
-                           (op . "tag") (data . ((tag . "late")))))))
+                           (op . "comment") (data . ((text . "Late older comment")))))))
       (zwanenzang-test-clear-report)
       (zwanenzang-test-pull)
       (should (string-match-p "compared in full" (zwanenzang-test-report)))
-      (should (member "late" (zwanenzang-test-tags id)))
       (let ((entry (zwanenzang-test-entry id)))
         (with-temp-buffer
           (insert entry)
-          (should (= 1 (how-many "only comment" (point-min) (point-max)))))))))
+          (dolist (text '("Newest comment" "Middle comment" "Late older comment"))
+            (should (= 1 (how-many text (point-min) (point-max))))))
+        (should (< (string-match "Newest comment" entry)
+                   (string-match "Middle comment" entry)))
+        (should (< (string-match "Middle comment" entry)
+                   (string-match "Late older comment" entry))))
+      (let ((before (buffer-string)))
+        (zwanenzang-test-pull)
+        (should (equal before (buffer-string)))))))
 
 (provide 'zwanenzang-pull-integration-test)
 ;;; zwanenzang-pull-integration-test.el ends here

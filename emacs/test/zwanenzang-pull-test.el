@@ -425,23 +425,26 @@
 
 ;;;; Rendering tracker state
 
-(ert-deftest zwanenzang-comments-render-names-links-and-org-text ()
-  (let ((pull (zwanenzang--pull-create
-               :tracker-dir "/trk/"
-               :actors '((A1 . "Alice")))))
-    (should (equal (zwanenzang--comments-content
-                    pull
-                    '((comments ((actor . "A1") (ts . "2026-11-07T10:00:00Z")
-                                 (text . "first\n* line") (link . :null))
-                                ((actor . "01UNDECLARED0000000000000") (ts . "2026-11-07T11:00:00Z")
-                                 (text . "second") (link . "docs/x.md"))
-                                ((actor . "A1") (ts . "2026-11-07T12:00:00Z")
-                                 (text . "third") (link . "https://example.invalid/mr/1")))))
-                   (concat "[2026-11-07T10:00:00Z] Alice:\nfirst\n,* line\n"
-                           "[2026-11-07T11:00:00Z] 01UNDECLAR:\nsecond\n"
+(ert-deftest zwanenzang-comments-render-newest-first-without-changing-state ()
+  (let* ((pull (zwanenzang--pull-create
+                :tracker-dir "/trk/"
+                :actors '((A1 . "Alice"))))
+         ;; Replay order, not wall-clock timestamps, defines newest.
+         (ticket '((comments ((actor . "A1") (ts . "2026-11-07T10:00:00Z")
+                             (text . "first\n* line") (link . :null))
+                            ((actor . "01UNDECLARED0000000000000") (ts . "2026-11-07T09:00:00Z")
+                             (text . "second") (link . "docs/x.md"))
+                            ((actor . "A1") (ts . "2026-11-07T12:00:00Z")
+                             (text . "third") (link . "https://example.invalid/mr/1")))))
+         (before (copy-tree ticket))
+         (expected (concat "[2026-11-07T12:00:00Z] Alice:\nthird\n"
+                           "[[https://example.invalid/mr/1]]\n"
+                           "[2026-11-07T09:00:00Z] 01UNDECLAR:\nsecond\n"
                            "[[file:/trk/docs/x.md]]\n"
-                           "[2026-11-07T12:00:00Z] Alice:\nthird\n"
-                           "[[https://example.invalid/mr/1]]\n")))))
+                           "[2026-11-07T10:00:00Z] Alice:\nfirst\n,* line\n")))
+    (dotimes (_ 2)
+      (should (equal (zwanenzang--comments-content pull ticket) expected))
+      (should (equal ticket before)))))
 
 (ert-deftest zwanenzang-hidden-documents-render-as-links ()
   (let ((pull (zwanenzang--pull-create :hidden '("status" "plan" "absent"))))

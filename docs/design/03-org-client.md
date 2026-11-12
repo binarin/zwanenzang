@@ -59,7 +59,7 @@ Mapping between heading and ticket:
 | tags | tags, optionally filtered by a per-tracker allowlist |
 | body text before the first subheading | document `description` |
 | subheadings marked with a document property | named documents |
-| a read-only drawer or subtree | comments, newest last |
+| a read-only drawer or subtree | comments, newest first |
 | properties | number, dependencies, relations, branches, MRs, repo links |
 
 ## Keyword map
@@ -288,7 +288,7 @@ The CLI stays format-blind and nothing converts it.
   otherwise conflict tag,
   the agent's text in a drawer, and the agent will have to rebase on its next
   write anyway.
-- Comments render read-only, newest last, each with a link to any file or URL
+- Comments render read-only, newest first, each with a link to any file or URL
   it names. Removing them from the buffer changes nothing.
 - Bulky files are links, opened over tramp.
 
@@ -443,12 +443,16 @@ standard Org `ID` is only filled in when missing, as described above.
 
 ### Adding comments
 
-On ticket headings inside a scope, `org-add-note` (`C-c C-z`, or agenda
-`z`) opens an Org comment compose buffer. `C-c C-c` appends one tracker
-comment through `apply`, then pulls the scope to render it; `C-c C-k`
-aborts without writing. It never pushes other Org edits. Unpublished
-headings are refused: push them explicitly first. Structural headings and
-headings outside scopes keep ordinary Org note behavior.
+On ticket headings inside a scope and their direct named-document children
+(`ZWANENZANG_DOC`), `org-add-note` (`C-c C-z`, or agenda `z`) opens an Org
+comment compose buffer for the owning ticket. This includes point in the
+document's body; the document text is not a note destination. `C-c C-c`
+appends one tracker comment through `apply`, then pulls the scope to render
+it; `C-c C-k` aborts without writing. It never pushes other Org edits.
+Unpublished owners are refused: push them explicitly first. Ownership does
+not cross a child ticket, structural heading or nested scope. Structural
+headings and headings outside scopes keep ordinary Org note behavior.
+The explicit `zwanenzang-comment` command uses the same ownership rules.
 
 The advice is installed on load, gated by the inherited `ZWANENZANG`
 property. A prefix argument bypasses it; setting
@@ -473,9 +477,12 @@ manual edits there are overwritten on pull (no new edit warning is added).
 - The description is the body before the first subheading, excluding
   drawers and planning lines.
 - Comments go in a `:ZWANENZANG_COMMENTS:` drawer at the end of the body,
-  below the description, newest last, each `[timestamp] actor:` followed by
+  below the description, newest first, each `[timestamp] actor:` followed by
   the text as plain Org, so its links work. The drawer is rewritten from
   tracker state and never read back.
+  Newest means reverse event replay order, not wall-clock timestamp order.
+  This applies immediately after an accepted comment send and on every pull,
+  including cursor resets; the CLI keeps its ascending replay order.
 - Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The
   conflict tag is `zz_conflict`; it is never pushed as a tracker tag.
 - Each hidden document is one link line using a `zwanenzang:` Org link
