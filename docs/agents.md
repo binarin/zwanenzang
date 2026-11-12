@@ -8,8 +8,9 @@ The full contract, with every command, field and error code, is in
 
 ## The CLI
 
-The examples write `zwanenzang`, which works if it is on `PATH`. Otherwise run
-it from its flake, keeping the `--`:
+The examples write `zwanenzang`, which works if it is on `PATH`. The Nix
+package also installs `zz` as a short command with identical behavior; no
+shell alias is needed. Otherwise run it from its flake, keeping the `--`:
 
 ```sh
 nix run git+https://forgejo.lynx-lizard.ts.net/binarin/zwanenzang#zwanenzang -- <arguments>

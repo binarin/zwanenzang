@@ -11,7 +11,10 @@ org file on the desktop until milestone 3 makes it a synced scope.
 - The swan-lake (ZL) tracker keeps running on the frozen ai-workflow tooling
   until zwanenzang can take it over. It is not a fixture yet.
 - Rust, distributed as a nix flake. Nix is available on every machine,
-  including client laptops.
+  including client laptops. The CLI package installs both `zwanenzang` and
+  the short command `zz`, linked to the same git-PATH-wrapped executable.
+  The default flake command remains `zwanenzang`; Cargo builds/installs only
+  that name. The dev shell supplies build tools, not the installed CLI.
 - The Emacs client is developed in this repository, as the `zwanenzang`
   Emacs package in `emacs/`. `swan-lake-common` consumes it through this
   flake's overlay. Tracker locations are org properties in the human's own

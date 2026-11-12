@@ -11,6 +11,11 @@ JSON request. The format grows by adding fields; a client must ignore fields it 
 zwanenzang [-C DIR | --tracker DIR | --tracker-url URL] [--actor-name NAME] <command> ...
 ```
 
+The Nix package also installs `zz` as a short name for the same wrapped
+executable. It accepts the same arguments and stdin, returns the same JSON
+and exit statuses, and retains the git PATH fallback. `zwanenzang` remains
+the default command for `nix run` and the binary built/installed by Cargo.
+
 - `-C DIR`: start the tracker search in `DIR` instead of the current
   directory. The tracker is the nearest directory, upward, that holds
   `zwanenzang.toml`. For `init`, `DIR` is where the tracker is created;

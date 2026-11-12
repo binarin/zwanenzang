@@ -31,6 +31,7 @@ rustPlatform.buildRustPackage {
   # A git on the caller's PATH is used first; this one is the fallback.
   postInstall = ''
     wrapProgram $out/bin/zwanenzang --suffix PATH : ${lib.makeBinPath [ git ]}
+    ln -s zwanenzang $out/bin/zz
   '';
   meta.mainProgram = "zwanenzang";
 }
