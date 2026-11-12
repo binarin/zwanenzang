@@ -1948,6 +1948,76 @@ closed even if publication or the subsequent pull fails, to avoid resend."
 
 (advice-add 'org-add-note :around #'zwanenzang--org-add-note)
 
+;;;; Showing branches
+
+(defcustom zwanenzang-show-branches-to-tickets t
+  "Make `org-fold-show-branches' stop at ticket headings in scopes.
+That is what \\[org-kill-note-or-show-branches] uses.  It then shows the
+human's structure and the ticket headings in it, child tickets included,
+but not the rest of what a ticket nests: named documents and the human's
+own subheadings stay folded.  Outside scopes Org behaves normally."
+  :type 'boolean)
+
+(defun zwanenzang--branch-ticket-p (in-scope)
+  "Whether the heading at point is a ticket heading, IN-SCOPE or not.
+As in `zwanenzang--scan-all', a heading with a TODO keyword and no
+identity is a new ticket unless it is the inbox or a document."
+  (and in-scope
+       (not (org-entry-get nil "ZWANENZANG"))
+       (or (org-entry-get nil "ZWANENZANG_ID")
+           (and (org-get-todo-state)
+                (not (org-entry-get nil "ZWANENZANG_DOC"))
+                (not (equal (org-entry-get nil "ZWANENZANG_INBOX") "t"))))
+       t))
+
+(defun zwanenzang--show-branches-to-tickets ()
+  "Show the subheadings of this heading down to ticket headings.
+Below a ticket heading only its child tickets are shown.  A heading that
+stays hidden hides its whole subtree.  Nothing is folded here: like
+`org-fold-show-branches', this only reveals heading lines."
+  (save-excursion
+    (org-with-limited-levels
+     (org-back-to-heading t)
+     (let* ((in-scope (and (org-entry-get nil "ZWANENZANG" t) t))
+            (end (save-excursion (org-end-of-subtree t t)))
+            ;; (LEVEL IN-SCOPE TICKET) for the shown headings above point.
+            (stack (list (list (org-current-level) in-scope
+                               (zwanenzang--branch-ticket-p in-scope)))))
+       (org-fold-heading nil)
+       (outline-next-heading)
+       (while (< (point) end)
+         (let ((level (org-current-level)))
+           (while (>= (car (car stack)) level) (pop stack))
+           (let* ((above (car stack))
+                  (scope (or (nth 1 above)
+                             (and (org-entry-get nil "ZWANENZANG") t)))
+                  (ticket (zwanenzang--branch-ticket-p scope)))
+             (if (and (nth 2 above) (not ticket))
+                 (org-end-of-subtree t t)
+               (org-fold-heading nil)
+               (push (list level scope ticket) stack)
+               (outline-next-heading)))))))))
+
+(defun zwanenzang--show-branches-scoped-p ()
+  "Whether the subtree at point is in a scope or contains a scope root."
+  (save-excursion
+    (org-back-to-heading t)
+    (or (org-entry-get nil "ZWANENZANG" t)
+        (let ((end (save-excursion (org-end-of-subtree t t))))
+          (re-search-forward "^[ \t]*:ZWANENZANG:" end t)))))
+
+(defun zwanenzang--org-show-branches (original &rest args)
+  "Call ORIGINAL with ARGS, unless the heading at point has tickets below it.
+See `zwanenzang-show-branches-to-tickets'."
+  (if (and zwanenzang-show-branches-to-tickets
+           (derived-mode-p 'org-mode)
+           (not (org-before-first-heading-p))
+           (zwanenzang--show-branches-scoped-p))
+      (zwanenzang--show-branches-to-tickets)
+    (apply original args)))
+
+(advice-add 'org-fold-show-branches :around #'zwanenzang--org-show-branches)
+
 ;;;; Push
 
 ;; A push compares each heading with its sync state and sends Org's value
