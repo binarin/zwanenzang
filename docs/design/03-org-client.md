@@ -619,10 +619,15 @@ tracker.
   open when their rendered content changes (including first insertion),
   not merely because another field or the description changed. Trailing
   blank lines after a drawer are not part of that comparison. Body rewrites
-  retain outline hiding under a folded ticket or ancestor; parent moves
-  retain the moved entries' outline hiding and respect a folded destination.
+  retain the complete enclosing outline fold, including its newline
+  boundaries, under a folded ticket or ancestor. Unchanged bodies do not
+  recreate outline folds. Rewrites preserve the original enclosing extent
+  rather than splitting an ancestor overlay around the body: later documents
+  and siblings must stay in that fold, and ordinary Org search or visibility
+  save/restore must not concatenate visible heading lines. Parent moves retain
+  the moved entries' outline hiding and respect a folded destination.
   Opening a changed drawer does not reveal it through an outline fold.
-  These visibility updates do not save the file.
+  These visibility updates do not save the file or repair pre-existing damage.
 - Named documents are the ticket heading's direct children with
   `ZWANENZANG_DOC`, titled with the document name. A tracker document
   without such a subheading gets one, including one the human deleted:
