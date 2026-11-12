@@ -198,5 +198,50 @@
           (org-agenda-add-note)
           (should called))))))
 
+(ert-deftest zwanenzang-comment-send-renders-newest-first-and-keeps-human-edits ()
+  (save-window-excursion
+    (zwanenzang-test-with-scope
+        (tracker source "* Scope\n:PROPERTIES:\n:ZWANENZANG: %s\n:END:\n** TODO Ticket\nDescription\n*** plan\n:PROPERTIES:\n:ZWANENZANG_DOC: plan\n:END:\nPlan text\n")
+      (goto-char (point-min))
+      (zwanenzang-push)
+      (re-search-forward "TODO Ticket")
+      (let ((id (org-entry-get nil "ZWANENZANG_ID")))
+        (zwanenzang-test-cli tracker "comment" id "Oldest comment")
+        (zwanenzang-test-cli tracker "comment" id "Middle comment")
+        (zwanenzang-test-pull)
+        (goto-char (point-min))
+        (re-search-forward "^Description$")
+        (insert " locally edited")
+        (re-search-forward "^Plan text$")
+        (insert " locally edited")
+        (zwanenzang-test-goto id)
+        (org-add-note)
+        (insert "Newest comment")
+        (zwanenzang-comment-send)
+        (with-current-buffer source
+          ;; The accepted send already pulled; no separate sync is needed.
+          (let ((entry (zwanenzang-test-entry id)))
+            (should (< (string-match "Newest comment" entry)
+                       (string-match "Middle comment" entry)))
+            (should (< (string-match "Middle comment" entry)
+                       (string-match "Oldest comment" entry))))
+          (should (string-match-p "Description locally edited" (buffer-string)))
+          (should (string-match-p "Plan text locally edited" (buffer-string)))
+          (let ((before (buffer-string))
+                (head (zwanenzang-test-head tracker)))
+            (zwanenzang-test-pull)
+            (should (equal before (buffer-string)))
+            (should (equal head (zwanenzang-test-head tracker)))))
+        ;; Sending a comment did not publish either unrelated human edit.
+        (should (equal "Description\n"
+                       (alist-get 'text (zwanenzang-test-cli
+                                         tracker "doc" "get" id "description"))))
+        (should (equal "Plan text\n"
+                       (alist-get 'text (zwanenzang-test-cli
+                                         tracker "doc" "get" id "plan"))))
+        (should (equal '("Oldest comment" "Middle comment" "Newest comment")
+                       (mapcar (lambda (c) (alist-get 'text c))
+                               (alist-get 'comments (zwanenzang-test-show tracker id)))))))))
+
 (provide 'zwanenzang-comment-test)
 ;;; zwanenzang-comment-test.el ends here

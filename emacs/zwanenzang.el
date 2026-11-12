@@ -982,7 +982,8 @@ nesting changed) or `conflict'."
       (substring actor 0 (min 10 (length actor)))))
 
 (defun zwanenzang--comments-content (pull ticket)
-  "The :ZWANENZANG_COMMENTS: drawer content for TICKET, oldest first."
+  "The :ZWANENZANG_COMMENTS: drawer content for TICKET, newest first.
+Reverse replay order, not wall-clock timestamps; leave TICKET unchanged."
   (mapconcat
    (lambda (c)
      (let ((link (zwanenzang--null (alist-get 'link c))))
@@ -996,7 +997,7 @@ nesting changed) or `conflict'."
                                (concat "file:" (expand-file-name
                                                 link (zwanenzang--pull-tracker-dir pull)))))
                             "\n")))))
-   (alist-get 'comments ticket) ""))
+   (reverse (alist-get 'comments ticket)) ""))
 
 (defun zwanenzang--hidden-content (pull ticket)
   "The :ZWANENZANG_HIDDEN: drawer content for TICKET.
