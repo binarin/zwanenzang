@@ -282,8 +282,8 @@ The CLI stays format-blind and nothing converts it.
   is unchanged since the cursor. Agents cannot write it.
 - Named documents render as subheadings carrying a document property, with
   editable inline `org` source blocks. `C-c '` opens the ordinary Org source
-  editor with real, unshifted headings; return with `C-c C-c`, or abort with
-  `C-c C-k`. Returning edits the host buffer only; push sends a new version.
+  editor with real, unshifted headings; `C-c '` again returns, `C-c C-k`
+  aborts. Returning edits the host buffer only; push sends a new version.
   Pull applies an agent's new version only when the local text is unchanged;
   otherwise conflict tag,
   the agent's text in a drawer, and the agent will have to rebase on its next
@@ -561,13 +561,19 @@ tracker.
   then read as its opening, and the push truncated the description. The
   cost is a comma on `:wip:`-shaped lines of prose. In comments, heading
   lines and `:END:` lines get the comma. Skipped values are fixed-width
-  `: ` lines. Drawers end at `:END:` in any case, as in Org.
+  `: ` lines. Drawers end at `:END:` in any case, as in Org. This comma is
+  the client's own: descriptions and comments are entry text, not source
+  blocks, and Org has no quoting convention there. Named documents use
+  Org's source-block quoting instead, below.
 - Visible named documents use a dedicated codec, not the description/drawer
   parser. `org-src-v1` bodies end in one `#+begin_src org -i :eval never
-  :exports code :noweb no` block. Org's source escaping protects headings,
-  nested source delimiters and comma runs; its parsed source value is already
-  decoded. Only decoded, normalized prose is hashed, compared and sent to the
-  CLI. Drawers within that prose are literal content, never host metadata.
+  :exports code :noweb no` block. Its content uses Org's own source-block
+  quoting (`org-escape-code-in-string`): one more comma before a `*` or
+  `#+` that starts a line after any indentation and commas.
+  `C-c '` strips that quoting in the editor and puts it back on return, and
+  the parsed source value is already decoded, so the client adds no quoting
+  of its own. Only decoded, normalized prose is hashed, compared and sent to
+  the CLI. Drawers within that prose are literal content, never host metadata.
   Host properties and human drawers remain outside the block. Prose does not
   execute or become host tickets/scopes, and source blocks export as code.
   Parent moves and refiles do not shift contained prose headings. Links keep

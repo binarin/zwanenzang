@@ -127,6 +127,11 @@
                 (should (equal before (buffer-string))))
               (should (equal draft (buffer-string))))
             (org-edit-src-exit) (setq edit nil)
+            ;; The host keeps Org's own source quoting, which the editor
+            ;; strips and restores; the client adds no quoting of its own.
+            (should (string-match-p "^,\\* New heading$" (buffer-string)))
+            (should (string-match-p "^,\\* TODO Literal heading$" (buffer-string)))
+            (should (string-match-p "^,,\\* comma heading$" (buffer-string)))
             (search-backward "** plan")
             (should (equal (concat zwanenzang-test--document-prose "* New heading\n")
                            (zwanenzang--document-text))))
