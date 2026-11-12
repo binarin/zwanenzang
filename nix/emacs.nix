@@ -43,9 +43,11 @@
           export HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share" \
             XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache"
           export ZWANENZANG_ERT_SELECTOR="''${1:-}"
+          # Require rather than load: test files require each other, and
+          # loading one again after that redefines its tests.
           loads=()
           for f in emacs/test/*-test.el; do
-            loads+=(-l "$(basename "$f" .el)")
+            loads+=(--eval "(require '$(basename "$f" .el))")
           done
           emacs -Q --batch -L emacs -L emacs/test "''${loads[@]}" \
             --eval '(let ((selector (getenv "ZWANENZANG_ERT_SELECTOR")))
