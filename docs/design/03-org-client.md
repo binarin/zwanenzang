@@ -407,7 +407,8 @@ Decided 2026-11-07 for the first Emacs implementation.
   Loading the client installs the Org archive hook described above.
   It also installs a global Org completion-blocker hook for the dependency
   UI below; only this blocker is gated by inherited `ZWANENZANG` and never
-  calls the CLI.
+  calls the CLI. The `org-add-note` and show-branches advice below are
+  installed the same way.
 - CLI calls are synchronous: `call-process` for local scopes now,
   `process-file` over tramp in milestone 5.
 - First commands: `zwanenzang-pull`, `zwanenzang-push` and
@@ -471,6 +472,29 @@ Publication failures use the normal report. A killed,
 retargeted, duplicate or foreign source heading is refused before writing.
 The generated comments drawer remains a one-way projection, not an input;
 manual edits there are overwritten on pull (no new edit warning is added).
+
+### Showing branches
+
+Org's `C-c C-k` outside a note (`org-kill-note-or-show-branches`) shows
+every subheading of the heading at point, or of the whole buffer before the
+first heading. In a scope that unfolds every named document and the human's
+notes under each ticket. The client advises `org-fold-show-branches`, which
+both cases call, to stop at ticket headings instead:
+
+- The human's structure (inbox, grouping headings, scope roots) shows as
+  before, and so does every ticket heading reached through it.
+- Below a ticket heading only its child tickets show; named documents and
+  the human's own subheadings stay folded, with everything under them. On a
+  ticket heading itself, `C-c C-k` therefore lists its child tickets.
+- A ticket is what the scan treats as one: a heading with `ZWANENZANG_ID`,
+  or a new heading with a TODO keyword that is not the inbox or a document.
+  Identities outside any scope are not tickets.
+- On a non-ticket heading below a ticket, such as a named document, its
+  subheadings show by the same rule. Subtrees with no scope in or above
+  them keep Org's behaviour. Bodies are never shown, as in Org.
+
+The advice is installed on load, like the note redirect, and never calls
+the CLI. Setting `zwanenzang-show-branches-to-tickets` to nil disables it.
 
 ### Prose, comments and conflicts
 
