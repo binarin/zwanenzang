@@ -438,12 +438,16 @@ standard Org `ID` is only filled in when missing, as described above.
 
 ### Adding comments
 
-On ticket headings inside a scope, `org-add-note` (`C-c C-z`, or agenda
-`z`) opens an Org comment compose buffer. `C-c C-c` appends one tracker
-comment through `apply`, then pulls the scope to render it; `C-c C-k`
-aborts without writing. It never pushes other Org edits. Unpublished
-headings are refused: push them explicitly first. Structural headings and
-headings outside scopes keep ordinary Org note behavior.
+On ticket headings inside a scope and their direct named-document children
+(`ZWANENZANG_DOC`), `org-add-note` (`C-c C-z`, or agenda `z`) opens an Org
+comment compose buffer for the owning ticket. This includes point in the
+document's body; the document text is not a note destination. `C-c C-c`
+appends one tracker comment through `apply`, then pulls the scope to render
+it; `C-c C-k` aborts without writing. It never pushes other Org edits.
+Unpublished owners are refused: push them explicitly first. Ownership does
+not cross a child ticket, structural heading or nested scope. Structural
+headings and headings outside scopes keep ordinary Org note behavior.
+The explicit `zwanenzang-comment` command uses the same ownership rules.
 
 The advice is installed on load, gated by the inherited `ZWANENZANG`
 property. A prefix argument bypasses it; setting
