@@ -138,7 +138,7 @@
         (let ((docs (zwanenzang--doc-headings)))
           (should (equal (mapcar #'car docs) '("plan")))
           (goto-char (cdr (car docs)))
-          (should (equal (zwanenzang--body-description (zwanenzang--body)) "Plan text\n"))
+          (should (equal (zwanenzang--document-text) "Plan text\n"))
           (should (org-entry-get nil "ZWANENZANG_VERSION"))))
       ;; Pulling again with nothing new changes nothing.
       (let ((before (buffer-string)))
@@ -166,7 +166,7 @@
       (save-excursion
         (zwanenzang-test-goto id)
         (goto-char (cdar (zwanenzang--doc-headings)))
-        (should (equal (zwanenzang--body-description (zwanenzang--body)) "New plan\n")))
+        (should (equal (zwanenzang--document-text) "New plan\n")))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id))))))
 
 (ert-deftest zwanenzang-pull-writes-org-prose-verbatim-and-below-it-the-comments ()
@@ -455,7 +455,7 @@
                            nil 'tree)
           (should (equal (nreverse children) '("plan" "notes" "Child"))))
         (goto-char (cdr (assoc "notes" (zwanenzang--doc-headings))))
-        (should (equal (zwanenzang--body-description (zwanenzang--body)) "Notes\n")))
+        (should (equal (zwanenzang--document-text) "Notes\n")))
       (should (equal (zwanenzang-test-parent-heading child) "Ticket")))))
 
 (ert-deftest zwanenzang-pull-leaves-archived-and-flags-tombstoned ()

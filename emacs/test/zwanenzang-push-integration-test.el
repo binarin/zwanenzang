@@ -650,8 +650,7 @@
       (zwanenzang--write-body
        (zwanenzang--compose-body (zwanenzang--body) nil "Unsynced description\n"))
       (goto-char (cdr (assoc "plan" (zwanenzang--doc-headings))))
-      (zwanenzang--write-body
-       (zwanenzang--compose-body (zwanenzang--body) nil "Unsynced plan\n"))
+      (zwanenzang--write-document "Unsynced plan\n")
       (zwanenzang-test-goto kid)
       (org-todo "CNCL")
       (zwanenzang-test--edit-title top "Unsynced title")
@@ -1023,6 +1022,12 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
                                "Text\n#+begin_src sh\nls\n#+end_src\n#+TITLE: x\n")
       (zwanenzang-test-set-doc trk id "plan" "Plan\n#+begin_quote\nq\n#+end_quote\n")
       (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (goto-char (cdr (assoc "plan" (zwanenzang--doc-headings))))
+        (let ((parts (zwanenzang--document-parts)))
+          (zwanenzang--write-body (zwanenzang--compose-body (car parts) nil (cdr parts))))
+        (org-entry-delete nil "ZWANENZANG_DOC_FORMAT"))
       (save-excursion
         (goto-char (point-min))
         (outline-next-heading)

@@ -28,6 +28,7 @@
 (require 'org-element)
 (require 'org-fold)
 (require 'org-id)
+(require 'org-src)
 (require 'subr-x)
 
 (defgroup zwanenzang nil
@@ -349,6 +350,86 @@ and TEXT ends in a newline.  A drawer without its :END: line is text."
   (zwanenzang--normalize-text
    (zwanenzang--unescape-text (zwanenzang--segments-text (zwanenzang--body-segments body)))))
 
+(defconst zwanenzang--document-format "org-src-v1"
+  "Named-document body codec, independent of the description codec.")
+
+(defconst zwanenzang--document-header
+  "#+begin_src org -i :eval never :exports code :noweb no\n"
+  "Literal, indentation-preserving source wrapper; never evaluate prose.")
+
+(defun zwanenzang--document-parts ()
+  "Return (HOST-BODY . TEXT) for the named document at point.
+Without a format property, read the legacy escaped body.  A marked body
+must contain exactly one canonical source block and only host drawers or
+planning lines outside it.  Fail closed on damaged or unknown wrappers.
+Org's parsed source value is already unescaped: never decode it twice."
+  (let ((body (zwanenzang--body))
+        (format (org-entry-get nil "ZWANENZANG_DOC_FORMAT")))
+    (if (not format)
+        (cons body (zwanenzang--body-description body))
+      (unless (equal format zwanenzang--document-format)
+        (user-error "zwanenzang: unknown named-document format %s" format))
+      (with-temp-buffer
+        (insert body)
+        (org-mode)
+        (let* ((blocks (org-element-map (org-element-parse-buffer) 'src-block
+                                        (lambda (block)
+                                          (when (eq (org-element-type (org-element-parent block)) 'section)
+                                            block))))
+               (block (car blocks))
+               (begin (and block (org-element-begin block)))
+               (end (and block (org-element-end block)))
+               (host (and begin (concat (buffer-substring-no-properties (point-min) begin)
+                                        (buffer-substring-no-properties end (point-max))))))
+          (unless (and (= (length blocks) 1)
+                       (save-excursion
+                         (goto-char begin)
+                         (looking-at-p (regexp-quote zwanenzang--document-header)))
+                       (string-empty-p
+                        (string-trim (buffer-substring-no-properties end (point-max))))
+                       (string-empty-p
+                        (string-trim (zwanenzang--segments-text
+                                      (zwanenzang--body-segments host)))))
+            (user-error "zwanenzang: malformed named-document source block; repair it before syncing"))
+          (cons host (zwanenzang--normalize-text (org-element-property :value block))))))))
+
+(defun zwanenzang--document-text ()
+  "The named document at point as normalized decoded prose."
+  (cdr (zwanenzang--document-parts)))
+
+(defun zwanenzang--entry-text ()
+  "Normalized prose of the ticket or direct named document at point."
+  (if (org-entry-get nil "ZWANENZANG_DOC")
+      (zwanenzang--document-text)
+    (zwanenzang--body-description (zwanenzang--body))))
+
+(defun zwanenzang--compose-document (drawers &optional text)
+  "The document body at point with DRAWERS replaced and optional new TEXT.
+Keep host drawers separate from the literal source payload."
+  (pcase-let ((`(,host . ,local) (zwanenzang--document-parts)))
+    (concat (zwanenzang--compose-body host drawers "")
+            zwanenzang--document-header
+            (org-escape-code-in-string
+             (zwanenzang--normalize-text (or text local)))
+            "#+end_src\n")))
+
+(defun zwanenzang--write-document (text)
+  "Write TEXT in the named document at point, migrating legacy bodies."
+  (zwanenzang--write-body (zwanenzang--compose-document nil text))
+  (zwanenzang--put "ZWANENZANG_DOC_FORMAT" zwanenzang--document-format))
+
+(defun zwanenzang--check-source-edit ()
+  "Refuse a client operation while this host buffer has a source editor.
+The editor may contain unsaved prose; syncing or moving its host would
+read stale text or invalidate its markers.  Finish or abort it first."
+  (let ((host (current-buffer)))
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when (and (bound-and-true-p org-src-mode)
+                   (eq (org-src-source-buffer) host))
+          (user-error "zwanenzang: finish or abort the source editor %s first"
+                      (buffer-name buffer)))))))
+
 (defun zwanenzang--render-drawer (name content)
   "A drawer NAME holding CONTENT, or nil when CONTENT is nil or empty."
   (and content (not (string-empty-p content))
@@ -452,6 +533,7 @@ New or changed drawers are opened, but unchanged drawers retain their fold."
 
 (defun zwanenzang--write-body (new)
   "Replace the body with NEW, preserving unchanged drawers' visibility."
+  (zwanenzang--check-source-edit)
   (let ((before (zwanenzang--drawer-visibility))
         (outline-hidden (save-excursion
                           (org-back-to-heading t)
@@ -587,6 +669,7 @@ That is the next heading after it, or the end of the buffer."
 
 (defun zwanenzang--move-subtree (from to)
   "Move the subtree at FROM to be the last child of the heading at TO."
+  (zwanenzang--check-source-edit)
   (let* ((end (zwanenzang--subtree-end from))
          (from-level (save-excursion (goto-char from) (org-current-level)))
          (text (buffer-substring-no-properties from end))
@@ -645,6 +728,9 @@ If BODY exits non-locally, every change it made is undone."
 (defun zwanenzang--scope-root ()
   "A marker at the scope root containing point.
 That is the nearest heading at or above point with a ZWANENZANG property."
+  (when (bound-and-true-p org-src-mode)
+    (user-error "zwanenzang: source editors are prose, not tracker scopes"))
+  (zwanenzang--check-source-edit)
   (org-with-wide-buffer
    (when (org-before-first-heading-p)
      (user-error "zwanenzang: point is not inside a scope"))
@@ -686,6 +772,10 @@ of a scope root nested inside is another scope and is skipped."
           stack headings inbox)
       (outline-next-heading)
       (while (< (point) end)
+        ;; Validate before collecting ANY creates, including under blocked
+        ;; owners.  A damaged source fence must never expose fake tickets.
+        (when (org-entry-get nil "ZWANENZANG_DOC_FORMAT")
+          (zwanenzang--document-text))
         (let ((level (org-current-level)))
           (if (org-entry-get nil "ZWANENZANG")
               (org-end-of-subtree t t)
@@ -1056,7 +1146,7 @@ or nil."
 HASH-PROPERTY holds the hash of the text as last synced; FRESH means
 the heading is new, so its text counts as synced.  Return a decision
 as `zwanenzang--merge' does."
-  (let ((local (zwanenzang--hash (zwanenzang--body-description (zwanenzang--body)))))
+  (let ((local (zwanenzang--hash (zwanenzang--entry-text))))
     (zwanenzang--merge local
                        (if fresh local (or (org-entry-get nil hash-property) :unknown))
                        (zwanenzang--hash remote))))
@@ -1088,6 +1178,8 @@ a subheading gets one.  Return the conflicts."
               (setq docs (append docs (list (cons name marker)))))
             (save-excursion
               (goto-char marker)
+              (let ((local (zwanenzang--document-text)))
+                (zwanenzang--write-document local))
               (pcase (zwanenzang--merge-prose remote fresh "ZWANENZANG_HASH")
                 ('conflict
                  (push (list (format "document %s" name)
@@ -1096,8 +1188,7 @@ a subheading gets one.  Return the conflicts."
                        conflicts))
                 (decision
                  (when (eq decision 'apply)
-                   (zwanenzang--write-body
-                    (zwanenzang--compose-body (zwanenzang--body) nil remote)))
+                   (zwanenzang--write-document remote))
                  (zwanenzang--put "ZWANENZANG_VERSION" version)
                  (zwanenzang--put "ZWANENZANG_HASH" (zwanenzang--hash remote)))))))))
     (nreverse conflicts)))
@@ -1334,7 +1425,7 @@ Sync state and conflict notes are left out."
           (mapcar (lambda (doc)
                     (save-excursion
                       (goto-char (cdr doc))
-                      (zwanenzang--body-description (zwanenzang--body))))
+                      (zwanenzang--document-text)))
                   (zwanenzang--doc-headings)))))
 
 (defun zwanenzang--pull-existing (pull entry nest)
@@ -1558,6 +1649,7 @@ Only priority refusals carry this metadata.  Never edit or save the file."
 The CLI is only read from.  All changes to the buffer are one undo step
 and the buffer is not saved."
   (with-current-buffer (marker-buffer root)
+    (zwanenzang--check-source-edit)
     (org-with-wide-buffer
      (let* ((case-fold-search nil)
             (dir (zwanenzang--scope-directory root))
@@ -1899,7 +1991,7 @@ It is a new ticket PLAN does not create, or an id in the hash set TARGETS."
   "Add to PLAN the document NAME of ticket REF, the heading at point's text.
 TICKET and TEXTS are the ticket's state and document text, nil when new.
 The base is the current version, so a stale one cannot refuse the batch."
-  (let* ((local (zwanenzang--body-description (zwanenzang--body)))
+  (let* ((local (zwanenzang--entry-text))
          (symbol (intern name))
          (version (zwanenzang--null (alist-get 'current (alist-get symbol (alist-get 'documents ticket)))))
          (base (or (org-entry-get nil (if (equal name "description")
@@ -2210,6 +2302,7 @@ A failed apply signals, having written nothing to the tracker or the
 buffer.  A document version landing between the read and the apply, which
 only another writer in this clone can cause, gets one more try."
   (with-current-buffer (marker-buffer root)
+    (zwanenzang--check-source-edit)
     (org-with-wide-buffer
      (let ((case-fold-search nil)
            (dir (zwanenzang--scope-directory root)))
@@ -2329,17 +2422,19 @@ Missing state is not evidence that a copy is unchanged."
               (goto-char (cdr doc))
               (equal (org-entry-get nil "ZWANENZANG_HASH")
                      (zwanenzang--hash
-                      (zwanenzang--body-description (zwanenzang--body))))))
+                      (zwanenzang--document-text)))))
           (zwanenzang--doc-headings)))))
 
 (defun zwanenzang--detach-entry ()
   "Turn the entry at point into untracked Org without deleting its text.
 Remove the keyword too, so push cannot create a replacement ticket."
+  (let ((body (if (org-entry-get nil "ZWANENZANG_DOC_FORMAT")
+                  (zwanenzang--compose-document '(("ZWANENZANG_CONFLICT")))
+                (zwanenzang--compose-body (zwanenzang--body) '(("ZWANENZANG_CONFLICT"))))))
+    (zwanenzang--write-body body))
   (dolist (property (org-entry-properties nil 'standard))
     (when (string-prefix-p "ZWANENZANG" (car property))
       (org-entry-delete nil (car property))))
-  (zwanenzang--write-body
-   (zwanenzang--compose-body (zwanenzang--body) '(("ZWANENZANG_CONFLICT"))))
   (let ((heading (zwanenzang--heading)))
     (zwanenzang--set-heading
      nil (plist-get heading :title)
@@ -2417,15 +2512,19 @@ are made; the entire edit is undoable."
 Human properties, Org IDs and body text are retained."
   (dolist (property (org-entry-properties nil 'standard))
     (when (and (string-prefix-p "ZWANENZANG" (car property))
-               (not (and document (equal (car property) "ZWANENZANG_DOC"))))
+               (not (and document (member (car property)
+                                          '("ZWANENZANG_DOC" "ZWANENZANG_DOC_FORMAT")))))
       (org-entry-delete nil (car property))))
   (zwanenzang--drop-archive-properties)
   (when (member "zz_conflict" (org-get-tags nil t))
     (org-set-tags (remove "zz_conflict" (org-get-tags nil t))))
-  (zwanenzang--write-body
-   (zwanenzang--compose-body
-    (zwanenzang--body)
-    '(("ZWANENZANG_CONFLICT") ("ZWANENZANG_COMMENTS") ("ZWANENZANG_HIDDEN")))))
+  (let ((drawers '(("ZWANENZANG_CONFLICT") ("ZWANENZANG_COMMENTS") ("ZWANENZANG_HIDDEN"))))
+    (zwanenzang--write-body
+     (if document
+         (zwanenzang--compose-document drawers)
+       (zwanenzang--compose-body (zwanenzang--body) drawers)))
+    (when document
+      (zwanenzang--put "ZWANENZANG_DOC_FORMAT" zwanenzang--document-format))))
 
 ;;;###autoload
 (defun zwanenzang-adopt-foreign ()
@@ -2554,7 +2653,7 @@ Compare with saved sync hashes, without compiling or sending a push."
       (when (if (eq base :unknown) nest (not (equal base nest)))
         (push "parent" fields)))
     (cl-labels ((edited-text (property)
-                 (let ((text (zwanenzang--body-description (zwanenzang--body))))
+                 (let ((text (zwanenzang--entry-text)))
                    (zwanenzang--edited-p (zwanenzang--hash text)
                                         (or (org-entry-get nil property) :unknown)
                                         (string-empty-p text)))))
@@ -2569,6 +2668,7 @@ Compare with saved sync hashes, without compiling or sending a push."
 (defun zwanenzang--archive-subtree (root start end)
   "Close and archive known tickets between START and END in scope ROOT.
 Only status and archive operations are sent; Org text is never rewritten."
+  (zwanenzang--check-source-edit)
   (when (<= start root)
     (user-error "zwanenzang: archiving a scope root is not supported"))
   (save-excursion
