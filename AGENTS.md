@@ -159,6 +159,13 @@ CLI, and integration tests that drive this flake's CLI. The elisp
 integration helper enforces the same two markers before it opens, writes to
 or pushes from a repository; the client itself has no bypass either.
 
+To run the ERT suite against a checkout's sources, use `nix run .#emacs-test`
+from the repository root, optionally with a test-name regexp
+(`nix run .#emacs-test -- '^zwanenzang-queue-'`). Do not run `emacs --batch`
+from `PATH` for this: the personal Emacs there may point its config directory
+at a real one, and a test can write state into it. The app uses this flake's
+Emacs and CLI with a throwaway `HOME`.
+
 Fixture-based tests import the synthetic fixture in the frozen tracker's
 format into such a repository and assert on what replay produces. The real
 tracker is imported only by hand, into a disposable directory, and nothing
