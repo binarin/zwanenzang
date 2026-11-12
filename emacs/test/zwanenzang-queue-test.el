@@ -4,6 +4,10 @@
 (require 'ert)
 (require 'zwanenzang-queue)
 (require 'zwanenzang-pull-test)
+;; A test below binds `noninteractive' to nil around a remote file name. Load
+;; Tramp now, while it is still t, so Tramp does not install its kill-emacs
+;; hook, which would save a connection cache into the user's config directory.
+(require 'tramp)
 (declare-function org-ql--normalize-query "org-ql" t t)
 
 (ert-deftest zwanenzang-priority-numeric-cookies-and-unset ()
