@@ -367,5 +367,207 @@
                        (mapcar (lambda (c) (alist-get 'text c))
                                (alist-get 'comments (zwanenzang-test-show tracker id)))))))))
 
+;;;; Status and tag changes with a comment
+
+(defconst zwanenzang-test-comment-keywords
+  (concat "#+TODO: TODO(t) NEXT(n!) WAIT(w!) | DONE(d!) CNCL(c!)\n"
+          "#+TODO: AGNT(a!) REVW(r!) |\n"
+          "* Scope\n:PROPERTIES:\n:ZWANENZANG: %s\n:END:\n")
+  "A scope shown with the default statuses' own keywords, logging changes.")
+
+(defun zwanenzang-test-comment-commits (tracker)
+  "The number of commits in TRACKER."
+  (string-to-number (zwanenzang-test-git tracker "rev-list" "--count" "HEAD")))
+
+(defmacro zwanenzang-test-with-comment-draft (spec &rest body)
+  "Run BODY in a draft for a new ticket, inside `zwanenzang-test-with-scope'.
+SPEC is (TRACKER SOURCE ID DRAFT STATUS TAGS): the ticket is created in
+STATUS with TAGS and pulled; ID and DRAFT are bound around BODY."
+  (declare (indent 1) (debug ((symbolp symbolp symbolp symbolp form form) body)))
+  (pcase-let ((`(,tracker ,source ,id ,draft ,status ,tags) spec))
+    `(save-window-excursion
+       (zwanenzang-test-with-scope
+           (,tracker ,source zwanenzang-test-comment-keywords)
+         (let ((,id (zwanenzang-test-create ,tracker "Ticket" "--status" ,status))
+               ,draft)
+           (dolist (tag ,tags) (zwanenzang-test-cli ,tracker "tag" ,id tag))
+           (zwanenzang-test-pull)
+           (zwanenzang-test-goto ,id)
+           (zwanenzang-comment)
+           (setq ,draft (current-buffer))
+           (unwind-protect (progn ,@body)
+             (when (buffer-live-p ,draft)
+               (with-current-buffer ,draft (zwanenzang-comment-abort)))))))))
+
+(defun zwanenzang-test-comment-pick-keyword (keyword)
+  "Pick KEYWORD with \\[zwanenzang-comment-set-status] through completion."
+  (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) keyword)))
+    (let ((org-use-fast-todo-selection nil))
+      (zwanenzang-comment-set-status))))
+
+(ert-deftest zwanenzang-comment-pending-changes-show-in-the-header ()
+  (zwanenzang-test-with-comment-draft (tracker source id draft "wait" '("needs_human"))
+    (let ((head (zwanenzang-test-head tracker)))
+      (should (string-match-p "\\`Comment: C-c C-c send" header-line-format))
+      (zwanenzang-test-comment-pick-keyword "NEXT")
+      (should (equal "next" zwanenzang--comment-status))
+      (should (equal "Comment -> NEXT: C-c C-c send, C-c C-k abort" header-line-format))
+      ;; The heading's current keyword is no change: it clears the status.
+      (zwanenzang-test-comment-pick-keyword "WAIT")
+      (should-not zwanenzang--comment-status)
+      (should (string-match-p "\\`Comment: C-c C-c send" header-line-format))
+      (zwanenzang-comment-toggle-tags '("needs_human" "later"))
+      (should (equal "Comment -> -needs_human, +later: C-c C-c send, C-c C-k abort"
+                     header-line-format))
+      (zwanenzang-comment-toggle-tags '("needs_human"))
+      (should (equal '(("later" . add)) zwanenzang--comment-tags))
+      (zwanenzang-comment-hand-to-agent)
+      (should (equal "Comment -> TODO, +later, +ready_for_agent, -needs_human: C-c C-c send, C-c C-k abort"
+                     header-line-format))
+      ;; Fast selection runs in the source buffer, with its keys.
+      (let (asked)
+        (cl-letf (((symbol-function 'org-fast-todo-selection)
+                   (lambda (current)
+                     (setq asked (list current (current-buffer) org-todo-key-alist))
+                     "REVW")))
+          (zwanenzang-comment-set-status))
+        (should (equal "WAIT" (nth 0 asked)))
+        (should (eq source (nth 1 asked)))
+        (should (nth 2 asked)))
+      (should (equal "revw" zwanenzang--comment-status))
+      (should-error (zwanenzang-comment-toggle-tags '("zz_conflict")) :type 'user-error)
+      (should-error (zwanenzang-comment-toggle-tags '("not a tag")) :type 'user-error)
+      ;; Recording changes writes nothing and edits nothing.
+      (should (equal head (zwanenzang-test-head tracker)))
+      (with-current-buffer source
+        (should (string-match-p "\\`\\*+ WAIT Ticket +:needs_human:\\'"
+                                (zwanenzang-test-heading id)))))))
+
+(ert-deftest zwanenzang-comment-hand-to-agent-sends-one-batch ()
+  (dolist (status '("wait" "revw"))
+    (ert-info ((format "From %s" status))
+      (zwanenzang-test-with-comment-draft (tracker source id draft status '("needs_human"))
+        (let ((commits (zwanenzang-test-comment-commits tracker))
+              (org-log-done 'time)
+              (org-log-into-drawer t)
+              requests)
+          (insert "Go ahead")
+          (zwanenzang-comment-hand-to-agent)
+          (let* ((call zwanenzang--call)
+                 (zwanenzang--call (lambda (dir args &optional input)
+                                     (when (equal args '("apply")) (push input requests))
+                                     (funcall call dir args input)))
+                 (event (zwanenzang-comment-send))
+                 (shown (zwanenzang-test-show tracker id)))
+            (should-not (buffer-live-p draft))
+            (should (= 1 (length requests)))
+            (should (equal '(("comment" . "Go ahead") ("status" . "todo")
+                             ("tag" . "ready_for_agent") ("untag" . "needs_human"))
+                           (mapcar (lambda (c)
+                                     (let ((data (alist-get 'data c)))
+                                       (cons (alist-get 'op c)
+                                             (or (alist-get 'text data) (alist-get 'to data)
+                                                 (alist-get 'tag data)))))
+                                   (alist-get 'changes (car requests)))))
+            (should (= (1+ commits) (zwanenzang-test-comment-commits tracker)))
+            (should (equal "todo" (alist-get 'status shown)))
+            (should (equal '("ready_for_agent") (alist-get 'tags shown)))
+            (should (equal event (alist-get 'id (car (alist-get 'comments shown)))))
+            (with-current-buffer source
+              (should (string-match-p "\\`\\*+ TODO Ticket +:ready_for_agent:\\'"
+                                      (zwanenzang-test-heading id)))
+              (should (string-match-p "Go ahead" (zwanenzang-test-entry id)))
+              ;; Tracker history records the change, not the Org log.
+              (should-not (string-match-p ":LOGBOOK:\\|CLOSED:\\|State " (buffer-string)))
+              (let ((before (buffer-string)))
+                (should (string-match-p "nothing changed"
+                                        (zwanenzang-test-at-root #'zwanenzang-push)))
+                (should (equal before (buffer-string)))))))))))
+
+(ert-deftest zwanenzang-comment-without-pending-changes-sends-only-the-comment ()
+  (zwanenzang-test-with-comment-draft (tracker source id draft "wait" '("needs_human"))
+    (let (requests)
+      (insert "Just a note")
+      ;; Choosing then clearing leaves nothing pending.
+      (zwanenzang-test-comment-pick-keyword "DONE")
+      (zwanenzang-test-comment-pick-keyword "WAIT")
+      (let* ((call zwanenzang--call)
+             (zwanenzang--call (lambda (dir args &optional input)
+                                 (when (equal args '("apply")) (push input requests))
+                                 (funcall call dir args input))))
+        (zwanenzang-comment-send))
+      (should (equal `(((op . "comment") (ticket . ,id) (data . ((text . "Just a note")))))
+                     (append (alist-get 'changes (car requests)) nil)))
+      (let ((shown (zwanenzang-test-show tracker id)))
+        (should (equal "wait" (alist-get 'status shown)))
+        (should (equal '("needs_human") (alist-get 'tags shown)))))))
+
+(ert-deftest zwanenzang-comment-pending-changes-need-a-pushed-heading ()
+  (dolist (edit '(keyword tags))
+    (ert-info ((format "Unpushed %s" edit))
+      (zwanenzang-test-with-comment-draft (tracker source id draft "wait" '("needs_human"))
+        (insert "Answer")
+        (with-current-buffer source
+          (save-excursion
+            (zwanenzang-test-goto id)
+            (pcase edit
+              ('keyword (let ((org-log-done nil)) (org-todo "NEXT")))
+              ('tags (org-set-tags '("needs_human" "local"))))))
+        (zwanenzang-comment-hand-to-agent)
+        (let ((head (zwanenzang-test-head tracker)))
+          (should (string-match-p
+                   (format "push the heading first: its %s changed locally" edit)
+                   (cadr (should-error (zwanenzang-comment-send) :type 'user-error))))
+          (should (buffer-live-p draft))
+          (should (equal "Answer" (with-current-buffer draft (buffer-string))))
+          (should (equal head (zwanenzang-test-head tracker)))
+          (should-not (alist-get 'comments (zwanenzang-test-show tracker id))))
+        ;; With nothing pending the same heading sends the comment alone.
+        (with-current-buffer draft
+          (setq zwanenzang--comment-status nil zwanenzang--comment-tags nil)
+          (zwanenzang-comment-send))
+        (should-not (buffer-live-p draft))
+        (let ((shown (zwanenzang-test-show tracker id)))
+          (should (= 1 (length (alist-get 'comments shown))))
+          (should (equal "wait" (alist-get 'status shown)))
+          (should (equal '("needs_human") (alist-get 'tags shown))))))))
+
+(ert-deftest zwanenzang-comment-edits-matching-the-tracker-still-need-a-push ()
+  ;; The tracker already has the local edit, but the heading's sync state
+  ;; does not; sending then would leave the edit as a conflict on the pull.
+  (dolist (edit '(keyword tags))
+    (ert-info ((format "Unpushed %s already in the tracker" edit))
+      (zwanenzang-test-with-comment-draft (tracker source id draft "wait" '("needs_human"))
+        (insert "Answer")
+        (with-current-buffer source
+          (save-excursion
+            (zwanenzang-test-goto id)
+            (pcase edit
+              ('keyword (let ((org-log-done nil)) (org-todo "NEXT"))
+                        (zwanenzang-test-cli tracker "status" id "next"))
+              ('tags (org-set-tags '("needs_human" "local"))
+                     (zwanenzang-test-cli tracker "tag" id "local")))))
+        (zwanenzang-comment-hand-to-agent)
+        (let ((head (zwanenzang-test-head tracker)))
+          (should-error (zwanenzang-comment-send) :type 'user-error)
+          (should (buffer-live-p draft))
+          (should (equal head (zwanenzang-test-head tracker))))
+        ;; Once a push records the edit, the same draft sends cleanly.
+        (with-current-buffer source (zwanenzang-test-at-root #'zwanenzang-push))
+        (with-current-buffer draft (zwanenzang-comment-send))
+        (should-not (buffer-live-p draft))
+        (let ((shown (zwanenzang-test-show tracker id)))
+          (should (equal "todo" (alist-get 'status shown)))
+          (should (equal (if (eq edit 'tags) '("local" "ready_for_agent") '("ready_for_agent"))
+                         (sort (copy-sequence (alist-get 'tags shown)) #'string<))))
+        (with-current-buffer source
+          (let ((heading (zwanenzang-test-heading id)))
+            (should (string-match-p "\\`\\*+ TODO Ticket " heading))
+            (should-not (string-match-p "zz_conflict" heading)))
+          (let ((before (buffer-string)))
+            (should (string-match-p "nothing changed"
+                                    (zwanenzang-test-at-root #'zwanenzang-push)))
+            (should (equal before (buffer-string)))))))))
+
 (provide 'zwanenzang-comment-test)
 ;;; zwanenzang-comment-test.el ends here
