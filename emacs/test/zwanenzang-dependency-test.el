@@ -264,5 +264,138 @@
     (org-todo "DONE")
     (should (equal (org-get-todo-state) "DONE"))))
 
+;;;; Editing commands
+
+(defconst zwanenzang-dependency-test--summaries
+  '(((id . "A") (number . 1) (display . "ZZ-1") (title . "First") (status . "todo")
+     (kind . :null) (tags) (depends_on))
+    ((id . "B") (number . 2) (display . "ZZ-2") (title . "Second") (status . "done")
+     (kind . :null) (tags) (depends_on))
+    ((id . "C") (number . 3) (display . "ZZ-3") (title . "Dependent") (status . "todo")
+     (kind . :null) (tags) (depends_on "A"))
+    ;; D depends on C and E on D: either would make a cycle.
+    ((id . "D") (number . 4) (display . "ZZ-4") (title . "Direct dependent")
+     (status . "todo") (kind . :null) (tags) (depends_on "C"))
+    ((id . "E") (number . 5) (display . "ZZ-5") (title . "Indirect dependent")
+     (status . "todo") (kind . :null) (tags) (depends_on "D"))
+    ((id . "F") (number . :null) (display . "01M0F") (title . "Unnumbered")
+     (status . "todo") (kind . :null) (tags) (depends_on))
+    ((id . "G") (number . 7) (display . "ZZ-7") (title . "Archived") (status . "todo")
+     (kind . :null) (tags) (depends_on) (archived . t))
+    ((id . "H") (number . 8) (display . "ZZ-8") (title . "Tombstoned") (status . "todo")
+     (kind . :null) (tags) (depends_on) (tombstoned . t))
+    ((id . "J") (number . 10) (display . "ZZ-10") (title . "Tenth") (status . "agnt")
+     (kind . "bug") (tags "ready_for_agent" "ui") (depends_on)))
+  "Tracker summaries the editing command tests list.")
+
+(defmacro zwanenzang-dependency-test--with-tracker (&rest body)
+  "Run BODY on the dependent heading of a scope with a fake `list --all'.
+`calls' holds the CLI argument lists, newest first."
+  (declare (indent 0) (debug t))
+  `(with-temp-buffer
+     (insert "* Project\n:PROPERTIES:\n:ZWANENZANG: " temporary-file-directory "\n:END:\n"
+             "** TODO First\n:PROPERTIES:\n:ZWANENZANG_ID: A\n:ZWANENZANG_NUMBER: ZZ-1\n:END:\n"
+             "** TODO Dependent\n:PROPERTIES:\n:ZWANENZANG_ID: C\n:ZWANENZANG_NUMBER: ZZ-3\n"
+             ":ZWANENZANG_DEPENDS_ON: zz-0001\n:END:\nBody.\n*** Notes\nMore.\n")
+     (org-mode)
+     (let* ((calls nil)
+            (zwanenzang--call
+             (lambda (_dir args &optional _input)
+               (push args calls)
+               (if (equal args '("list" "--all"))
+                   `((tickets . ,zwanenzang-dependency-test--summaries))
+                 (ert-fail (format "unexpected CLI call %S" args))))))
+       (zwanenzang-dependency-test--goto "C")
+       ,@body)))
+
+(defmacro zwanenzang-dependency-test--choosing (choice &rest body)
+  "Run BODY answering completion with CHOICE; bind `table' to what was offered."
+  (declare (indent 1) (debug t))
+  `(let (table)
+     (ignore table)
+     (cl-letf (((symbol-function 'completing-read)
+                (lambda (_prompt collection &rest _)
+                  (setq table collection)
+                  ,choice)))
+       ,@body)))
+
+(ert-deftest zwanenzang-add-dependency-offers-only-valid-tickets ()
+  (zwanenzang-dependency-test--with-tracker
+    (zwanenzang-dependency-test--choosing "ZZ-10 Tenth"
+      (let ((before (buffer-string)))
+        ;; From a plain heading below the ticket.
+        (search-forward "*** Notes")
+        (zwanenzang-add-dependency)
+        (should (equal calls '(("list" "--all"))))
+        ;; Self, current (padded) prerequisites, cycles, unnumbered, archived
+        ;; and tombstoned tickets are left out; done tickets stay.
+        (should (equal (all-completions "" table) '("ZZ-2 Second" "ZZ-10 Tenth")))
+        (should (equal (all-completions "ZZ-1" table) '("ZZ-10 Tenth")))
+        (let ((metadata (completion-metadata "" table nil)))
+          (should (eq (completion-metadata-get metadata 'category) 'zwanenzang-ticket))
+          (should (equal (substring-no-properties
+                          (funcall (completion-metadata-get metadata 'annotation-function)
+                                   "ZZ-10 Tenth"))
+                         "  agnt bug :ready_for_agent:ui:"))
+          (should (equal (substring-no-properties
+                          (funcall (completion-metadata-get metadata 'annotation-function)
+                                   "ZZ-2 Second"))
+                         "  done")))
+        ;; Only the property changes; an existing spelling is kept.
+        (zwanenzang-dependency-test--goto "C")
+        (should (equal (org-entry-get nil "ZWANENZANG_DEPENDS_ON") "zz-0001 ZZ-10"))
+        (should (equal (buffer-string)
+                       (replace-regexp-in-string
+                        "ZWANENZANG_DEPENDS_ON: zz-0001$"
+                        "ZWANENZANG_DEPENDS_ON: zz-0001 ZZ-10" before)))))))
+
+(ert-deftest zwanenzang-add-dependency-sorts-numerically-and-needs-a-ticket ()
+  (zwanenzang-dependency-test--with-tracker
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-10")
+    (zwanenzang-dependency-test--choosing "ZZ-2 Second"
+      (zwanenzang-add-dependency))
+    (should (equal (org-entry-get nil "ZWANENZANG_DEPENDS_ON") "ZZ-2 ZZ-10"))
+    ;; Nothing left to offer.
+    (zwanenzang-dependency-test--choosing (ert-fail "offered nothing")
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-1 ZZ-2 ZZ-10")
+      (should-error (zwanenzang-add-dependency) :type 'user-error))
+    ;; A heading the tracker does not know is refused before any prompt.
+    (org-entry-put nil "ZWANENZANG_ID" "UNKNOWN")
+    (zwanenzang-dependency-test--choosing (ert-fail "prompted")
+      (should-error (zwanenzang-add-dependency) :type 'user-error))
+    (goto-char (point-min))
+    (should-error (zwanenzang-add-dependency) :type 'user-error)))
+
+(ert-deftest zwanenzang-add-dependency-works-when-narrowed-below-the-ticket ()
+  (zwanenzang-dependency-test--with-tracker
+    (search-forward "*** Notes")
+    (org-narrow-to-subtree)
+    (zwanenzang-dependency-test--choosing "ZZ-2 Second"
+      (zwanenzang-add-dependency))
+    (should (buffer-narrowed-p))
+    (widen)
+    (zwanenzang-dependency-test--goto "C")
+    (should (equal (org-entry-get nil "ZWANENZANG_DEPENDS_ON") "zz-0001 ZZ-2"))))
+
+(ert-deftest zwanenzang-remove-dependency-offers-current-prerequisites ()
+  (zwanenzang-dependency-test--with-tracker
+    (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "zz-0001 ZZ-99 ZZ-1")
+    (zwanenzang-dependency-test--choosing "ZZ-1 First"
+      (zwanenzang-remove-dependency)
+      ;; Known titles are shown; unknown numbers are offered as they are.
+      (should (equal (all-completions "" table) '("ZZ-1 First" "ZZ-99")))
+      (should (equal (substring-no-properties
+                      (funcall (completion-metadata-get (completion-metadata "" table nil)
+                                                        'annotation-function)
+                               "ZZ-1 First"))
+                     "  todo")))
+    ;; Every spelling of the number goes.
+    (should (equal (org-entry-get nil "ZWANENZANG_DEPENDS_ON") "ZZ-99"))
+    (zwanenzang-dependency-test--choosing "ZZ-99"
+      (zwanenzang-remove-dependency))
+    (should-not (org-entry-get nil "ZWANENZANG_DEPENDS_ON"))
+    (zwanenzang-dependency-test--choosing (ert-fail "prompted")
+      (should-error (zwanenzang-remove-dependency) :type 'user-error))))
+
 (provide 'zwanenzang-dependency-test)
 ;;; zwanenzang-dependency-test.el ends here

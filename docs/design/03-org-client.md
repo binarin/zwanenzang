@@ -444,7 +444,9 @@ Decided 2026-11-07 for the first Emacs implementation.
   push, pull); `zwanenzang-sync-all` syncs every scope in
   `zwanenzang-org-files`, which defaults to `org-agenda-files`;
   `zwanenzang-unarchive`, `zwanenzang-adopt-foreign`,
-  `zwanenzang-resolve-duplicate` and `zwanenzang-open`.
+  `zwanenzang-resolve-duplicate`, `zwanenzang-open`, and
+  `zwanenzang-add-dependency` / `zwanenzang-remove-dependency` (see
+  Dependencies).
 - Deferred to milestone 5: per-heading operations and doctor across files.
   TRAMP execution and the archive hook are implemented.
 
@@ -860,10 +862,32 @@ to local `ZWANENZANG_NUMBER` values too. Resolve them through the snapshot's dis
 `ZWANENZANG_NUMBER` properties; use stable identity internally to find
 local edits. Unpublished tickets must acquire a number before they can be
 referenced. Every prerequisite must be done. The dependency property itself
-is not inherited. Edit it directly;
-there are no editing/inspection commands, overlays or agenda additions.
+is not inherited. Edit it directly or with the two commands below; there
+are no overlays or agenda additions.
 Pull/push synchronize it with the ticket's `depends_on` set. The event log
 stores stable identities; the property always shows published ticket numbers.
+
+`zwanenzang-add-dependency` and `zwanenzang-remove-dependency` act on the
+nearest ticket heading (one with `ZWANENZANG_ID`) at or above point. They
+only edit that heading's `ZWANENZANG_DEPENDS_ON`, keeping the spelling of
+the numbers already there and sorting by number; removing the last one
+removes the property. Nothing is sent: the next push does that, under the
+usual Org-wins and conflict rules. Both read a fresh `list --all` of the
+scope's tracker and refuse a heading that tracker does not know.
+
+- Add offers every numbered ticket that is not archived or tombstoned,
+  except the ticket itself, its current prerequisites (compared by number)
+  and the tickets that already depend on it directly or transitively in
+  the tracker's `depends_on`, which would make a cycle. Done tickets are
+  offered.
+- Remove offers the numbers in the property, with titles where the
+  tracker knows them; every spelling of the chosen number is removed.
+- Candidates read `NUMBER Title`, so ordinary completion styles match
+  either. The completion table has the category `zwanenzang-ticket`, keeps
+  numeric order (`display-sort-function`), and has an
+  `annotation-function` showing status, kind and tags. Completion UIs such
+  as marginalia show that annotation without the client depending on them.
+  Description text is not fetched. The package binds no keys for them.
 
 - Loading the package installs a global `org-blocker-hook` function, gated
   on inherited `ZWANENZANG` and a nonempty `ZWANENZANG_DEPENDS_ON` on the
