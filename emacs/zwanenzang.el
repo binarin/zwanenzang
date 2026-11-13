@@ -39,7 +39,8 @@
 ;; The Nix build replaces this default with the store path of the CLI built
 ;; from the same flake; keep the form on one line so the substitution finds it.
 (defcustom zwanenzang-program "zwanenzang"
-  "The zwanenzang CLI: an absolute file name, or a name looked up on `exec-path'."
+  "Local CLI: an absolute file name, or a name looked up on `exec-path'.
+Remote scopes use `zwanenzang' from the remote PATH instead."
   :type 'string)
 
 (defcustom zwanenzang-org-files 'agenda
@@ -84,7 +85,8 @@ signals `user-error'."
                  (error-message-string err)))))
 
 (defun zwanenzang--run (directory args &optional input)
-  "Run `zwanenzang-program' on the tracker at or above DIRECTORY with ARGS.
+  "Run the CLI on the tracker at or above DIRECTORY with ARGS.
+Use `zwanenzang-program' locally, or remote `zwanenzang' through TRAMP.
 INPUT, when non-nil, is encoded as JSON and given on stdin.  Return a
 plist with :exit (the exit status), :parsed (whether stdout is one JSON
 value), :json (that value) and :stderr.  This signals only when the
@@ -92,18 +94,30 @@ program cannot be run or INPUT cannot be encoded; a failed command is
 for `zwanenzang-call' to judge."
   (let* ((default-directory (file-name-as-directory (expand-file-name directory)))
          (stdin (if input (zwanenzang--json-encode input) ""))
-         (stderr-file (make-temp-file "zwanenzang-stderr-"))
+         (remote (file-remote-p default-directory))
+         (program (if remote "zwanenzang" zwanenzang-program))
+         stderr-file stdin-file
          (coding-system-for-read 'utf-8)
          (coding-system-for-write 'utf-8))
     (unwind-protect
         (with-temp-buffer
+          (setq stderr-file (make-temp-file "zwanenzang-stderr-"))
+          (when (and remote input)
+            (setq stdin-file (make-temp-file "zwanenzang-stdin-"))
+            (with-temp-file stdin-file
+              (insert stdin)))
           (let* ((exit (condition-case err
-                           (apply #'call-process-region stdin nil zwanenzang-program
-                                  nil (list t stderr-file) nil
-                                  "-C" (file-local-name default-directory) args)
+                           (if remote
+                               (apply #'process-file program stdin-file
+                                      (list t stderr-file) nil
+                                      "-C" (file-local-name default-directory) args)
+                             (apply #'call-process-region stdin nil program
+                                    nil (list t stderr-file) nil
+                                    "-C" (file-local-name default-directory) args))
                          (file-error
-                          (user-error "zwanenzang: cannot run %s (%s); see `zwanenzang-program'"
-                                      zwanenzang-program (error-message-string err)))))
+                          (user-error "zwanenzang: cannot run %s (%s); check %s"
+                                      program (error-message-string err)
+                                      (if remote "the remote PATH" "`zwanenzang-program'")))))
                  (parsed t)
                  (json (and (> (buffer-size) 0)
                             (condition-case nil (zwanenzang--json-parse)
@@ -114,7 +128,8 @@ for `zwanenzang-call' to judge."
                   :stderr (with-temp-buffer
                             (insert-file-contents stderr-file)
                             (string-trim (buffer-string))))))
-      (delete-file stderr-file))))
+      (when stdin-file (delete-file stdin-file))
+      (when stderr-file (delete-file stderr-file)))))
 
 (defun zwanenzang--error-object (json)
   "The error object in JSON, a parsed CLI output, or nil."
@@ -761,8 +776,6 @@ That is the nearest heading at or above point with a ZWANENZANG property."
          (dir (expand-file-name location (if buffer-file-name
                                              (file-name-directory buffer-file-name)
                                            default-directory))))
-    (when (file-remote-p dir)
-      (user-error "zwanenzang: remote scope locations are not supported yet: %s" location))
     (unless (file-directory-p dir)
       (user-error "zwanenzang: scope location is not a directory: %s" location))
     dir))

@@ -19,6 +19,13 @@ That heading is the scope root. Everything beneath it syncs with that tracker.
 - The location doubles as the execution host. A tramp path means the CLI runs
   on that machine with `process-file`; a local path means it runs locally.
   The desktop never needs a clone of a tracker it reaches over tramp.
+  Remote calls use the literal program name `zwanenzang`; the operator must
+  make it available in TRAMP's effective remote PATH (`tramp-remote-path`),
+  which need not match an interactive SSH shell's PATH. Local calls retain
+  `zwanenzang-program`, including the Nix package's substituted store path.
+  TRAMP handles execution, argument quoting and connections. JSON stdin is
+  staged in a local temporary file for `process-file`; client-owned stdin
+  and stderr files are removed on success, failure or quit.
 - A scope may point at the same persistent clone agents use on that execution
   host; see [stable clone placement](02-git-and-sync.md#stable-clone-placement).
   The property stays a path, not an origin URL, and existing locations remain
@@ -409,16 +416,16 @@ Decided 2026-11-07 for the first Emacs implementation.
   UI below; only this blocker is gated by inherited `ZWANENZANG` and never
   calls the CLI. The `org-add-note` and show-branches advice below are
   installed the same way.
-- CLI calls are synchronous: `call-process` for local scopes now,
-  `process-file` over tramp in milestone 5.
+- CLI calls are synchronous: `call-process-region` for local scopes,
+  `process-file` over tramp.
 - First commands: `zwanenzang-pull`, `zwanenzang-push` and
   `zwanenzang-sync` act on the scope at point (sync is CLI `sync`, pull,
   push, pull); `zwanenzang-sync-all` syncs every scope in
   `zwanenzang-org-files`, which defaults to `org-agenda-files`;
   `zwanenzang-unarchive`, `zwanenzang-adopt-foreign`,
   `zwanenzang-resolve-duplicate` and `zwanenzang-open`.
-- Deferred to milestone 5: per-heading operations, doctor across files,
-  tramp. The archive hook is implemented.
+- Deferred to milestone 5: per-heading operations and doctor across files.
+  TRAMP execution and the archive hook are implemented.
 
 ### Properties
 
