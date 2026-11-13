@@ -70,7 +70,7 @@ pub fn find_root(start: &Path) -> Result<PathBuf> {
 }
 
 /// The tracker holding `dir` or its nearest existing ancestor, if any.
-fn enclosing_tracker(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn enclosing_tracker(dir: &Path) -> Option<PathBuf> {
     let mut probe = dir;
     while !probe.exists() {
         probe = match probe.parent() {
@@ -175,16 +175,22 @@ pub fn lock_repo(repo: &Repo) -> Result<LockGuard> {
 }
 
 impl Tracker {
-    /// Creates a tracker in `dir`, which is created if missing, and commits
-    /// it. Refused when `dir` is a tracker or lies inside one: a nested
+    /// Creates the local half of a tracker in `dir`: the repository on
+    /// `branch`, the storage directories, `boilerplate` files (relative
+    /// names with their contents), the configuration and the first commit.
+    /// Publishing to a remote is [`crate::init`]'s half.
+    ///
+    /// Refused when `dir` is a tracker or lies inside one: a nested
     /// tracker would capture the upward search of every command run below
     /// it. `dir` becomes a git repository unless it already is the top of
     /// one; inside some other work tree it is refused, since a tracker is
     /// always its own repository.
-    pub fn init(
+    pub fn create_local(
         dir: &Path,
         name: &str,
         prefix: &str,
+        branch: &str,
+        boilerplate: &[(&str, String)],
         actor_name: Option<&str>,
         clock: &mut dyn Clock,
     ) -> Result<Tracker> {
@@ -209,7 +215,7 @@ impl Tracker {
         let repo = match git::toplevel(&root)? {
             Some(top) if top == root => Repo::open(&root)?,
             Some(top) => return Err(Error::InsideRepository(root, top)),
-            None => git::init(&root)?,
+            None => git::init(&root, branch)?,
         };
         let _lock = lock_repo(&repo)?;
         if let Some(existing) = enclosing_tracker(&root) {
@@ -219,17 +225,18 @@ impl Tracker {
             ensure_dir(&root.join(sub))?;
         }
         ensure_line(&root.join(".gitattributes"), GITATTRIBUTES_LINE)?;
+        for (name, text) in boilerplate {
+            write_file_synced(&root.join(name), text.as_bytes())?;
+        }
         let tracker = Tracker { root, config };
         let actor = tracker.actor_in(&repo, true, clock)?.expect("created");
         // The configuration goes last: its presence is what marks the
         // directory as a tracker.
         write_file_synced(&config_path, tracker.config.to_toml().as_bytes())?;
         let identity = crate::sync::identity(actor, actor_name.map(str::to_string));
-        repo.commit(
-            &[PathBuf::from(CONFIG_FILE), PathBuf::from(".gitattributes")],
-            "init",
-            &identity,
-        )?;
+        let mut files = vec![PathBuf::from(CONFIG_FILE), PathBuf::from(".gitattributes")];
+        files.extend(boilerplate.iter().map(|(name, _)| PathBuf::from(*name)));
+        repo.commit(&files, "init", &identity)?;
         Ok(tracker)
     }
 

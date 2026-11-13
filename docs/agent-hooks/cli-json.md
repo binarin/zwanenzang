@@ -16,13 +16,23 @@ executable. It accepts the same arguments and stdin, returns the same JSON
 and exit statuses, and retains the git PATH fallback. `zwanenzang` remains
 the default command for `nix run` and the binary built/installed by Cargo.
 
+A tracker is named by a **locator**: an origin URL with an optional
+`?ref=BRANCH` selector naming the branch the tracker lives on, such as
+`ssh://git@forge/owner/repo.git?ref=tickets`. The selector is a plain
+branch name; tags and commit revisions are not accepted, and a locator
+with any other query is `invalid-argument`. Without a selector the
+remote's advertised default branch is used. The same locator spelling is
+accepted by `init --remote`, `--tracker-url` and the project-local
+`zwanenzang.trackerUrl` setting.
+
 - `-C DIR`: start the tracker search in `DIR` instead of the current
   directory. The tracker is the nearest directory, upward, that holds
-  `zwanenzang.toml`. For `init`, `DIR` is where the tracker is created;
-  it must not be in or below an existing tracker, nor inside another git
-  work tree unless it is that work tree's top.
+  `zwanenzang.toml`. `init` takes no search direction: it ignores `-C` and
+  creates the tracker in its `DIRECTORY` argument, which must not be in or
+  below an existing tracker, nor inside another git work tree.
 - `--tracker-url URL`: provision/reuse a durable clone keyed by the exact
-  origin URL. Mutually exclusive with `-C` / `--tracker`. Not valid for `init`.
+  locator, selector included. Mutually exclusive with `-C` / `--tracker`.
+  Not valid for `init`, which names its remote with `--remote`.
 - With neither selector, use the enclosing tracker, if any; otherwise use
   exactly one `zwanenzang.trackerUrl` value from the enclosing code repository's
   **local** git configuration. No global config or project file is consulted.
@@ -38,21 +48,25 @@ The clone's actor id is `zwanenzang.actor` in its local git configuration.
 
 The clone lives at
 `${XDG_DATA_HOME:-$HOME/.local/share}/zwanenzang/trackers/<key>`, where `<key>`
-is the full lowercase SHA-256 of the URL's exact UTF-8 bytes, without a trailing
-newline. Different URL spellings are distinct; no normalization or git rewrite
-is used to compute identity. Use a canonical URL without credentials. Local
-origins must be absolute paths or `file://` URLs. Storage must be absolute;
-missing HOME and XDG_DATA_HOME, or relative data-home values, are
-`invalid-argument`.
+is the full lowercase SHA-256 of the locator's exact UTF-8 bytes, selector
+included, without a trailing newline. A locator without a selector keeps
+hashing its plain URL bytes, as storage written before selectors did.
+Different locator spellings are distinct; no normalization or git rewrite
+is used to compute identity, so different selected branches never share a
+clone. Use a canonical URL without credentials. Local origins must be
+absolute paths or `file://` URLs. Storage must be absolute; missing HOME
+and XDG_DATA_HOME, or relative data-home values, are `invalid-argument`.
 
 An exclusive parent-directory lock covers provisioning and validation. Existing
-storage must be a standalone tracker work-tree root with a `.git` directory and
-exactly the requested clone-local origin; invalid storage is refused, never
-reset or replaced. Incomplete storage and origin mismatches are
-`invalid-argument`; git failures are `git`, filesystem failures `io`. A failed
-clone may leave a directory requiring manual inspection. Symlinks to valid
-standalone clones work; linked worktrees do not. The clone's existing actor,
-unpublished work and configuration survive reuse.
+storage must be a standalone tracker work-tree root with a `.git` directory,
+the clone-local origin exactly the locator's URL, and, when a branch is
+selected, that branch checked out; a clone is never switched to another
+selector's branch. Invalid storage is refused, never reset or replaced.
+Incomplete storage and origin mismatches are `invalid-argument`; git failures
+are `git`, filesystem failures `io`. A failed clone may leave a directory
+requiring manual inspection. Symlinks to valid standalone clones work; linked
+worktrees do not. The clone's existing actor, unpublished work and
+configuration survive reuse.
 
 The initial clone needs the network; existing clones are not fetched implicitly.
 Read-only commands retain their unlocked, local-only semantics, and mutations
@@ -92,7 +106,7 @@ them; any change to them fails with `tombstoned`.
 
 | Command | Writes | Output |
 |---|---|---|
-| `init --prefix P [--name N]` | config, `.gitattributes`, actor id; a git repository if there is none; first commit | init object |
+| `init DIRECTORY --remote LOCATOR --prefix P [--name N]` | config, `.gitattributes`, `AGENTS.md`, actor id; a git repository on the published branch; first commit; origin and upstream; initial push | init object |
 | `create TITLE [--status S] [--kind K] [--parent T] [--tag X]...` | `create`, then `parent`, `tag` | mutation object |
 | `status T STATUS` | `status` | mutation object |
 | `title T TITLE` | `title` | mutation object |
@@ -373,12 +387,38 @@ No actor is allocated; no git repository is needed.
 
 ### Init object
 
+`init DIRECTORY --remote LOCATOR --prefix P [--name N]` creates a tracker in
+`DIRECTORY`, which must be nonexistent or empty and outside every tracker and
+other work tree. The remote must already exist; no repository is provisioned.
+The tracker starts independent history on a new branch:
+
+- A `?ref=BRANCH` selector names the branch. Without one, the branch is the
+  remote's advertised default, which an existing tracker already occupies:
+  an unqualified `init` is for an empty remote, where the branch is git's
+  configured `init.defaultBranch`, defaulting to `master`.
+- An existing target branch is `branch-exists`, including one created while
+  the init ran: the push that publishes the tracker is a create-only,
+  non-force push, and nothing is ever overwritten.
+- The initial commit holds the configuration, `.gitattributes` and a
+  human-editable `AGENTS.md` with the bundled bootstrap paragraph (see
+  `agent-hooks init`). The origin and the branch's upstream are configured,
+  so later `sync`s publish normally.
+- Success is reported only after the initial push succeeded. On failure the
+  local checkout and its commit are kept (never rolled back) and the error
+  `push-failed` names the exact retry push command.
+
 ```json
 {"tracker": {"root": "/path", "id": "<root ULID>", "name": "...", "prefix": "ZZ",
              "statuses": ["draft", "..."], "kinds": ["task", "..."]},
+ "remote": {"url": "https://forge.example/owner/repo.git", "branch": "tickets"},
  "actor": "<this clone's actor ULID>",
  "sync": {<sync object>}}
 ```
+
+`remote.url` is the locator's URL half and `remote.branch` the branch
+published. `--name` defaults to the destination directory's name. The remote's
+default-branch settings are never touched, and connected project repositories
+are neither discovered nor configured.
 
 ### Sync object
 
@@ -684,6 +724,8 @@ Command errors:
 |---|---|
 | `not-a-tracker` | no `zwanenzang.toml` here or above |
 | `already-initialized` | `init` in an existing tracker or anywhere inside one |
+| `branch-exists` | `init` target branch already on the remote, or created while the init ran |
+| `fetch-failed`, `push-failed` | `init` could not read the remote, or its initial push failed; the local tracker is kept and the message names the retry push command |
 | `config` | `zwanenzang.toml` or the actor id file is invalid, or `init` got a bad prefix or name |
 | `unknown-ticket`, `ambiguous-ticket` | a ticket reference did not resolve to one ticket |
 | `unknown-document` | `doc get` of a document the ticket does not have |

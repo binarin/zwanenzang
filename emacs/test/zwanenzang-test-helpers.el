@@ -157,11 +157,19 @@ it lists."
     (zwanenzang-call dir (append '("--actor-name" "tester") args) input)))
 
 (defmacro zwanenzang-test-with-tracker (var &rest body)
-  "Bind VAR to a fresh disposable tracker with prefix ZZ around BODY."
+  "Bind VAR to a fresh disposable tracker with prefix ZZ around BODY.
+The tracker is initialized against a bare remote that lives as long as
+the tracker does."
   (declare (indent 1) (debug (symbolp body)))
-  `(zwanenzang-test-with-dir ,var
-     (zwanenzang-test-call ,var '("init" "--prefix" "ZZ" "--name" "Test"))
-     ,@body))
+  (let ((remote (make-symbol "remote")))
+    `(zwanenzang-test-with-dir ,remote
+       (zwanenzang-test-git ,remote "init" "--quiet" "--bare" "remote-test-repo")
+       (zwanenzang-test-with-dir ,var
+         (zwanenzang-test-call ,remote
+            (list "init" ,var "--remote"
+                  (expand-file-name "remote-test-repo?ref=main" ,remote)
+                  "--prefix" "ZZ" "--name" "Test"))
+         ,@body))))
 
 ;;;; Trackers and Org scopes for pull tests
 
@@ -228,21 +236,23 @@ client runs the CLI only through the guarded `zwanenzang-test-call'."
              (kill-buffer ,(nth 1 spec))))))))
 
 (defmacro zwanenzang-test-with-remote-scope (spec &rest body)
-  "Run BODY with a clone of a bare remote and an Org file scoped to the clone.
-SPEC is (NET CLONE BUFFER ORG-TEXT), ORG-TEXT as in
+  "Run BODY with a tracker on a bare remote and an Org file scoped to it.
+SPEC is (NET TRACKER BUFFER ORG-TEXT), ORG-TEXT as in
 `zwanenzang-test-with-scope'.  NET is the disposable directory holding
-`remote-test-repo', CLONE the initialized tracker clone in it."
+`remote-test-repo', TRACKER the initialized tracker checkout in it."
   (declare (indent 1) (debug ((symbolp symbolp symbolp form) body)))
-  (let ((net (nth 0 spec)) (clone (nth 1 spec)) (buffer (nth 2 spec)))
+  (let ((net (nth 0 spec)) (tracker (nth 1 spec)) (buffer (nth 2 spec)))
     `(zwanenzang-test-with-dir ,net
-       (let* ((,clone (expand-file-name "human-test-repo" ,net))
+       (let* ((,tracker (expand-file-name "tracker-test-repo" ,net))
               (file (expand-file-name "scope.org" ,net))
               (zwanenzang--call #'zwanenzang-test-call)
               ,buffer)
          (zwanenzang-test-git ,net "init" "--quiet" "--bare" "remote-test-repo")
-         (zwanenzang-test-git ,net "clone" "--quiet" "remote-test-repo" "human-test-repo")
-         (zwanenzang-test-call ,clone '("init" "--prefix" "ZZ" "--name" "Test"))
-         (with-temp-file file (insert (format ,(nth 3 spec) ,clone)))
+         (zwanenzang-test-call ,net
+            (list "init" ,tracker "--remote"
+                  (expand-file-name "remote-test-repo?ref=main" ,net)
+                  "--prefix" "ZZ" "--name" "Test"))
+         (with-temp-file file (insert (format ,(nth 3 spec) ,tracker)))
          (setq ,buffer (find-file-noselect file))
          (unwind-protect
              (with-current-buffer ,buffer ,@body)

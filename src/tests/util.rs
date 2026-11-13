@@ -47,7 +47,16 @@ pub fn init_clock() -> FixedClock {
 
 pub fn new_tracker(dir: &tempfile::TempDir) -> Tracker {
     assert_disposable(dir.path());
-    Tracker::init(dir.path(), "test", "ZZ", None, &mut init_clock()).expect("init")
+    Tracker::create_local(
+        dir.path(),
+        "test",
+        "ZZ",
+        "main",
+        &[],
+        None,
+        &mut init_clock(),
+    )
+    .expect("init")
 }
 
 /// Appends raw lines to the log named `log`, which is normally an actor id.

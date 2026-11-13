@@ -8,8 +8,9 @@ for command in zz zwanenzang; do
 done
 
 system_tmp=$(realpath "${TMPDIR:-/tmp}")
-repo=$(mktemp -d "$system_tmp/zz-command.XXXXXX-test-repo")
-trap 'rm -rf "$repo"' EXIT
+root=$(mktemp -d "$system_tmp/zz-command.XXXXXX-test-repo")
+repo=$root
+trap 'rm -rf "$root"' EXIT
 assert_disposable() {
     case "$(realpath "$repo")" in
         "$system_tmp/"*-test-repo) ;;
@@ -27,6 +28,7 @@ done
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 unset GIT_DIR GIT_WORK_TREE
 export HOME="$repo"
+"$REAL_GIT" init --quiet --bare "$repo/remote-test-repo.git"
 cli() {
     assert_disposable
     local command=$1
@@ -37,9 +39,12 @@ cli() {
 
 # With no caller git, both installed paths must retain the packaged fallback.
 cli_path=
-cli zz init --prefix TEST > "$repo/init.json" 2> "$repo/stderr"
+cli zz init "$repo/tracker-test-repo" --remote "$repo/remote-test-repo.git?ref=main" \
+    --prefix TEST > "$repo/init.json" 2> "$repo/stderr"
 test ! -s "$repo/stderr"
 grep -F '"prefix": "TEST"' "$repo/init.json"
+grep -F '"branch": "main"' "$repo/init.json"
+repo="$repo/tracker-test-repo"
 cli zz create 'A title with spaces and '\''quotes'\''' > "$repo/create.json"
 cli zz list > "$repo/zz.json"
 cli zwanenzang list > "$repo/long.json"

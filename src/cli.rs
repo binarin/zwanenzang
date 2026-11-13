@@ -53,8 +53,15 @@ pub enum Command {
     /// Read a scope, document text and events after per-ticket cursors.
     /// Takes one JSON request on stdin; does not fetch or write.
     Read,
-    /// Create a tracker in the tracker directory (created if missing).
+    /// Create a standalone tracker checkout and publish it on a new branch
+    /// of an existing remote.
     Init {
+        /// Destination directory: created when missing, and required
+        /// empty when it exists. The tracker's own checkout.
+        directory: PathBuf,
+        /// The remote locator: `URL` or `URL?ref=BRANCH`.
+        #[arg(long)]
+        remote: String,
         /// Number prefix, e.g. ZZ.
         #[arg(long)]
         prefix: String,
@@ -404,27 +411,37 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             "agent-hooks prints text, not JSON; run it through `agent_hooks`".into(),
         ));
     }
-    if let Command::Init { prefix, name } = &cli.command {
+    if let Command::Init {
+        directory,
+        remote,
+        prefix,
+        name,
+    } = &cli.command
+    {
         if cli.tracker_url.is_some() {
             return Err(Error::InvalidArgument(
-                "init needs a local directory, not --tracker-url".into(),
+                "init takes its remote as --remote, not --tracker-url".into(),
             ));
         }
-        let dir = match &cli.tracker {
-            Some(d) => d.clone(),
-            None => std::env::current_dir().map_err(Error::io("."))?,
-        };
         let name = match name {
             Some(n) => n.clone(),
-            None => std::fs::canonicalize(&dir)
-                .unwrap_or_else(|_| dir.clone())
+            None => directory
+                .canonicalize()
+                .unwrap_or_else(|_| directory.clone())
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "tracker".into()),
         };
-        let t = Tracker::init(&dir, &name, prefix, cli.actor_name.as_deref(), clock)?;
-        let actor = t.actor_id_opt(clock)?;
-        let sync = t.sync(clock, cli.actor_name.as_deref())?;
+        let locator = crate::locator::parse_locator(remote)?;
+        let started = crate::init::run(
+            directory,
+            &locator,
+            &name,
+            prefix,
+            cli.actor_name.as_deref(),
+            clock,
+        )?;
+        let t = &started.tracker;
         return Ok((
             json!({
                 "tracker": {
@@ -435,8 +452,12 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     "statuses": t.config.statuses,
                     "kinds": t.config.kinds,
                 },
-                "actor": actor,
-                "sync": sync,
+                "remote": {
+                    "url": started.url,
+                    "branch": started.branch,
+                },
+                "actor": started.actor,
+                "sync": started.report,
             }),
             0,
         ));

@@ -36,6 +36,8 @@ pub enum Error {
     UndeclaredRepo(String),
     #[error("{0} exists with different content")]
     DocConflict(PathBuf),
+    #[error("{0}")]
+    BranchExists(String),
     #[error("{0} is not the top of a git work tree")]
     NotARepository(PathBuf),
     #[error("{0} is inside the git work tree at {1}; a tracker is its own repository")]
@@ -62,6 +64,7 @@ impl Error {
             Error::InvalidSource(_) => "invalid-source",
             Error::UndeclaredRepo(_) => "undeclared-repo",
             Error::DocConflict(_) => "doc-conflict",
+            Error::BranchExists(_) => "branch-exists",
             Error::NotARepository(_) => "not-a-repository",
             Error::InsideRepository(..) => "inside-repository",
             Error::Git(_) => "git",
