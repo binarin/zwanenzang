@@ -12,8 +12,8 @@ A small, local-first issue tracker for one person and their agents.
   [docs/agent-hooks](docs/agent-hooks/overview.md).
 - Current state, dashboards and a browsable rendering for the forge are
   derived views, never sources.
-- One tracker is one repository and one compartment. Nothing aggregates
-  trackers across projects or clients.
+- One tracker is one event log, one branch and one compartment. Nothing
+  aggregates trackers across projects or clients.
 
 Tracking only. Development process, review stages and authority rules belong
 to the projects that use it, not here.

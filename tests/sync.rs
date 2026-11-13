@@ -13,22 +13,48 @@ struct Net {
 }
 
 impl Net {
-    /// A bare remote and a first clone holding a fresh tracker, pushed.
+    /// A bare remote and a first clone holding a fresh, pushed tracker.
     fn new() -> Net {
         let dir = disposable_dir();
         git(
             dir.path(),
-            &["init", "--quiet", "--bare", "remote-test-repo"],
+            &[
+                "init",
+                "--quiet",
+                "--bare",
+                "-b",
+                "main",
+                "remote-test-repo",
+            ],
         );
         let net = Net { dir };
-        let a = net.clone_as("a");
-        let out = ok(&a, &["init", "--prefix", "ZZ", "--name", "Test"]);
-        assert_eq!(out["sync"]["pushed"], true, "{out}");
+        let a = net.path("a");
+        let out = run_in(
+            net.dir.path(),
+            &[
+                "init",
+                a.to_str().unwrap(),
+                "--remote",
+                &net.locator(),
+                "--prefix",
+                "ZZ",
+                "--name",
+                "Test",
+            ],
+            "",
+        );
+        assert_eq!(out.code, 0, "{}\n{}", out.json, out.stderr);
+        assert_eq!(out.json["sync"]["pushed"], true, "{}", out.json);
         net
     }
 
     fn remote(&self) -> PathBuf {
         self.dir.path().join("remote-test-repo")
+    }
+
+    /// The remote as a locator selecting its default branch, `main`.
+    fn locator(&self) -> String {
+        format!("{}?ref=main", self.remote().to_str().unwrap())
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -370,22 +396,6 @@ fn a_conflict_in_docs_is_reported_not_resolved() {
     assert_eq!(git(&a, &["rev-parse", "HEAD~1"]), before);
     assert!(!a.join(".git/rebase-merge").exists());
     assert_eq!(read(&a, "docs/notes.md"), "from a\n");
-}
-
-#[test]
-fn init_refuses_a_directory_inside_another_repository() {
-    let net = Net::new();
-    let inner = net.path("a").join("nested-test-repo");
-    std::fs::create_dir(&inner).unwrap();
-    // Refused as inside the tracker before git is consulted.
-    err(&inner, &["init", "--prefix", "QQ"], "already-initialized");
-    git(net.dir.path(), &["init", "--quiet", "code-test-repo"]);
-    let code = net.path("code");
-    git(&code, &["commit", "--quiet", "--allow-empty", "-m", "code"]);
-    let sub = code.join("sub-test-repo");
-    std::fs::create_dir(&sub).unwrap();
-    err(&sub, &["init", "--prefix", "QQ"], "inside-repository");
-    assert!(!sub.join("zwanenzang.toml").exists());
 }
 
 #[test]

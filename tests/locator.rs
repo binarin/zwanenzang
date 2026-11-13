@@ -57,8 +57,8 @@ fn project_local_config_explicit_overrides_and_tracker_precedence() {
     ok(two.path(), &["create", "Two"]);
     let url_one = "https://example.invalid/one";
     let url_two = "https://example.invalid/two";
-    git(one.path(), &["remote", "add", "origin", url_one]);
-    git(two.path(), &["remote", "add", "origin", url_two]);
+    git(one.path(), &["remote", "set-url", "origin", url_one]);
+    git(two.path(), &["remote", "set-url", "origin", url_two]);
     let data = disposable_dir();
     slot(data.path(), url_one, one.path());
     slot(data.path(), url_two, two.path());
@@ -135,12 +135,16 @@ fn invalid_selection_is_refused_without_touching_storage() {
             "--tracker-url",
             "https://example.invalid/new",
             "init",
+            project.path().join("refused-test-repo").to_str().unwrap(),
+            "--remote",
+            "https://example.invalid/other",
             "--prefix",
             "ZZ"
         ])
         .1["error"]["code"],
         "invalid-argument"
     );
+    assert!(!project.path().join("refused-test-repo").exists());
     assert!(!data.path().join("zwanenzang").exists());
     assert_eq!(
         run(&[

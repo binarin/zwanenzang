@@ -13,9 +13,15 @@
 (require 'zwanenzang-test-helpers)
 
 (ert-deftest zwanenzang-integration-init-then-read ()
-  (zwanenzang-test-with-dir dir
-    (let* ((init (zwanenzang-test-call dir '("init" "--prefix" "ZZ" "--name" "Test")))
-           (tracker-id (alist-get 'id (alist-get 'tracker init))))
+  (zwanenzang-test-with-dir remote
+    (zwanenzang-test-git remote "init" "--quiet" "--bare" "remote-test-repo")
+    (zwanenzang-test-with-dir dir
+      (let* ((init (zwanenzang-test-call
+                    remote
+                    (list "init" dir "--remote"
+                          (expand-file-name "remote-test-repo?ref=main" remote)
+                          "--prefix" "ZZ" "--name" "Test")))
+             (tracker-id (alist-get 'id (alist-get 'tracker init))))
       (should (stringp tracker-id))
       (let ((empty (zwanenzang-test-call dir '("read") '((cursors)))))
         (should (equal (alist-get 'id (alist-get 'tracker empty)) tracker-id))
@@ -30,7 +36,7 @@
         (should (eq (alist-get 'reset scope) :false))
         (should (= (length tickets) 1))
         (should (equal (alist-get 'title ticket) "First ticket"))
-        (should (stringp (alist-get 'cursor (car tickets))))))))
+        (should (stringp (alist-get 'cursor (car tickets)))))))))
 
 (ert-deftest zwanenzang-integration-command-error-is-user-error ()
   (zwanenzang-test-with-dir dir
@@ -39,14 +45,17 @@
       (should (string-prefix-p "zwanenzang: not-a-tracker: " (cadr err))))))
 
 (ert-deftest zwanenzang-integration-failed-publication-returns-sync-json ()
-  ;; A clone whose bare remote is gone: `sync' exits 1 with its result,
+  ;; A tracker whose bare remote is gone: `sync' exits 1 with its result,
   ;; which the client reports rather than treating as a failure.
   (zwanenzang-test-with-dir net
     (let ((remote (expand-file-name "remote-test-repo" net))
           (clone (expand-file-name "a-test-repo" net)))
       (zwanenzang-test-git net "init" "--quiet" "--bare" "remote-test-repo")
-      (zwanenzang-test-git net "clone" "--quiet" "remote-test-repo" "a-test-repo")
-      (let ((init (zwanenzang-test-call clone '("init" "--prefix" "ZZ" "--name" "Test"))))
+      (let ((init (zwanenzang-test-call
+                   net
+                   (list "init" clone "--remote"
+                         (expand-file-name "remote-test-repo?ref=main" net)
+                         "--prefix" "ZZ" "--name" "Test"))))
         (should (eq (alist-get 'pushed (alist-get 'sync init)) t)))
       (zwanenzang-test-delete-dir remote)
       (should (eql (plist-get (zwanenzang-test-run clone '("sync")) :exit) 1))

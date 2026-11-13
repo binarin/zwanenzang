@@ -46,7 +46,8 @@ fn init_writes_layout() {
 fn init_twice_refused() {
     let dir = disposable_dir();
     new_tracker(&dir);
-    let err = Tracker::init(dir.path(), "x", "ZZ", None, &mut init_clock()).unwrap_err();
+    let err = Tracker::create_local(dir.path(), "x", "ZZ", "main", &[], None, &mut init_clock())
+        .unwrap_err();
     assert!(matches!(err, Error::AlreadyInitialized(_)), "{err}");
 }
 
@@ -57,7 +58,8 @@ fn init_inside_a_tracker_refused() {
     let sub = dir.path().join("sub");
     fs::create_dir(&sub).unwrap();
     for target in [sub.clone(), t.events_dir(), sub.join("not/yet/there")] {
-        let err = Tracker::init(&target, "x", "QQ", None, &mut init_clock()).unwrap_err();
+        let err = Tracker::create_local(&target, "x", "QQ", "main", &[], None, &mut init_clock())
+            .unwrap_err();
         match err {
             Error::AlreadyInitialized(found) => assert_eq!(found, t.root, "{target:?}"),
             e => panic!("{target:?}: {e}"),

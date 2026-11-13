@@ -138,7 +138,7 @@ fn unknown_documents_fail_with_nearby_topics() {
 #[test]
 fn init_prints_the_prefix_bootstrap_and_writes_nothing() {
     let t = disposable_dir();
-    ok(t.path(), &["init", "--prefix", "QX", "--name", "Test"]);
+    init_tracker(t.path(), "QX");
     ok(t.path(), &["create", "One"]);
     let home = disposable_dir();
     let logs_before = logs(t.path());
@@ -167,9 +167,9 @@ fn init_prints_the_prefix_bootstrap_and_writes_nothing() {
 #[test]
 fn init_follows_url_selection() {
     let t = disposable_dir();
-    ok(t.path(), &["init", "--prefix", "UR", "--name", "Test"]);
+    init_tracker(t.path(), "UR");
     let url = "https://example.invalid/url-tracker";
-    git(t.path(), &["remote", "add", "origin", url]);
+    git(t.path(), &["remote", "set-url", "origin", url]);
     // The URL's storage slot is a link to the marked clone, so the real
     // resolver runs without creating unmarked repositories.
     let home = disposable_dir();

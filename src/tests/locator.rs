@@ -4,7 +4,7 @@ use std::path::Path;
 
 use super::util::{assert_disposable, disposable_dir, new_tracker};
 use crate::git::Repo;
-use crate::locator::provision;
+use crate::locator::{parse_locator, provision};
 
 fn provision_test(
     root: &Path,
@@ -24,7 +24,7 @@ fn provision_test(
     if dir.exists() {
         assert_disposable(dir);
     }
-    provision(root, dir, origin.to_str().unwrap())
+    provision(root, dir, &parse_locator(origin.to_str().unwrap())?)
 }
 
 fn remote_tracker() -> (tempfile::TempDir, crate::ulid::Ulid) {

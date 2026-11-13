@@ -10,10 +10,27 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 
 use serde_json::Value;
 
 pub const MARKER: &str = "-test-repo";
+
+/// Bare remotes backing `tracker()`; held so they outlive the trackers.
+static REMOTES: Mutex<Vec<tempfile::TempDir>> = Mutex::new(Vec::new());
+
+/// A bare remote for one tracker, as `URL` for `init --remote`.
+pub fn bare_remote() -> (tempfile::TempDir, String) {
+    let remote = disposable_dir();
+    git(remote.path(), &["init", "--quiet", "--bare", "remote.git"]);
+    let url = remote
+        .path()
+        .join("remote.git")
+        .to_str()
+        .unwrap()
+        .to_string();
+    (remote, url)
+}
 
 /// Why `path` is not disposable, or `None` when it carries both markers.
 pub fn not_disposable(path: &Path) -> Option<String> {
@@ -180,11 +197,42 @@ pub fn err(dir: &Path, args: &[&str], code: &str) -> Value {
     o.json
 }
 
-/// A fresh tracker with prefix ZZ.
+/// A fresh tracker with prefix ZZ, initialized against its own bare
+/// remote on branch `main`.
 pub fn tracker() -> tempfile::TempDir {
     let d = disposable_dir();
-    ok(d.path(), &["init", "--prefix", "ZZ", "--name", "Test"]);
+    init_tracker(d.path(), "ZZ");
     d
+}
+
+/// Runs `init` creating a tracker with `prefix` in the disposable `dir`
+/// against a fresh bare remote on branch `main`.
+pub fn init_tracker(dir: &Path, prefix: &str) -> Value {
+    let (remote, url) = bare_remote();
+    let out = ok(
+        dir,
+        &[
+            "init",
+            dir.to_str().unwrap(),
+            "--remote",
+            &format!("{url}?ref=main"),
+            "--prefix",
+            prefix,
+            "--name",
+            "Test",
+        ],
+    );
+    REMOTES.lock().unwrap().push(remote);
+    out
+}
+
+/// Drops the tracker clone's upstream configuration, making the clone the
+/// whole tracker for tests of upstream-less behavior.
+pub fn without_upstream(dir: &Path) {
+    git(
+        dir,
+        &["config", "--local", "--remove-section", "branch.main"],
+    );
 }
 
 /// Appends raw lines to `events/<log>.jsonl`.

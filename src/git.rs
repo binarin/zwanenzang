@@ -91,17 +91,110 @@ pub fn toplevel(dir: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(std::fs::canonicalize(&top).map_err(Error::io(&top))?))
 }
 
-/// Makes `dir` a repository. Run only where [`toplevel`] found none.
+/// What a remote advertised when inspected.
+#[derive(Debug, Clone, Default)]
+pub struct Remote {
+    /// HEAD's symbolic target as advertised, `refs/heads/...` normally.
+    pub head: Option<String>,
+    /// Whether HEAD resolved to an object.
+    pub head_resolves: bool,
+    /// Every ref name advertised, `refs/heads/main` and friends.
+    pub refs: std::collections::BTreeSet<String>,
+}
+
+/// Inspects a remote's advertised refs, without any local repository.
+/// A failure (an unreachable or missing remote) is returned as its message.
+pub fn ls_remote(url: &str) -> Result<std::result::Result<Remote, String>> {
+    let args = ["ls-remote", "--symref", "--", url];
+    let out = scratch(&args, command(&anchor()).args(args))?;
+    if !out.status.success() {
+        return Ok(Err(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    let mut remote = Remote::default();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Some(rest) = line.strip_prefix("ref: ") {
+            if let Some((target, name)) = rest.split_once('\t')
+                && name == "HEAD"
+            {
+                remote.head = Some(target.to_string());
+            }
+            continue;
+        }
+        if let Some((_, name)) = line.split_once('\t') {
+            if name == "HEAD" {
+                remote.head_resolves = true;
+            } else {
+                remote.refs.insert(name.to_string());
+            }
+        }
+    }
+    Ok(Ok(remote))
+}
+
+/// Git's configured initial branch for a repository without one, from
+/// `init.defaultBranch`, defaulting to `master` as git itself does.
+pub fn initial_branch() -> Result<String> {
+    let args = ["config", "--get", "init.defaultBranch"];
+    let out = scratch(&args, command(&anchor()).args(args))?;
+    match out.status.code() {
+        Some(0) => {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if valid_branch_name(&name)? {
+                Ok(name)
+            } else {
+                Err(Error::Config {
+                    path: PathBuf::from("init.defaultBranch"),
+                    message: format!("{name:?} is not a valid branch name"),
+                })
+            }
+        }
+        // 1: the setting is not present.
+        Some(1) => Ok("master".into()),
+        _ => Err(failure(&args, &out)),
+    }
+}
+
+/// Whether `name` is a plain branch name a locator may select. Tags, commit
+/// revisions and anything git refuses as a branch name are not.
+pub fn valid_branch_name(name: &str) -> Result<bool> {
+    if name.is_empty()
+        || name.starts_with('-')
+        // One spelling: a bare branch name, never a qualified ref.
+        || name.starts_with("refs/")
+        // Commit revisions are not selectors, and a branch so named would
+        // be indistinguishable from one in every human reading.
+        || matches!(name.len(), 40 | 64) && name.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Ok(false);
+    }
+    let args = ["check-ref-format", "--branch", name];
+    let out = scratch(&args, command(&anchor()).args(args))?;
+    Ok(out.status.success())
+}
+
+/// A directory every repository-less git command can run in: it exists on
+/// every platform and carries no repository of its own.
+fn anchor() -> PathBuf {
+    std::env::temp_dir()
+}
+
+fn scratch(args: &[&str], c: &mut Command) -> Result<Output> {
+    c.output()
+        .map_err(|e| Error::Git(format!("cannot run git {}: {e}", args.join(" "))))
+}
+
+/// Makes `dir` a repository whose initial branch is `branch`. Run only
+/// where [`toplevel`] found none.
 ///
 /// `git init` in place is not atomic: several at once in one directory
 /// fail on each other's half-written files. The repository is made in a
 /// temporary directory and its `.git` renamed into place, which succeeds
 /// for exactly one of them; the others find a complete repository.
-pub fn init(dir: &Path) -> Result<Repo> {
+pub fn init(dir: &Path, branch: &str) -> Result<Repo> {
     let tmp = dir.join(format!(".zwanenzang-init-{}", std::process::id()));
     let made = (|| {
         std::fs::create_dir(&tmp).map_err(Error::io(&tmp))?;
-        let args = ["init", "--quiet"];
+        let args = ["init", "--quiet", "--initial-branch", branch];
         let out = output(&tmp, &args, command(&tmp).args(args))?;
         if !out.status.success() {
             return Err(failure(&args, &out));

@@ -88,9 +88,14 @@ Recorded so they are not re-surveyed.
   the merge problem.
 - **Operations stored in git refs** (git-bug). Invisible to `ls`, `cat`,
   grep and the forge; human readability was the first complaint.
-- **A tracker as a branch of the code repository.** Trackers span several
-  repositories, and for external projects the tracker cannot live in their
-  repository at all.
+- **A tracker as a branch of the code repository.** Reconsidered: a
+  tracker may live on its own branch of any existing repository, including
+  a code repository, with independent orphan history and no project files;
+  `init` creates and publishes exactly that. What stays rejected is mixing
+  tracker files into project branches: trackers span several repositories,
+  and for external projects the tracker cannot live in their history at
+  all, so the tracker checkout is always its own standalone repository
+  work tree.
 - **Any global per-user state** such as a home-directory folder of all
   tracker worktrees or a global identity. Violates principle 5.
 

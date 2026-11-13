@@ -36,17 +36,27 @@ have no number and display their short ULID until then.
 
 ## Stable clone placement
 
-Clients reuse one durable clone per chosen origin URL, per user and execution
-host, rather than cloning per workspace or session. The standard path is
+Clients reuse one durable clone per chosen tracker locator, per user and
+execution host, rather than cloning per workspace or session. A locator is
+an origin URL with an optional `?ref=BRANCH` selector naming the tracker's
+branch; the selector is a plain branch name, never a tag or a commit
+revision, and an unqualified locator means the remote's advertised default
+branch. The standard path is
 `${XDG_DATA_HOME:-$HOME/.local/share}/zwanenzang/trackers/<key>`, with `<key>` the
-full lowercase SHA-256 of the exact UTF-8 URL bytes, without a trailing newline.
-It is data, not cache: unpublished events may live only there. Workspace cleanup
-must not remove it. The CLI implements this resolver with `--tracker-url URL`,
-or a code repository's local `zwanenzang.trackerUrl` git setting. No project
+full lowercase SHA-256 of the locator's exact UTF-8 bytes, without a trailing
+newline; the selector is part of the key, so different selected branches
+have separate clones that are never switched to each other's branches, and
+an unqualified locator keeps hashing its plain URL bytes, as storage written
+before selectors did. It is data, not cache: unpublished events may live only
+there. Workspace cleanup must not remove it. The CLI implements this resolver
+with `--tracker-url LOCATOR`, or a code repository's local
+`zwanenzang.trackerUrl` git setting, which takes the same spelling. No project
 file, global git setting or global registry is consulted. Explicit `-C` wins
 and never falls back to discovery; otherwise an enclosing tracker wins over
 project configuration. `--tracker-url` overrides discovery and conflicts with
-`-C`. `init` stays local and refuses `--tracker-url`. Org locations remain
+`-C`. `init` ignores `-C` (it searches nothing) and refuses `--tracker-url`:
+it creates a tracker in its directory argument and names its remote with
+`--remote LOCATOR`, publishing a new branch. Org locations remain
 explicit paths, including existing custom locations.
 
 The project chooses a canonical URL spelling. No automatic URL normalization,
@@ -126,9 +136,12 @@ Consequences that are deliberate:
 
 A tracker usually spans more than one code repository. `zwanenzang.toml`
 declares repository aliases with their URLs; `branch` and `mr` events name an
-alias. A tracker therefore never lives inside a code repository; it is always
-its own repository. zwanenzang's own tracker is `zwanenzang-tracker`, private
-on the forge, while the implementation repository mirrors to GitHub.
+alias. A tracker's checkout is therefore always its own repository work tree
+and never a subdirectory of a project checkout, but the tracker's history may
+share a repository with other branches: `init` publishes independent orphan
+history on a locator-selected branch of any existing remote, project history
+untouched and unmixing. zwanenzang's own tracker is `zwanenzang-tracker`,
+private on the forge, while the implementation repository mirrors to GitHub.
 
 ## Rendered view for the forge
 
@@ -222,12 +235,16 @@ None at present.
 
 ### Choices made while implementing milestone 3
 
-- **A tracker is the top of its own work tree.** `init` makes the
-  directory a repository when it is in none, uses it when it is already
-  the top of one (a fresh clone of an empty remote, say), and refuses a
-  directory inside another work tree (`inside-repository`). It commits
-  `zwanenzang.toml` and `.gitattributes` and syncs, so an empty remote
-  receives the tracker at once. Mutating commands refuse a tracker that is
+- **A tracker is the top of its own work tree.** Revisited with remote-backed
+  `init`: the destination must be nonexistent or empty, and becomes a fresh
+  repository on the branch the locator selects — a directory inside another
+  work tree is refused (`inside-repository`), and so is one holding anything,
+  even only a `.git`. The initial commit holds `zwanenzang.toml`,
+  `.gitattributes` and the bootstrap `AGENTS.md`, is pushed as a create-only
+  non-force push of the new branch, and leaves the origin and upstream
+  configured for ordinary sync. Success is reported only after that push;
+  a failure keeps the checkout and its commit and names the retry command,
+  with no claim of rollback. Mutating commands refuse a tracker that is
   not the top of a work tree (`not-a-repository`); read-only commands do
   not need git at all.
 - **Concurrent inits.** The repository is created in a temporary directory

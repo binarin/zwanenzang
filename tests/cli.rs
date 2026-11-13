@@ -5,62 +5,162 @@ mod common;
 use common::*;
 use serde_json::{Value, json};
 
+/// A bare remote and destination for init-based tests.
+struct InitNet {
+    dir: tempfile::TempDir,
+}
+
+impl InitNet {
+    fn new() -> InitNet {
+        let dir = disposable_dir();
+        git(
+            dir.path(),
+            &["init", "--quiet", "--bare", "-b", "main", "remote.git"],
+        );
+        InitNet { dir }
+    }
+
+    /// The remote's URL.
+    fn url(&self) -> String {
+        self.dir
+            .path()
+            .join("remote.git")
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// The remote's locator, selecting a branch named after the
+    /// destination, so each init in one test publishes its own branch.
+    fn locator(&self, dest: &str) -> String {
+        format!("{}?ref={dest}", self.url())
+    }
+
+    fn init(&self, dest: &str, extra: &[&str]) -> Out {
+        let dir = self.dir.path().join(dest);
+        run_in(
+            self.dir.path(),
+            &[
+                "init",
+                dir.to_str().unwrap(),
+                "--remote",
+                &self.locator(dest),
+            ]
+            .iter()
+            .chain(extra.iter())
+            .copied()
+            .collect::<Vec<_>>(),
+            "",
+        )
+    }
+}
+
 #[test]
 fn init_writes_tracker_files() {
-    let d = disposable_dir();
-    let out = ok(d.path(), &["init", "--prefix", "ZZ"]);
+    let net = InitNet::new();
+    let out = net.init("tracker-test-repo", &["--prefix", "ZZ", "--name", "Test"]);
+    assert_eq!(out.code, 0, "{}\n{}", out.json, out.stderr);
+    let out = &out.json;
+    let d = net.dir.path().join("tracker-test-repo");
     assert_eq!(out["tracker"]["prefix"], "ZZ");
-    assert!(
-        out["tracker"]["name"]
-            .as_str()
-            .unwrap()
-            .ends_with("-test-repo")
-    );
+    assert_eq!(out["tracker"]["name"], "Test");
     assert_eq!(out["tracker"]["statuses"][0], "draft");
-    assert_eq!(
-        read(d.path(), ".gitattributes"),
-        "events/*.jsonl merge=union\n"
-    );
-    assert!(!d.path().join(".gitignore").exists());
-    assert_eq!(actor_of(d.path()), out["actor"]);
-    assert_eq!(git(d.path(), &["log", "--format=%s"]), "init\n");
-    assert_eq!(out["sync"]["upstream"], Value::Null);
-    let toml = read(d.path(), "zwanenzang.toml");
+    assert_eq!(read(&d, ".gitattributes"), "events/*.jsonl merge=union\n");
+    assert!(!d.join(".gitignore").exists());
+    assert_eq!(actor_of(&d), out["actor"]);
+    assert_eq!(git(&d, &["log", "--format=%s"]), "init\n");
+    assert_eq!(out["sync"]["upstream"], "origin/tracker-test-repo");
+    assert_eq!(out["sync"]["pushed"], true);
+    assert_eq!(out["remote"]["branch"], "tracker-test-repo");
+    let toml = read(&d, "zwanenzang.toml");
     assert!(toml.contains(&format!(
         "id = \"{}\"",
         out["tracker"]["id"].as_str().unwrap()
     )));
-    assert!(d.path().join("events").is_dir());
-    assert!(d.path().join("blobs").is_dir());
-    err(d.path(), &["init", "--prefix", "ZZ"], "already-initialized");
-    // Nor anywhere inside the tracker.
-    let sub = d.path().join("sub-test-repo");
+    assert!(d.join("events").is_dir());
+    assert!(d.join("blobs").is_dir());
+    // The name defaults to the destination's directory name.
+    let out = net.init("named-test-repo", &["--prefix", "ZZ"]);
+    assert_eq!(out.code, 0, "{}", out.json);
+    assert_eq!(out.json["tracker"]["name"], "named-test-repo");
+    let d = net.dir.path().join("named-test-repo");
+    // Nothing else may be initialized in or below a tracker.
+    err(
+        &d,
+        &[
+            "init",
+            d.to_str().unwrap(),
+            "--remote",
+            &net.url(),
+            "--prefix",
+            "ZZ",
+        ],
+        "already-initialized",
+    );
+    let sub = d.join("sub-test-repo");
     std::fs::create_dir(&sub).unwrap();
-    err(&sub, &["init", "--prefix", "QQ"], "already-initialized");
+    err(
+        &sub,
+        &[
+            "init",
+            sub.to_str().unwrap(),
+            "--remote",
+            &net.url(),
+            "--prefix",
+            "QQ",
+        ],
+        "already-initialized",
+    );
     assert!(!sub.join("zwanenzang.toml").exists());
-    let e = disposable_dir();
-    err(e.path(), &["init", "--prefix", "zz"], "config");
+    let e = net.init("badprefix-test-repo", &["--prefix", "zz"]);
+    assert_eq!(e.code, 1, "{}", e.json);
+    assert_eq!(e.json["error"]["code"], "config");
 }
 
 #[test]
 fn concurrent_inits_one_wins_and_reports_what_is_on_disk() {
     for _ in 0..10 {
-        let d = disposable_dir();
-        let p = d.path();
+        let net = InitNet::new();
+        let p = net.dir.path().join("race-test-repo");
+        let locator = net.locator("race-test-repo");
         let outs: Vec<Out> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..6)
-                .map(|_| s.spawn(|| run_in(p, &["init", "--prefix", "ZZ"], "")))
+                .map(|_| {
+                    s.spawn(|| {
+                        run_in(
+                            net.dir.path(),
+                            &[
+                                "init",
+                                p.to_str().unwrap(),
+                                "--remote",
+                                &locator,
+                                "--prefix",
+                                "ZZ",
+                            ],
+                            "",
+                        )
+                    })
+                })
                 .collect();
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
         let winners: Vec<&Out> = outs.iter().filter(|o| o.code == 0).collect();
         assert_eq!(winners.len(), 1, "exactly one init succeeds");
         for o in outs.iter().filter(|o| o.code != 0) {
-            assert_eq!(o.code, 1);
-            assert_eq!(o.json["error"]["code"], "already-initialized");
+            // A loser reports what it found: a finished or in-flight
+            // tracker in the destination, or a branch taken first.
+            assert_eq!(o.code, 1, "{}", o.json);
+            assert!(
+                matches!(
+                    o.json["error"]["code"].as_str(),
+                    Some("already-initialized") | Some("invalid-argument") | Some("branch-exists")
+                ),
+                "{}",
+                o.json
+            );
         }
         let won = &winners[0].json;
-        let toml = read(p, "zwanenzang.toml");
+        let toml = read(&p, "zwanenzang.toml");
         assert!(
             toml.contains(&format!(
                 "id = \"{}\"",
@@ -68,7 +168,7 @@ fn concurrent_inits_one_wins_and_reports_what_is_on_disk() {
             )),
             "reported tracker id is the one on disk: {toml}"
         );
-        assert_eq!(actor_of(p), won["actor"]);
+        assert_eq!(actor_of(&p), won["actor"]);
     }
 }
 
@@ -721,6 +821,7 @@ fn numbers_resolve_and_display() {
     // published at once, and new tickets are numbered in id order.
     let d = tracker();
     let p = d.path();
+    without_upstream(p);
     let first = ok(p, &["create", "A"]);
     let a = id(&first);
     assert_eq!(first["ticket"]["number"], 1);

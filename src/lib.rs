@@ -21,6 +21,7 @@ pub mod event;
 pub mod frontmatter;
 pub mod git;
 pub mod import;
+pub mod init;
 pub mod lint;
 mod locator;
 pub mod names;
