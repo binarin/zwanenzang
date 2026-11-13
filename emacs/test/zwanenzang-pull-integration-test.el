@@ -19,7 +19,6 @@
           ":ZWANENZANG: %s\n"
           ":ZWANENZANG_KEYWORDS: TODO=next,todo NEXT=agnt,revw WAIT=wait"
           " DONE=done CNCL=cncl\n"
-          ":ZWANENZANG_HIDE_DOCS: status\n"
           ":END:\n")
   "An Org file with one scope; %s is the tracker.")
 
@@ -61,8 +60,8 @@
             (zwanenzang-test-goto first)
             (should-not (nth 2 (assoc "ZWANENZANG_COMMENTS"
                                      (zwanenzang--drawer-visibility))))
-            (goto-char (cdr (assoc "plan" (zwanenzang--doc-headings))))
-            (should (equal (zwanenzang--document-text) "** New literal heading\nNew plan\n")))
+            (should-not (zwanenzang--doc-headings))
+            (should (assoc "ZWANENZANG_DOCUMENTS" (zwanenzang--drawer-visibility))))
           (let ((text (buffer-substring-no-properties (point-min) (point-max))))
             (org-fold-core-save-visibility t nil)
             (zwanenzang-pull)
@@ -173,17 +172,17 @@
                          ":ZWANENZANG_COMMENTS:\n"
                          "\\[[-0-9T:Z]+\\] tester:\nsecond\n"
                          "\\[[-0-9T:Z]+\\] tester:\nfirst\n,\\* starred\n,:END:\n:END:\n"
-                         ":ZWANENZANG_HIDDEN:\n"
-                         (regexp-quote (format "[[zwanenzang:%s/status][status (hidden)]]" parent))
-                         "\n:END:\n\\'")
+                         ":ZWANENZANG_DOCUMENTS:\n"
+                         (regexp-quote (format "- [[zwanenzang:%s/plan][plan]] " parent))
+                         "[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9] tester\n"
+                         (regexp-quote (format "- [[zwanenzang:%s/status][status]] " parent))
+                         "[-0-9]+ tester\n"
+                         ":END:\n\\'")
                  entry)))
+      ;; Named documents are links only: no subheadings are written.
       (save-excursion
         (zwanenzang-test-goto parent)
-        (let ((docs (zwanenzang--doc-headings)))
-          (should (equal (mapcar #'car docs) '("plan")))
-          (goto-char (cdr (car docs)))
-          (should (equal (zwanenzang--document-text) "Plan text\n"))
-          (should (org-entry-get nil "ZWANENZANG_VERSION"))))
+        (should-not (zwanenzang--doc-headings)))
       ;; Pulling again with nothing new changes nothing.
       (let ((before (buffer-string)))
         (zwanenzang-test-pull)
@@ -205,12 +204,12 @@
       (zwanenzang-test-pull)
       (should (string-match-p "\\`\\*\\*\\* DONE New +:b:\\'" (zwanenzang-test-heading id)))
       (should (string-match-p "status=done " (zwanenzang-test-property id "ZWANENZANG_SYNC")))
-      (should (string-match-p "New text\n:ZWANENZANG_COMMENTS:\n.*\nlater\n:END:\n\\'"
+      (should (string-match-p (concat "New text\n:ZWANENZANG_COMMENTS:\n.*\nlater\n:END:\n"
+                                      ":ZWANENZANG_DOCUMENTS:\n- .*/plan\\]\\[plan\\]\\] .*\n:END:\n\\'")
                               (zwanenzang-test-entry id)))
       (save-excursion
         (zwanenzang-test-goto id)
-        (goto-char (cdar (zwanenzang--doc-headings)))
-        (should (equal (zwanenzang--document-text) "New plan\n")))
+        (should-not (zwanenzang--doc-headings)))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id))))))
 
 (ert-deftest zwanenzang-pull-writes-org-prose-verbatim-and-below-it-the-comments ()
@@ -297,21 +296,17 @@
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let ((id (zwanenzang-test-create trk "Base" "--status" "next")))
       (zwanenzang-test-set-doc trk id "description" "Base text\n")
-      (zwanenzang-test-set-doc trk id "plan" "Base plan\n")
       (zwanenzang-test-pull)
-      ;; Org: title, description and plan edited; status left alone.
+      ;; Org: title and description edited; status left alone.
       (save-excursion
         (zwanenzang-test-goto id)
         (org-edit-headline "Mine")
         (search-forward "Base text")
-        (replace-match "My text")
-        (search-forward "Base plan")
-        (replace-match "My plan"))
+        (replace-match "My text"))
       ;; Tracker: the same fields, and the status.
       (zwanenzang-test-cli trk "title" id "Theirs")
       (zwanenzang-test-cli trk "status" id "agnt")
       (zwanenzang-test-set-doc trk id "description" "Their text\n")
-      (zwanenzang-test-set-doc trk id "plan" "Their plan\n")
       (zwanenzang-test-clear-report)
       (zwanenzang-test-pull)
       (should (string-match-p "\\`\\*\\*\\* NEXT Mine +:zz_conflict:\\'"
@@ -322,12 +317,10 @@
                          "- title: tracker title skipped; Org title kept\n  : Theirs\n"
                          "- description: tracker description skipped; Org text kept\n"
                          "  : Their text\n"
-                         "- document plan: tracker version [0-9A-Z]+ skipped; Org text kept\n"
-                         "  : Their plan\n"
                          ":END:\n")
                  entry))
         (should (string-match-p "My text\n\\'" entry)))
-      (should (string-match-p "conflict in title, description, document plan"
+      (should (string-match-p "conflict in title, description"
                               (zwanenzang-test-report)))
       ;; Taking the tracker's title by hand resolves that field only.
       (save-excursion (zwanenzang-test-goto id) (org-edit-headline "Theirs"))
@@ -338,8 +331,7 @@
       ;; Once every field agrees, the tag and drawer go.
       (save-excursion
         (zwanenzang-test-goto id)
-        (search-forward "My text") (replace-match "Their text")
-        (search-forward "My plan") (replace-match "Their plan"))
+        (search-forward "My text") (replace-match "Their text"))
       (zwanenzang-test-pull)
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))
       (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id))))))
@@ -481,26 +473,6 @@
                         (tags . ,(zwanenzang--tags-hash '("a" "b" "c")))
                         (depends . ,(zwanenzang--tags-hash nil))
                         (parent . nil) (nest . nil))))))))
-
-(ert-deftest zwanenzang-pull-adds-a-second-document-after-the-first ()
-  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
-    (let* ((id (zwanenzang-test-create trk "Ticket"))
-           (child (zwanenzang-test-create trk "Child" "--parent" id)))
-      (zwanenzang-test-set-doc trk id "plan" "Plan\n")
-      (zwanenzang-test-pull)
-      (zwanenzang-test-set-doc trk id "notes" "Notes\n")
-      (zwanenzang-test-pull)
-      (save-excursion
-        (zwanenzang-test-goto id)
-        (should (equal (mapcar #'car (zwanenzang--doc-headings)) '("plan" "notes")))
-        (let ((children nil) (level (org-current-level)))
-          (org-map-entries (lambda () (when (= (org-current-level) (1+ level))
-                                        (push (org-get-heading t t t t) children)))
-                           nil 'tree)
-          (should (equal (nreverse children) '("plan" "notes" "Child"))))
-        (goto-char (cdr (assoc "notes" (zwanenzang--doc-headings))))
-        (should (equal (zwanenzang--document-text) "Notes\n")))
-      (should (equal (zwanenzang-test-parent-heading child) "Ticket")))))
 
 (ert-deftest zwanenzang-pull-leaves-archived-and-flags-tombstoned ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
@@ -645,28 +617,6 @@
         (let ((last-command nil)) (undo))
         (should (equal (buffer-string) unfolded-start))))))
 
-(ert-deftest zwanenzang-open-shows-hidden-document ()
-  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
-    (let ((id (zwanenzang-test-create trk "With status")))
-      (zwanenzang-test-set-doc trk id "status" "Agent summary\n")
-      (zwanenzang-test-pull)
-      (zwanenzang-test-goto id)
-      (search-forward "[[zwanenzang:")
-      (let ((shown (zwanenzang-open)))
-        (unwind-protect
-            (with-current-buffer shown
-              (should (equal (buffer-string) "Agent summary\n"))
-              (should (derived-mode-p 'org-mode))
-              (should buffer-read-only))
-          (kill-buffer shown)))
-      ;; Following the link through Org works too.
-      (with-current-buffer buf
-        (zwanenzang-test-goto id)
-        (search-forward "[[zwanenzang:")
-        (org-open-at-point)
-        (should (get-buffer "*zwanenzang ZZ-1 status*"))
-        (kill-buffer "*zwanenzang ZZ-1 status*")))))
-
 (ert-deftest zwanenzang-pull-renders-relations-and-code-drawers ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let* ((pre (zwanenzang-test-create trk "Prerequisite" "--status" "done"))
@@ -684,7 +634,7 @@
       (should (string-match-p
                (concat "\nMain text\n"
                        ":ZWANENZANG_COMMENTS:\n.*\nA note\n:END:\n"
-                       ":ZWANENZANG_HIDDEN:\n.*\n:END:\n"
+                       ":ZWANENZANG_DOCUMENTS:\n.*\n:END:\n"
                        (regexp-quote
                         (concat ":ZWANENZANG_RELATIONS:\n"
                                 "- Prerequisites\n"
@@ -788,20 +738,46 @@
               (should (equal (org-entry-get nil "ZWANENZANG_ID") main)))
           (kill-buffer shown))))))
 
-(ert-deftest zwanenzang-pull-never-hides-the-description ()
+(ert-deftest zwanenzang-pull-ignores-hide-docs-and-reports-it-once ()
   (zwanenzang-test-with-scope (trk buf (replace-regexp-in-string
-                                        ":ZWANENZANG_HIDE_DOCS: status"
-                                        ":ZWANENZANG_HIDE_DOCS: status description"
+                                        ":END:" ":ZWANENZANG_HIDE_DOCS: status description\n:END:"
                                         zwanenzang-test--org t t))
     (let ((id (zwanenzang-test-create trk "Ticket")))
       (zwanenzang-test-set-doc trk id "description" "Shown\n")
+      (zwanenzang-test-set-doc trk id "status" "Agent summary\n")
       (zwanenzang-test-clear-report)
       (zwanenzang-test-pull)
       (let ((entry (zwanenzang-test-entry id)))
-        (should-not (string-match-p "ZWANENZANG_HIDDEN\\|zwanenzang:" entry))
-        (should (string-match-p "\nShown\n\\'" entry)))
-      (should (string-match-p "the description cannot be hidden; ignored"
-                              (zwanenzang-test-report))))))
+        (should (string-match-p "\nShown\n:ZWANENZANG_DOCUMENTS:\n" entry))
+        (should (string-match-p (regexp-quote (format "[[zwanenzang:%s/status][status]]" id))
+                                entry)))
+      (should (string-match-p "ZWANENZANG_HIDE_DOCS is ignored" (zwanenzang-test-report)))
+      (zwanenzang-test-clear-report)
+      (should (string-match-p ": nothing changed\\'" (zwanenzang-test-pull)))
+      (should-not (string-match-p "HIDE_DOCS" (zwanenzang-test-report)))
+      ;; The property is the human's: it stays.
+      (should (org-entry-get (save-excursion (goto-char (point-min)) (outline-next-heading) (point))
+                             "ZWANENZANG_HIDE_DOCS")))))
+
+(ert-deftest zwanenzang-pull-replaces-the-legacy-hidden-drawer ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-set-doc trk id "status" "Agent summary\n")
+      (zwanenzang-test-pull)
+      (save-excursion
+        (zwanenzang-test-goto id)
+        (zwanenzang--write-body
+         (replace-regexp-in-string
+          ":ZWANENZANG_DOCUMENTS:\n\\(?:.*\n\\)*?:END:\n"
+          (format ":ZWANENZANG_HIDDEN:\n[[zwanenzang:%s/status][status (hidden)]]\n:END:\n" id)
+          (zwanenzang--body) t t)))
+      (should (string-match-p "ZWANENZANG_HIDDEN" (zwanenzang-test-entry id)))
+      (zwanenzang-test-pull)
+      (let ((entry (zwanenzang-test-entry id)))
+        (should-not (string-match-p "ZWANENZANG_HIDDEN\\|(hidden)" entry))
+        (should (= 1 (with-temp-buffer
+                       (insert entry)
+                       (how-many ":ZWANENZANG_DOCUMENTS:" (point-min) (point-max)))))))))
 
 (ert-deftest zwanenzang-pull-after-reset-compares-in-full-without-duplicate-comments ()
   ;; An event that sorts before one already pulled arrives later, as a

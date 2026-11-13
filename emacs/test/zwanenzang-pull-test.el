@@ -369,7 +369,7 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
   (should (equal (zwanenzang--compose-body
                   zwanenzang-test--body
                   '(("ZWANENZANG_COMMENTS" . "[ts] b:\nnew\n")
-                    ("ZWANENZANG_HIDDEN" . nil)
+                    ("ZWANENZANG_DOCUMENTS" . nil)
                     ("ZWANENZANG_CONFLICT" . "- x\n"))
                   "* new text\n")
                  (concat "SCHEDULED: <2026-11-07 Sat>\n"
@@ -392,7 +392,7 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
   ;; The layout of earlier versions: the client's drawers above the text.
   (let ((old (concat ":PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"
                      ":ZWANENZANG_COMMENTS:\n[ts] a:\n  : hi\n:END:\n"
-                     ":ZWANENZANG_HIDDEN:\n[[zwanenzang:X/s][s (hidden)]]\n:END:\n"
+                     ":ZWANENZANG_DOCUMENTS:\n- [[zwanenzang:X/s][s]]\n:END:\n"
                      "Text\n")))
     (should (equal (zwanenzang--body-description old) "Text\n"))
     ;; Even when only another drawer is being written.
@@ -401,7 +401,7 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
                            ":ZWANENZANG_CONFLICT:\n- x\n:END:\n"
                            "Text\n"
                            ":ZWANENZANG_COMMENTS:\n[ts] a:\n  : hi\n:END:\n"
-                           ":ZWANENZANG_HIDDEN:\n[[zwanenzang:X/s][s (hidden)]]\n:END:\n")))))
+                           ":ZWANENZANG_DOCUMENTS:\n- [[zwanenzang:X/s][s]]\n:END:\n")))))
 
 (ert-deftest zwanenzang-written-description-reads-back-unchanged ()
   (let* ((text "Intro\n* not a heading\n:END:\n#+TITLE: no\n:DRAWER:\nx\n:END:\n\nend\n")
@@ -611,13 +611,6 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
       (should (equal (zwanenzang--comments-content pull ticket) expected))
       (should (equal ticket before)))))
 
-(ert-deftest zwanenzang-hidden-documents-render-as-links ()
-  (let ((pull (zwanenzang--pull-create :hidden '("status" "plan" "absent"))))
-    (should (equal (zwanenzang--hidden-content
-                    pull '((id . "01T") (documents (status (current . "V1"))
-                                                   (plan (current . :null)))))
-                   "[[zwanenzang:01T/status][status (hidden)]]\n"))))
-
 (defun zwanenzang-test--known (&rest summaries)
   "A hash table from id to each of SUMMARIES, as pull's known tickets."
   (let ((known (make-hash-table :test #'equal)))
@@ -674,19 +667,43 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
                           ":ZWANENZANG_COMMENTS:\nc\n:END:\n")
                   '(("ZWANENZANG_RELATIONS" . "- Related\n")
                     ("ZWANENZANG_CODE" . "- MRs\n")
-                    ("ZWANENZANG_HIDDEN" . "h\n")
+                    ("ZWANENZANG_DOCUMENTS" . "h\n")
                     ("ZWANENZANG_CONFLICT" . "- x\n")))
                  (concat ":PROPERTIES:\n:A: 1\n:END:\n"
                          ":ZWANENZANG_CONFLICT:\n- x\n:END:\n"
                          "Text\n"
                          ":ZWANENZANG_COMMENTS:\nc\n:END:\n"
-                         ":ZWANENZANG_HIDDEN:\nh\n:END:\n"
+                         ":ZWANENZANG_DOCUMENTS:\nh\n:END:\n"
                          ":ZWANENZANG_RELATIONS:\n- Related\n:END:\n"
                          ":ZWANENZANG_CODE:\n- MRs\n:END:\n")))
   ;; Text written below a link drawer stays text, ahead of the tail.
   (should (equal (zwanenzang--body-description
                   ":ZWANENZANG_RELATIONS:\n- Related\n:END:\nMine\n")
                  "Mine\n")))
+
+(ert-deftest zwanenzang-documents-content-links-current-versions ()
+  (let ((pull (zwanenzang--pull-create :actors '((A1 . "Alice")))))
+    (should (equal (zwanenzang--documents-content
+                    pull
+                    '((id . "T")
+                      (documents
+                       (description (current . "D1")
+                                    (versions ((id . "D1") (actor . "A1") (ts . "2026-11-01T10:00:00Z"))))
+                       (notes (current . :null) (versions))
+                       (plan (current . "P2")
+                             (versions ((id . "P1") (actor . "A1") (ts . "2026-11-02T10:00:00Z"))
+                                       ((id . "P2") (actor . "BOT0123456789") (ts . "2026-11-03T10:00:00Z")))))))
+                   "- [[zwanenzang:T/plan][plan]] 2026-11-03 BOT0123456\n"))
+    (should (equal (zwanenzang--documents-content pull '((id . "T") (documents))) ""))))
+
+(ert-deftest zwanenzang-compose-body-drops-the-legacy-hidden-drawer ()
+  (should (equal (zwanenzang--compose-body
+                  (concat ":PROPERTIES:\n:A: 1\n:END:\nText\n"
+                          ":ZWANENZANG_HIDDEN:\n[[zwanenzang:X/s][s (hidden)]]\n:END:\n")
+                  '(("ZWANENZANG_DOCUMENTS" . "- [[zwanenzang:X/s][s]]\n")
+                    ("ZWANENZANG_HIDDEN")))
+                 (concat ":PROPERTIES:\n:A: 1\n:END:\nText\n"
+                         ":ZWANENZANG_DOCUMENTS:\n- [[zwanenzang:X/s][s]]\n:END:\n"))))
 
 (ert-deftest zwanenzang-shown-state-ignores-link-drawers ()
   (zwanenzang-test-with-org
