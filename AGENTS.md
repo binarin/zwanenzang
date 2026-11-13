@@ -28,9 +28,13 @@ of implementer and reviewer agents over its tickets follows
 
 For work on this project:
 
-- Use `doing` while implementing or addressing review feedback.
-- Move the ticket to `review` when its merge request is ready for human review,
-  and record the merge request link on the ticket.
+- Work only on tickets tagged `ready_for_agent`, whatever their status. Only
+  the human adds or removes that tag; it stays through `agnt`, `wait` and
+  `revw`.
+- Use `agnt` while implementing or addressing review feedback.
+- Move the ticket to `revw` and tag it `needs_human` when its merge request is
+  ready for human review, and record the merge request link on the ticket.
+- When you need an answer from the human, use `wait` and tag `needs_human`.
 - Mark it `done` only after confirming the merge request was merged, or when
   the human explicitly instructs you to do so. Implementation complete and
   passing tests alone do not mean the ticket is done.
@@ -46,7 +50,7 @@ actionable step, not merely report its status. Explicit investigation-only,
 read-only or other limits in the current request still apply. This convention
 does not authorize merging, bypassing review, or starting other agents.
 
-- Use `doing` while investigating as well as implementing. Read the current
+- Use `agnt` while investigating as well as implementing. Read the current
   implementation brief before treating historical comments as instructions.
 - Ask about unresolved decisions that materially affect scope, human-facing
   behavior, compatibility or explicit project constraints. Do not invent
@@ -55,7 +59,7 @@ does not authorize merging, bypassing review, or starting other agents.
   record consequential choices and test them. An investigation need not
   prescribe every technical detail before implementation can start.
 - When a human resolves a blocker, update the brief and continue with the
-  next authorized step without asking for another start signal. A `blocked`
+  next authorized step without asking for another start signal. A `wait`
   status is not by itself an instruction to remain idle: check its recorded
   unblock condition. If uncertainty remains, ask one focused question with
   a recommendation and explain what can proceed meanwhile.

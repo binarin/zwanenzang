@@ -17,8 +17,8 @@
           "* Project\n"
           ":PROPERTIES:\n"
           ":ZWANENZANG: %s\n"
-          ":ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing,review WAIT=blocked"
-          " DONE=done CNCL=cancelled\n"
+          ":ZWANENZANG_KEYWORDS: TODO=next,todo NEXT=agnt,revw WAIT=wait"
+          " DONE=done CNCL=cncl\n"
           ":ZWANENZANG_HIDE_DOCS: status\n"
           ":END:\n")
   "An Org file with one scope; %s is the tracker.")
@@ -136,8 +136,8 @@
 (ert-deftest zwanenzang-pull-discovers-tickets-with-state ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let* ((parent (zwanenzang-test-create trk "Parent" "--tag" "alpha"))
-           (child (zwanenzang-test-create trk "Child" "--parent" parent "--status" "doing"))
-           (lone (zwanenzang-test-create trk "Lone" "--status" "review")))
+           (child (zwanenzang-test-create trk "Child" "--parent" parent "--status" "agnt"))
+           (lone (zwanenzang-test-create trk "Lone" "--status" "revw")))
       (zwanenzang-test-cli trk "comment" parent "first\n* starred\n:END:")
       (zwanenzang-test-cli trk "comment" parent "second")
       (zwanenzang-test-set-doc trk parent "description" "Intro\n* not a heading\n")
@@ -151,10 +151,10 @@
       (should (equal (zwanenzang-test-parent-heading parent) "Inbox"))
       (should (equal (zwanenzang-test-parent-heading child) "Parent"))
       (should (equal (zwanenzang-test-parent-heading lone) "Inbox"))
-      ;; A draft is shown as TODO and remembered as draft.
+      ;; A todo is shown as TODO and remembered as todo, not next.
       (should (string-match-p "\\`\\*\\*\\* TODO Parent +:alpha:\\'"
                               (zwanenzang-test-heading parent)))
-      (should (string-match-p "status=draft " (zwanenzang-test-property parent "ZWANENZANG_SYNC")))
+      (should (string-match-p "status=todo " (zwanenzang-test-property parent "ZWANENZANG_SYNC")))
       (should (string-prefix-p "**** NEXT Child" (zwanenzang-test-heading child)))
       (should (string-prefix-p "*** NEXT Lone" (zwanenzang-test-heading lone)))
       (should (equal (zwanenzang-test-property parent "ZWANENZANG_NUMBER") "ZZ-1"))
@@ -295,7 +295,7 @@
 
 (ert-deftest zwanenzang-pull-keeps-local-edits-and-records-conflicts ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
-    (let ((id (zwanenzang-test-create trk "Base" "--status" "todo")))
+    (let ((id (zwanenzang-test-create trk "Base" "--status" "next")))
       (zwanenzang-test-set-doc trk id "description" "Base text\n")
       (zwanenzang-test-set-doc trk id "plan" "Base plan\n")
       (zwanenzang-test-pull)
@@ -309,7 +309,7 @@
         (replace-match "My plan"))
       ;; Tracker: the same fields, and the status.
       (zwanenzang-test-cli trk "title" id "Theirs")
-      (zwanenzang-test-cli trk "status" id "doing")
+      (zwanenzang-test-cli trk "status" id "agnt")
       (zwanenzang-test-set-doc trk id "description" "Their text\n")
       (zwanenzang-test-set-doc trk id "plan" "Their plan\n")
       (zwanenzang-test-clear-report)
@@ -446,18 +446,18 @@
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
     (let ((id (zwanenzang-test-create trk "Draft")))
       (zwanenzang-test-pull)
-      (should (string-match-p "status=draft " (zwanenzang-test-property id "ZWANENZANG_SYNC")))
+      (should (string-match-p "status=todo " (zwanenzang-test-property id "ZWANENZANG_SYNC")))
       (save-excursion
         (zwanenzang-test-goto id)
         (zwanenzang--set-heading nil "Draft" nil)
         (goto-char (point-min))
         (outline-next-heading)
         (org-entry-put nil "ZWANENZANG_KEYWORDS"
-                       "TODO=todo NEXT=doing,review WAIT=blocked DONE=done CNCL=cancelled"))
-      (zwanenzang-test-cli trk "status" id "todo")
+                       "TODO=next NEXT=agnt,revw WAIT=wait DONE=done CNCL=cncl"))
+      (zwanenzang-test-cli trk "status" id "next")
       (zwanenzang-test-pull)
       (should (string-match-p "\\`\\*\\*\\* Draft +:zz_conflict:\\'" (zwanenzang-test-heading id)))
-      (should (string-match-p "- status: tracker has todo (TODO); Org keyword kept"
+      (should (string-match-p "- status: tracker has next (TODO); Org keyword kept"
                               (zwanenzang-test-entry id))))))
 
 (ert-deftest zwanenzang-pull-keeps-archive-tag-and-ignores-tag-order ()
@@ -476,7 +476,7 @@
       (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
       (should (equal (zwanenzang-test-property id "ZWANENZANG_SYNC")
                      (zwanenzang--format-sync
-                      `((status . "draft") (title . ,(zwanenzang--hash "New"))
+                      `((status . "todo") (title . ,(zwanenzang--hash "New"))
                         (priority . "-1")
                         (tags . ,(zwanenzang--tags-hash '("a" "b" "c")))
                         (depends . ,(zwanenzang--tags-hash nil))
@@ -570,13 +570,13 @@
 (ert-deftest zwanenzang-pull-blocks-statuses-without-a-keyword ()
   (zwanenzang-test-with-scope (trk buf (concat "#+TODO: TODO NEXT | DONE\n"
                                                "* Project\n:PROPERTIES:\n:ZWANENZANG: %s\n"
-                                               ":ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing"
-                                               " DONE=done,cancelled,review\n:END:\n"))
+                                               ":ZWANENZANG_KEYWORDS: TODO=next,todo NEXT=agnt"
+                                               " DONE=done,cncl,revw\n:END:\n"))
     (let ((known (zwanenzang-test-create trk "Known"))
-          (waiting (zwanenzang-test-create trk "Waiting" "--status" "blocked")))
+          (waiting (zwanenzang-test-create trk "Waiting" "--status" "wait")))
       (zwanenzang-test-clear-report)
       (zwanenzang-test-pull)
-      (should (string-match-p "keyword map: status blocked has no keyword"
+      (should (string-match-p "keyword map: status wait has no keyword"
                               (zwanenzang-test-report)))
       (should (string-match-p "Waiting: not inserted" (zwanenzang-test-report)))
       (should-not (org-find-property "ZWANENZANG_ID" waiting))
@@ -586,18 +586,18 @@
       ;; Model an existing pre-upgrade heading without a standard Org ID.
       (zwanenzang-test-goto known)
       (org-entry-delete nil "ID")
-      (zwanenzang-test-cli trk "status" known "blocked")
+      (zwanenzang-test-cli trk "status" known "wait")
       (zwanenzang-test-pull)
       (should-not (zwanenzang-test-property known "ID"))
       (should (member zwanenzang-conflict-tag (zwanenzang-test-tags known)))
       (should (string-prefix-p "*** TODO Known" (zwanenzang-test-heading known)))
-      (should (string-match-p "status: tracker status blocked has no keyword"
+      (should (string-match-p "status: tracker status wait has no keyword"
                               (zwanenzang-test-entry known)))
       (save-excursion
         (goto-char (point-min))
         (outline-next-heading)
         (org-entry-put nil "ZWANENZANG_KEYWORDS"
-                       "TODO=todo,draft NEXT=doing,blocked DONE=done,cancelled,review"))
+                       "TODO=next,todo NEXT=agnt,wait DONE=done,cncl,revw"))
       (zwanenzang-test-pull)
       (should (string-prefix-p "*** NEXT Known" (zwanenzang-test-heading known)))
       (should (zwanenzang-test-property known "ID"))

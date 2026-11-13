@@ -80,8 +80,8 @@ fn creations_references_and_results_survive_interleaved_noops() {
         p,
         json!([
             {"op":"create", "data":{"title":"Synthetic parent"}},
-            {"op":"status", "ticket":{"created":0}, "data":{"to":"draft"}},
-            {"op":"create", "data":{"title":"Synthetic child", "kind":"task", "status":"todo"}},
+            {"op":"status", "ticket":{"created":0}, "data":{"to":"todo"}},
+            {"op":"create", "data":{"title":"Synthetic child", "kind":"task", "status":"next"}},
             {"op":"parent", "ticket":{"created":2}, "data":{"to":{"created":0}}},
             {"op":"relate", "ticket":{"created":0}, "data":{"to":{"created":2}}},
             {"op":"doc", "ticket":{"created":2}, "data":{"name":"description", "text":"Synthetic text", "base":null}},
@@ -244,9 +244,9 @@ fn empty_and_all_noop_batches_do_not_commit_or_sync() {
     let out = apply(
         p,
         json!([
-            {"op":"status","ticket":"zz-1","data":{"to":"draft"}},
+            {"op":"status","ticket":"zz-1","data":{"to":"todo"}},
             {"op":"title","ticket":id(&ticket),"data":{"to":"Synthetic ticket"}},
-            {"op":"status","ticket":ticket["ticket"]["short_id"].as_str().unwrap().to_ascii_lowercase(),"data":{"to":"draft"}}
+            {"op":"status","ticket":ticket["ticket"]["short_id"].as_str().unwrap().to_ascii_lowercase(),"data":{"to":"todo"}}
         ]),
     );
     assert_eq!(out["written"], false);
@@ -264,11 +264,11 @@ fn malformed_requests_references_and_unsupported_operations_fail_atomically() {
         json!({}),
         json!({"changes":[],"extra":true}),
         json!({"changes":[{"op":"create","ticket":"ZZ-1","data":{"title":"Synthetic"}}]}),
-        json!({"changes":[{"op":"status","data":{"to":"todo"}}]}),
+        json!({"changes":[{"op":"status","data":{"to":"next"}}]}),
         json!({"changes":[{"op":"create","data":{"title":"Synthetic","extra":1}}]}),
         json!({"changes":[{"op":"create","data":{"title":"Synthetic"},"extra":1}]}),
         json!({"changes":[{"op":"number","ticket":"ZZ-1","data":{"number":2}}]}),
-        json!({"changes":[{"op":"status","ticket":{"created":0},"data":{"to":"todo"}},{"op":"create","data":{"title":"Later"}}]}),
+        json!({"changes":[{"op":"status","ticket":{"created":0},"data":{"to":"next"}},{"op":"create","data":{"title":"Later"}}]}),
         json!({"changes":[{"op":"create","data":{"title":"Synthetic"}},{"op":"parent","ticket":{"created":0},"data":{}}]}),
         json!({"changes":[{"op":"create","data":{"title":"Synthetic"}},{"op":"kind","ticket":{"created":0},"data":{}}]}),
     ] {
@@ -346,7 +346,7 @@ fn unarchive_in_a_batch_keeps_positions_for_noops_and_refuses_tombstones() {
     let p = d.path();
     let a = id(&ok(p, &["create", "Synthetic A"]));
     let b = id(&ok(p, &["create", "Synthetic B"]));
-    ok(p, &["status", &a, "doing"]);
+    ok(p, &["status", &a, "agnt"]);
     ok(p, &["archive", &a]);
     let out = apply(
         p,
@@ -367,7 +367,7 @@ fn unarchive_in_a_batch_keeps_positions_for_noops_and_refuses_tombstones() {
     assert_eq!(written, vec![false, true, false, true, true]);
     let shown = ok(p, &["show", &a]);
     assert_eq!(shown["archived"], false);
-    assert_eq!(shown["status"], "doing");
+    assert_eq!(shown["status"], "agnt");
     assert_eq!(ok(p, &["show", &b])["archived"], false);
 
     refuses(

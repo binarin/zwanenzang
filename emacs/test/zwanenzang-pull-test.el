@@ -502,35 +502,58 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
 ;;;; Keyword map
 
 (ert-deftest zwanenzang-keyword-map-shares-keywords-and-reports-gaps ()
-  (let ((statuses '("draft" "todo" "doing" "blocked" "done"))
+  (let ((statuses '("todo" "next" "agnt" "wait" "done"))
         (keywords '("TODO" "NEXT" "DONE")))
-    (should (equal (zwanenzang--keyword-map "TODO=todo,draft NEXT=doing DONE=done,blocked"
+    (should (equal (zwanenzang--keyword-map "TODO=next,todo NEXT=agnt DONE=done,wait"
                                             statuses keywords)
-                   '((("todo" . "TODO") ("draft" . "TODO") ("doing" . "NEXT")
-                      ("done" . "DONE") ("blocked" . "DONE")))))
+                   '((("next" . "TODO") ("todo" . "TODO") ("agnt" . "NEXT")
+                      ("done" . "DONE") ("wait" . "DONE")))))
     (should (equal (zwanenzang--keyword-map
-                    "TODO=todo,draft NEXT=doing,todo WAIT=blocked DONE=done,nope bad"
+                    "TODO=next,todo NEXT=agnt,next WAIT=wait DONE=done,nope bad"
                     statuses keywords)
-                   '((("todo" . "TODO") ("draft" . "TODO") ("doing" . "NEXT") ("done" . "DONE"))
-                     "keyword map: status todo has two keywords, TODO and NEXT"
+                   '((("next" . "TODO") ("todo" . "TODO") ("agnt" . "NEXT") ("done" . "DONE"))
+                     "keyword map: status next has two keywords, TODO and NEXT"
                      "keyword map: WAIT is not a TODO keyword in this buffer"
                      "keyword map: nope is not a tracker status"
                      "keyword map: malformed entry bad"
-                     "keyword map: status blocked has no keyword")))))
+                     "keyword map: status wait has no keyword")))))
 
 (ert-deftest zwanenzang-keyword-map-defaults-to-same-names ()
-  (should (equal (zwanenzang--keyword-map nil '("todo" "doing" "done") '("TODO" "WAIT" "DONE"))
+  (should (equal (zwanenzang--keyword-map nil '("todo" "agnt" "done") '("TODO" "WAIT" "DONE"))
                  '((("todo" . "TODO") ("done" . "DONE"))
-                   "keyword map: status doing has no keyword"))))
+                   "keyword map: status agnt has no keyword"))))
+
+(ert-deftest zwanenzang-keyword-map-covers-the-default-vocabulary ()
+  ;; The default statuses are the lowercased global Org keywords: no
+  ;; ZWANENZANG_KEYWORDS needed, nothing left out.
+  (should (equal (zwanenzang--keyword-map
+                  nil '("todo" "next" "wait" "agnt" "revw" "done" "cncl")
+                  '("TODO" "NEXT" "WAIT" "AGNT" "REVW" "DONE" "CNCL"))
+                 '((("todo" . "TODO") ("next" . "NEXT") ("wait" . "WAIT") ("agnt" . "AGNT")
+                    ("revw" . "REVW") ("done" . "DONE") ("cncl" . "CNCL"))))))
+
+(ert-deftest zwanenzang-keyword-map-retired-statuses-need-no-keyword ()
+  (let ((statuses '("todo" "agnt" "done" "draft" "doing"))
+        (keywords '("TODO" "AGNT" "DONE")))
+    ;; Without a keyword a retired status is not a scope problem.
+    (should (equal (zwanenzang--keyword-map nil statuses keywords '("draft" "doing"))
+                   '((("todo" . "TODO") ("agnt" . "AGNT") ("done" . "DONE")))))
+    ;; A keyword shared with a retired status maps back to the current one,
+    ;; whatever the order in the spec.
+    (let ((map (car (zwanenzang--keyword-map "TODO=draft,todo AGNT=doing,agnt DONE=done"
+                                             statuses keywords '("draft" "doing")))))
+      (should (equal (car (rassoc "TODO" map)) "todo"))
+      (should (equal (car (rassoc "AGNT" map)) "agnt"))
+      (should (equal (cdr (assoc "doing" map)) "AGNT")))))
 
 ;;;; Sync state and decisions
 
 (ert-deftest zwanenzang-sync-state-round-trips ()
-  (let ((alist (zwanenzang--parse-sync "status=draft title=abc tags=def parent=- nest=P")))
-    (should (equal alist '((status . "draft") (title . "abc") (tags . "def")
+  (let ((alist (zwanenzang--parse-sync "status=todo title=abc tags=def parent=- nest=P")))
+    (should (equal alist '((status . "todo") (title . "abc") (tags . "def")
                            (parent . nil) (nest . "P"))))
     (should (equal (zwanenzang--format-sync alist)
-                   "status=draft title=abc tags=def parent=- nest=P"))
+                   "status=todo title=abc tags=def parent=- nest=P"))
     (should (eq (zwanenzang--sync-get alist 'parent) nil))
     (should (eq (zwanenzang--sync-get (zwanenzang--parse-sync nil) 'title) :unknown))))
 

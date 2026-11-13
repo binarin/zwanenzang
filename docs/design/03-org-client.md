@@ -63,7 +63,7 @@ Mapping between heading and ticket:
 | heading title | title |
 | nesting under another ticket heading | parent |
 | nesting under a non-ticket heading | nothing |
-| tags | tags, optionally filtered by a per-tracker allowlist |
+| tags | tags (all of them; a per-tracker allowlist is not pursued, since local-only tags are not expected in tracker trees) |
 | body text before the first subheading | document `description` |
 | subheadings marked with a document property | named documents |
 | a read-only drawer or subtree | comments, newest first |
@@ -75,8 +75,17 @@ The map between TODO keywords and statuses lives in org, on the scope root,
 because the keywords are the human's: `#+TODO` lines and `org-todo-keywords`
 differ between people and files, and the tracker's vocabulary does not.
 
+The default vocabulary (see [01-data-model](01-data-model.md)) is the
+human's global Org keywords lowercased, `todo next wait agnt revw done
+cncl` for `TODO NEXT WAIT AGNT REVW DONE CNCL`, so the human's scopes need
+no map: the same-name rule below covers every status. AGNT and REVW are
+global keywords in the human's Org configuration, a separate sequence of
+active states (`AGNT REVW |`), not a per-file `#+TODO` line, because
+ticket headings move between scope files. A map is for other keyword
+sets, for example:
+
 ```
-:ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing,review WAIT=blocked DONE=done CNCL=cancelled
+:ZWANENZANG_KEYWORDS: TODO=todo NEXT=next,agnt WAIT=wait,revw DONE=done CNCL=cncl
 ```
 
 - Each entry is `KEYWORD=status[,status...]`. The first status is what a
@@ -85,8 +94,8 @@ differ between people and files, and the tracker's vocabulary does not.
   keyword, and every status in the tracker's vocabulary must appear exactly
   once; doctor reports a status with no keyword or with two.
 - A status is pushed only when the keyword changed since the heading's sync
-  state. A ticket pulled as `draft` shows TODO and stays `draft` until the
-  human actually changes its keyword.
+  state. With the map above, a ticket pulled as `agnt` shows NEXT and stays
+  `agnt` until the human actually changes its keyword.
 - Without the property, a keyword maps to the status of the same name,
   ignoring case, and nothing else is mapped.
 - An unmapped keyword blocks that heading's push: the heading gets the
@@ -96,6 +105,18 @@ differ between people and files, and the tracker's vocabulary does not.
   heading counts as unmapped too.
 - A pulled status the map does not cover (the vocabulary grew, say) is
   treated the same way, on that heading only.
+- Retired statuses (`read`'s `tracker.retired_statuses`) need no keyword,
+  so a map or same-name rule that leaves them out is no scope problem; a
+  ticket still in one is blocked on its heading like any unmapped status
+  until it moves to a current status. A retired status may still share a
+  keyword: it is listed after the current statuses, so that keyword
+  pushes the current status. A keyword mapped only to a retired status
+  pushes it, and the CLI refuses the push with `retired-status`.
+- Status changes the client writes (pull, and the comment commands) edit
+  the keyword textually, without Org's state-change logging: no LOGBOOK
+  entry or CLOSED line, because tracker history is the record. A keyword
+  change the human makes with `C-c C-t` logs as Org normally does, note
+  prompts included.
 
 Terminal statuses are the ones mapped from org's done-state keywords (those
 after `|`), so the tracker needs no list of its own.
@@ -441,9 +462,9 @@ standard Org `ID` is only filled in when missing, as described above.
 - Ticket heading: `ZWANENZANG_ID` (ULID), `ZWANENZANG_NUMBER` (display
   form, such as `ZZ-42`), `ZWANENZANG_CURSOR`, `ZWANENZANG_SYNC`, `ZWANENZANG_DESC_VERSION`
   and `ZWANENZANG_DESC_HASH`. `ZWANENZANG_SYNC` is a compact snapshot of
-  the last synced fields, for example `status=draft title=<hash>
+  the last synced fields, for example `status=agnt title=<hash>
   tags=<hash> depends=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
-  stores the tracker status, so a draft shown as TODO stays draft.
+  stores the tracker status, so an `agnt` shown as NEXT stays `agnt`.
 - Named document: a subheading with `ZWANENZANG_DOC: <name>`,
   `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`. `ZWANENZANG_DOC_FORMAT`
   set to `org-src-v1` identifies its literal source-block body (not tracker
@@ -559,7 +580,8 @@ tracker.
 - Tracker identity: the first pull records `ZWANENZANG_TRACKER`; a read
   that returns another id blocks the whole scope and changes nothing.
 - Keyword map: parsed against `read`'s `statuses`. A status with no
-  keyword or with two is reported (the first keyword is used). An entry
+  keyword (unless retired) or with two is reported (the first keyword is
+  used). An entry
   naming a keyword the buffer does not define, or a status outside the
   vocabulary, is reported and ignored. Without the property, each TODO
   keyword maps the status of the same name, ignoring case.
@@ -569,8 +591,8 @@ tracker.
   both changed, Org's value stays, the heading gets `zz_conflict` and
   the skipped remote value goes in the conflict drawer. A field with no
   recorded sync state counts as changed on both sides unless the values
-  agree. Status is compared as keywords, through the map, so a draft
-  shown as TODO stays draft; a synced status the map no longer covers
+  agree. Status is compared as keywords, through the map, so an `agnt`
+  shown as NEXT stays `agnt`; a synced status the map no longer covers
   counts as unknown. Tags exclude `zz_conflict` and Org's
   `ARCHIVE`, which are never tracker tags.
 - The conflict drawer and tag are recomputed by every pull: they hold

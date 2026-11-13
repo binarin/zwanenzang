@@ -137,13 +137,13 @@ fn ulid_order_across_logs_not_file_order() {
         &t,
         &[
             ev(u(40), ACTOR_A, Some(u(30)), u(T1), status("done")),
-            ev(u(20), ACTOR_A, p, u(T1), status("todo")),
+            ev(u(20), ACTOR_A, p, u(T1), status("next")),
         ],
     );
     append_events(
         &t,
         &[
-            ev(u(30), ACTOR_B, Some(u(20)), u(T1), status("doing")),
+            ev(u(30), ACTOR_B, Some(u(20)), u(T1), status("agnt")),
             ev(
                 u(25),
                 ACTOR_B,
@@ -175,14 +175,14 @@ fn same_event_set_same_output() {
             ACTOR_B,
             Some(u(BASE_LAST)),
             u(T1),
-            status("doing"),
+            status("agnt"),
         ));
         evs.push(ev(
             u(21),
             ACTOR_A,
             Some(u(BASE_LAST)),
             u(T1),
-            status("blocked"),
+            status("wait"),
         ));
         evs.push(ev(
             u(22),
@@ -232,13 +232,13 @@ fn conflicting_lines_with_one_id_are_all_skipped() {
     append_events(
         &t,
         &[
-            ev(u(20), ACTOR_A, Some(u(BASE_LAST)), u(T1), status("doing")),
+            ev(u(20), ACTOR_A, Some(u(BASE_LAST)), u(T1), status("agnt")),
             ev(u(20), ACTOR_A, Some(u(BASE_LAST)), u(T1), status("done")),
         ],
     );
     let rp = load(&t);
     assert_eq!(skipped_codes(&rp), vec!["duplicate-id", "duplicate-id"]);
-    assert_eq!(rp.state.tickets[&u(T1)].status, "draft");
+    assert_eq!(rp.state.tickets[&u(T1)].status, "todo");
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn unknown_data_fields_are_tolerated() {
     let dir = disposable_dir();
     let t = based(&dir);
     let raw = format!(
-        r#"{{"id":"{}","actor":"{}","parent":"{}","ts":"x","entity":"{}","op":"status","data":{{"to":"doing","reason":"later field"}},"sig":"later envelope field"}}"#,
+        r#"{{"id":"{}","actor":"{}","parent":"{}","ts":"x","entity":"{}","op":"status","data":{{"to":"agnt","reason":"later field"}},"sig":"later envelope field"}}"#,
         u(20),
         ACTOR_A,
         u(BASE_LAST),
@@ -306,7 +306,7 @@ fn unknown_data_fields_are_tolerated() {
     append_raw(&t, &ACTOR_A.to_canonical(), &[raw]);
     let rp = load(&t);
     assert!(rp.skipped.is_empty(), "{:?}", rp.skipped);
-    assert_eq!(rp.state.tickets[&u(T1)].status, "doing");
+    assert_eq!(rp.state.tickets[&u(T1)].status, "agnt");
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn config_with_only_unknown_fields_is_accepted() {
     let dir = disposable_dir();
     let t = based(&dir);
     let raw = format!(
-        r#"{{"id":"{}","actor":"{}","parent":"{}","ts":"x","entity":"{}","op":"config","data":{{"rename_status":{{"draft":"idea"}}}}}}"#,
+        r#"{{"id":"{}","actor":"{}","parent":"{}","ts":"x","entity":"{}","op":"config","data":{{"rename_status":{{"todo":"idea"}}}}}}"#,
         u(20),
         ACTOR_A,
         u(BASE_LAST),
@@ -367,7 +367,7 @@ fn malformed_and_invalid_lines_skipped() {
 fn actor_must_match_log_name() {
     let dir = disposable_dir();
     let t = based(&dir);
-    let e = ev(u(20), ACTOR_B, Some(u(BASE_LAST)), u(T1), status("doing"));
+    let e = ev(u(20), ACTOR_B, Some(u(BASE_LAST)), u(T1), status("agnt"));
     append_raw(&t, &ACTOR_A.to_canonical(), &[e.to_line()]);
     append_raw(
         &t,
@@ -376,7 +376,7 @@ fn actor_must_match_log_name() {
     );
     let rp = load(&t);
     assert_eq!(skipped_codes(&rp), vec!["actor-mismatch", "actor-mismatch"]);
-    assert_eq!(rp.state.tickets[&u(T1)].status, "draft");
+    assert_eq!(rp.state.tickets[&u(T1)].status, "todo");
 }
 
 /// Events that every rule refuses, against the base fixture, with the code
@@ -420,14 +420,14 @@ pub fn invalid_ticket_ops(root: Ulid) -> Vec<(Ulid, Op, &'static str)> {
         (t1, Op::Relate(RelateData { to: t3 }), "target-tombstoned"),
         (t1, Op::Relate(RelateData { to: u(99) }), "unknown-target"),
         (t1, Op::Unrelate(RelateData { to: u(99) }), "unknown-target"),
-        (t3, status("doing"), "tombstoned"),
+        (t3, status("agnt"), "tombstoned"),
         (t3, Op::Tombstone(crate::event::Empty {}), "tombstoned"),
         (t3, Op::Archive(crate::event::Empty {}), "tombstoned"),
         (t3, Op::Unarchive(crate::event::Empty {}), "tombstoned"),
         (root, Op::Archive(crate::event::Empty {}), "wrong-entity"),
         (root, Op::Unarchive(crate::event::Empty {}), "wrong-entity"),
-        (u(99), status("doing"), "unknown-entity"),
-        (root, status("doing"), "wrong-entity"),
+        (u(99), status("agnt"), "unknown-entity"),
+        (root, status("agnt"), "wrong-entity"),
         (
             t1,
             Op::Actor(ActorData { name: "x".into() }),
@@ -567,7 +567,7 @@ fn replay_only_rules() {
             // so it is a mismatch too; a create of the root is wrong-entity.
             ev(u(22), a, Some(u(20)), root, create("x")),
             // An id that does not sort after its parent.
-            ev(u(23), a, Some(u(24)), u(T1), status("doing")),
+            ev(u(23), a, Some(u(24)), u(T1), status("agnt")),
             // A create with a status outside the vocabulary.
             ev(
                 u(25),
@@ -743,11 +743,11 @@ fn concurrent_field_changes_reported() {
         &t,
         &[
             // Concurrent, different values: reported.
-            ev(u(20), ACTOR_A, p, u(T1), status("doing")),
+            ev(u(20), ACTOR_A, p, u(T1), status("agnt")),
             ev(u(21), ACTOR_B, p, u(T1), status("done")),
             // Concurrent but the same value: nobody chose differently.
-            ev(u(22), ACTOR_A, Some(u(21)), u(T2), status("review")),
-            ev(u(23), ACTOR_B, Some(u(21)), u(T2), status("review")),
+            ev(u(22), ACTOR_A, Some(u(21)), u(T2), status("revw")),
+            ev(u(23), ACTOR_B, Some(u(21)), u(T2), status("revw")),
             // Causally ordered: B saw A's title.
             ev(
                 u(24),
@@ -844,7 +844,7 @@ fn concurrent_field_changes_reported() {
     assert_eq!(rp.state.tickets[&u(T1)].status, "done");
     let (report, issues) = lint(&t.config, &rp);
     assert!(issues);
-    assert_eq!(report["concurrent"][0]["earlier_value"], "doing");
+    assert_eq!(report["concurrent"][0]["earlier_value"], "agnt");
     assert_eq!(report["concurrent"][0]["later_value"], "done");
     assert_eq!(
         report["concurrent"][1]["later_value"],

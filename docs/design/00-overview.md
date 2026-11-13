@@ -25,7 +25,7 @@ owners. Process lives elsewhere.
 
 1. **Trusted metadata first, flexibility second.** The derived state of a
    tracker is always consistent and always explainable from its history.
-2. **The human may override anything.** A direct jump from draft to done is
+2. **The human may override anything.** A direct jump from todo to done is
    allowed; the history records it truthfully.
 3. **Org is the human's authority.** The Emacs side never loses a human edit
    to a machine edit. Conflicts are shown, not resolved silently.

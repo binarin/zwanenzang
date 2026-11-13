@@ -136,7 +136,7 @@ pub fn ev(id: Ulid, actor: Ulid, parent: Option<Ulid>, entity: Ulid, op: Op) -> 
 pub fn create(title: &str) -> Op {
     Op::Create(CreateData {
         title: title.into(),
-        status: "draft".into(),
+        status: "todo".into(),
         kind: None,
     })
 }

@@ -19,8 +19,8 @@
           "* Project\n"
           ":PROPERTIES:\n"
           ":ZWANENZANG: %s\n"
-          ":ZWANENZANG_KEYWORDS: TODO=todo,draft NEXT=doing,review DONE=done"
-          " CNCL=cancelled,blocked\n"
+          ":ZWANENZANG_KEYWORDS: TODO=next,todo NEXT=agnt,revw DONE=done"
+          " CNCL=cncl,wait\n"
           ":ZWANENZANG_HIDE_DOCS: status\n"
           ":END:\n")
   "An Org file with one scope; %s is the tracker.  WAIT has no status.")
@@ -100,7 +100,7 @@
 (ert-deftest zwanenzang-adopt-foreign-fetches-before-deciding-foreign ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
     (let* ((other (zwanenzang-test-clone net "other-test-repo"))
-           (created (zwanenzang-test-cli other "create" "Already exists" "--status" "todo"))
+           (created (zwanenzang-test-cli other "create" "Already exists" "--status" "next"))
            (id (alist-get 'id (alist-get 'ticket created))))
       ;; Org arrived before this clone fetched the corresponding ticket.
       (should-not (gethash id (zwanenzang--known-tickets trk)))
@@ -253,10 +253,10 @@
       (should parent)
       (should child)
       (should-not (zwanenzang-test-id-of "Just structure"))
-      (should (equal (alist-get 'status (zwanenzang-test-show trk parent)) "doing"))
+      (should (equal (alist-get 'status (zwanenzang-test-show trk parent)) "agnt"))
       (should (equal (alist-get 'tags (zwanenzang-test-show trk parent)) '("alpha")))
       (should (equal (zwanenzang-test--doc-text trk parent "description") "Parent text\n"))
-      (should (equal (alist-get 'status shown) "todo"))
+      (should (equal (alist-get 'status shown) "next"))
       (should (equal (alist-get 'parent shown) parent))
       (should (equal (zwanenzang-test--doc-text trk child "plan") "Plan text\n"))
       ;; The pull that ended the push landed numbers and sync state.
@@ -370,13 +370,13 @@
       (should (string-match-p "1 pushed" (zwanenzang-test-at-root #'zwanenzang-push)))
       (let ((shown (zwanenzang-test-show trk id)))
         (should (equal (alist-get 'title shown) "Mine"))
-        (should (equal (alist-get 'status shown) "doing"))
+        (should (equal (alist-get 'status shown) "agnt"))
         (should (equal (alist-get 'tags shown) '("new"))))
       (should (string-match-p "pushed ZZ-1 Mine: status, title, tags"
                               (zwanenzang-test-report)))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))
       (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
-      (should (string-match-p "status=doing " (zwanenzang-test-property id "ZWANENZANG_SYNC"))))))
+      (should (string-match-p "status=agnt " (zwanenzang-test-property id "ZWANENZANG_SYNC"))))))
 
 (ert-deftest zwanenzang-sync-human-wins-over-an-agents-concurrent-document ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
@@ -734,7 +734,7 @@
         (should (eq (alist-get 'archived (zwanenzang-test-show trk id)) t)))
       (should (equal (alist-get 'status (zwanenzang-test-show trk top)) "done"))
       (should (equal (alist-get 'title (zwanenzang-test-show trk top)) "Top"))
-      (should (equal (alist-get 'status (zwanenzang-test-show trk kid)) "cancelled"))
+      (should (equal (alist-get 'status (zwanenzang-test-show trk kid)) "cncl"))
       (should (eq (alist-get 'archived (zwanenzang-test-show trk other)) :false))
       ;; Ordinary pulls must not rediscover archived tickets.
       (zwanenzang-test-at-root #'zwanenzang-pull)
@@ -742,11 +742,11 @@
 
 (ert-deftest zwanenzang-archive-preserves-remote-done-status-unless-human-changed-it ()
   ;; Initial tracker status, remote change after pull, local keyword edit,
-  ;; expected closing status.  CNCL represents both cancelled and blocked.
-  (dolist (case '(("blocked" nil nil "blocked")
-                  ("draft" "cancelled" nil "cancelled")
-                  ("blocked" nil "DONE" "done")
-                  ("draft" "done" "CNCL" "cancelled")))
+  ;; expected closing status.  CNCL represents both cncl and wait.
+  (dolist (case '(("wait" nil nil "wait")
+                  ("todo" "cncl" nil "cncl")
+                  ("wait" nil "DONE" "done")
+                  ("todo" "done" "CNCL" "cncl")))
     (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
       (let ((id (zwanenzang-test-create trk "Ticket" "--status" (nth 0 case)))
             warnings)
@@ -822,7 +822,7 @@
       (zwanenzang-test-goto id)
       ;; The first done keyword is unmapped.  The hook must not guess.
       (org-entry-put (zwanenzang--scope-root) "ZWANENZANG_KEYWORDS"
-                     "TODO=todo,draft NEXT=doing,review CNCL=done,cancelled,blocked")
+                     "TODO=next,todo NEXT=agnt,revw CNCL=done,cncl,wait")
       (let ((before (zwanenzang-test-git trk "rev-parse" "HEAD")))
         (cl-letf (((symbol-function 'display-warning)
                    (lambda (&rest args) (push args warnings))))
@@ -905,7 +905,7 @@
       (zwanenzang-test-at-root #'zwanenzang-push)
       (let ((shown (zwanenzang-test-show trk id)))
         (should (eq (alist-get 'archived shown) :false))
-        (should (equal (alist-get 'status shown) "doing")))
+        (should (equal (alist-get 'status shown) "agnt")))
       (should-not (zwanenzang-test-property id "ARCHIVE_TIME"))
       (should-not (zwanenzang-test-property id "ARCHIVE_FILE"))
       (should-not (zwanenzang-test-property id "ARCHIVE_OLPATH"))
@@ -943,7 +943,7 @@
         (zwanenzang-unarchive))
       (should (eq (alist-get 'archived (zwanenzang-test-show trk top)) :false))
       (should (eq (alist-get 'archived (zwanenzang-test-show trk kid)) t))
-      (should (equal (alist-get 'status (zwanenzang-test-show trk top)) "draft"))
+      (should (equal (alist-get 'status (zwanenzang-test-show trk top)) "todo"))
       ;; Point in the body counts; the prefix takes the subtree too.
       (save-excursion
         (zwanenzang-test-goto kid)
@@ -1067,13 +1067,13 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
   (zwanenzang-test-with-remote-scope (net trk buf
                                           (concat "#+TODO: TODO | DONE\n"
                                                   "* Project\n:PROPERTIES:\n:ZWANENZANG: %s\n"
-                                                  ":ZWANENZANG_KEYWORDS: TODO=todo,draft DONE=done\n"
+                                                  ":ZWANENZANG_KEYWORDS: TODO=next,todo DONE=done\n"
                                                   ":END:\n"))
     (zwanenzang-test-clear-report)
     (should (string-match-p "see \\*zwanenzang\\*" (zwanenzang-test-at-root #'zwanenzang-push)))
     (with-temp-buffer
       (insert (zwanenzang-test-report))
-      (should (= 1 (how-many "keyword map: status doing has no keyword"
+      (should (= 1 (how-many "keyword map: status agnt has no keyword"
                              (point-min) (point-max)))))))
 
 (ert-deftest zwanenzang-push-sends-nothing-for-a-file-with-the-old-escaping ()
@@ -1331,6 +1331,67 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
       (zwanenzang-test-at-root #'zwanenzang-push)
       (should (equal (alist-get 'depends_on (zwanenzang-test-show trk a)) (list b)))
       (should-not (alist-get 'depends_on (zwanenzang-test-show trk b))))))
+
+(defun zwanenzang-test--retire (trk retired)
+  "Add RETIRED to the statuses of tracker TRK and retire them."
+  (zwanenzang-test-assert-disposable trk)
+  (let ((file (expand-file-name "zwanenzang.toml" trk)))
+    (with-temp-file file
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (re-search-forward "^statuses = \\[\\(.*\\)\\]$")
+      (replace-match (concat (match-string 1) ", "
+                             (mapconcat (lambda (s) (format "\"%s\"" s)) retired ", "))
+                     t t nil 1)
+      (re-search-forward "^retired_statuses = \\[\\(.*\\)\\]$")
+      (replace-match (mapconcat (lambda (s) (format "\"%s\"" s)) retired ", ") t t nil 1))))
+
+(ert-deftest zwanenzang-default-statuses-round-trip-without-a-keyword-map ()
+  (zwanenzang-test-with-remote-scope
+      (net trk buf (concat "#+TODO: TODO(t) NEXT(n!) WAIT(w!) | DONE(d!) CNCL(c!)\n"
+                           "#+TODO: AGNT(a!) REVW(r!) |\n"
+                           "* Project\n:PROPERTIES:\n:ZWANENZANG: %s\n:END:\n"))
+    (let* ((statuses '("todo" "next" "wait" "agnt" "revw" "done" "cncl"))
+           (ids (mapcar (lambda (s) (zwanenzang-test-create trk s "--status" s)) statuses))
+           (org-log-done 'time)
+           (org-log-into-drawer t))
+      ;; A tracker that retired old names: they are no scope problem.
+      (zwanenzang-test--retire trk '("doing"))
+      (zwanenzang-test-clear-report)
+      (zwanenzang-test-pull)
+      (should-not (string-match-p "keyword map\\|blocked\\|conflict" (zwanenzang-test-report)))
+      (cl-loop for id in ids for s in statuses
+               do (should (string-match-p (format "\\`\\*+ %s %s" (upcase s) s)
+                                          (zwanenzang-test-heading id))))
+      ;; Status changes arriving by pull are tracker history, not Org log.
+      (cl-loop for id in ids for s in (append (cdr statuses) (list (car statuses)))
+               do (zwanenzang-test-cli trk "status" id s))
+      (zwanenzang-test-pull)
+      (cl-loop for id in ids for s in (append (cdr statuses) (list (car statuses)))
+               do (should (string-match-p (format "\\`\\*+ %s " (upcase s))
+                                          (zwanenzang-test-heading id))))
+      (should-not (string-match-p ":LOGBOOK:\\|CLOSED:\\|State " (buffer-string)))
+      ;; Every keyword change pushes its status; nothing is blocked.
+      (cl-loop for id in ids for s in statuses
+               do (save-excursion (zwanenzang-test-goto id) (org-todo (upcase s))))
+      (zwanenzang-test-clear-report)
+      (should (string-match-p "7 pushed" (zwanenzang-test-at-root #'zwanenzang-push)))
+      (should-not (string-match-p "blocked\\|conflict\\|refused" (zwanenzang-test-report)))
+      (cl-loop for id in ids for s in statuses
+               do (should (equal (alist-get 'status (zwanenzang-test-show trk id)) s))))))
+
+(ert-deftest zwanenzang-push-of-a-retired-status-is-refused ()
+  (zwanenzang-test-with-remote-scope
+      (net trk buf (concat "#+TODO: TODO DOING | DONE\n"
+                           "* Project\n:PROPERTIES:\n:ZWANENZANG: %s\n:END:\n"))
+    (zwanenzang-test--retire trk '("doing"))
+    (let ((id (zwanenzang-test-create trk "Ticket")))
+      (zwanenzang-test-pull)
+      (save-excursion (zwanenzang-test-goto id) (org-todo "DOING"))
+      (should (string-match-p "retired-status: status \"doing\" is retired; choose one of todo, "
+                              (cadr (should-error (zwanenzang-test-at-root #'zwanenzang-push)
+                                                  :type 'user-error))))
+      (should (equal (alist-get 'status (zwanenzang-test-show trk id)) "todo")))))
 
 (provide 'zwanenzang-push-integration-test)
 ;;; zwanenzang-push-integration-test.el ends here

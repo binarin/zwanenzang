@@ -142,7 +142,7 @@
 
 (ert-deftest zwanenzang-document-migration-noop-and-edited-version ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
-                                     (let ((id (zwanenzang-test-create trk "Owner" "--status" "todo")))
+                                     (let ((id (zwanenzang-test-create trk "Owner" "--status" "next")))
                                        (zwanenzang-test-set-doc trk id "plan" zwanenzang-test--document-prose)
                                        (zwanenzang-test-pull)
                                        (zwanenzang-test-goto id)
@@ -176,7 +176,7 @@
 (ert-deftest zwanenzang-document-source-edit-publishes-one-decoded-version ()
   (save-window-excursion
     (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
-                                       (let ((id (zwanenzang-test-create trk "Owner" "--status" "todo")) edit)
+                                       (let ((id (zwanenzang-test-create trk "Owner" "--status" "next")) edit)
                                          (zwanenzang-test-set-doc trk id "plan" zwanenzang-test--document-prose)
                                          (zwanenzang-test-set-doc trk id "status" "* Hidden prose\n")
                                          (zwanenzang-test-pull)
@@ -213,7 +213,7 @@
 
 (ert-deftest zwanenzang-document-malformed-fence-cannot-create-fake-ticket ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
-                                     (let ((id (zwanenzang-test-create trk "Owner" "--status" "todo")))
+                                     (let ((id (zwanenzang-test-create trk "Owner" "--status" "next")))
                                        (zwanenzang-test-set-doc trk id "plan" "* TODO Fake ticket\n")
                                        (zwanenzang-test-pull)
                                        (zwanenzang-test-goto id)
@@ -260,7 +260,7 @@
 
 (ert-deftest zwanenzang-document-legacy-conflict-keeps-local-prose-and-base ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
-                                     (let ((id (zwanenzang-test-create trk "Owner" "--status" "todo")))
+                                     (let ((id (zwanenzang-test-create trk "Owner" "--status" "next")))
                                        (zwanenzang-test-set-doc trk id "plan" "* Base\n")
                                        (zwanenzang-test-pull)
                                        (zwanenzang-test-goto id)

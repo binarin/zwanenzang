@@ -61,7 +61,7 @@ fn first_write_declares_actor_then_never_again() {
     let dir = disposable_dir();
     let t = based(&dir);
     let mut c = FixedClock::new(1_000_000);
-    let w = write_one(&t, &mut c, u(T1), status("doing")).unwrap();
+    let w = write_one(&t, &mut c, u(T1), status("agnt")).unwrap();
     let ops: Vec<&str> = w.events.iter().map(|e| e.op.name()).collect();
     assert_eq!(ops, vec!["actor", "status"]);
     assert_eq!(
@@ -71,7 +71,7 @@ fn first_write_declares_actor_then_never_again() {
         })
     );
     assert_eq!(w.events[0].entity, t.config.id);
-    assert_eq!(w.primary().unwrap().op, status("doing"));
+    assert_eq!(w.primary().unwrap().op, status("agnt"));
     // Each event's parent is the highest id seen before it.
     assert_eq!(w.events[0].parent, Some(u(BASE_LAST)));
     assert_eq!(w.events[1].parent, Some(w.events[0].id));
@@ -198,7 +198,7 @@ fn created_target_names_the_new_ticket() {
     let n = &rp.state.tickets[&create_ev.id];
     assert_eq!(n.parent, Some(u(T1)));
     assert!(n.tags.contains("x"));
-    assert_eq!(n.status, "draft");
+    assert_eq!(n.status, "todo");
 }
 
 /// A plan that creates two tickets, relates them and makes the second a
@@ -244,7 +244,7 @@ fn plan_ref_before_its_create_is_refused() {
         Ok(Plan {
             ops: vec![
                 (Target::Nth(0), create("x")),
-                (Target::Nth(1), status("todo")),
+                (Target::Nth(1), status("next")),
             ],
             blobs: vec![],
             refs: vec![],
@@ -325,7 +325,7 @@ fn new_actor_gets_its_own_declared_log() {
     let t = based(&dir);
     let mut c = FixedClock::new(1_000_000);
     // This clone's own actor exists and has written before.
-    write_one(&t, &mut c, u(T1), status("todo")).unwrap();
+    write_one(&t, &mut c, u(T1), status("next")).unwrap();
     let mine = me(&t);
     let opts = WriteOptions {
         actor_name: Some("importer"),
@@ -403,7 +403,7 @@ fn no_op_writes_are_not_written() {
     write_one(&t, &mut c, u(T1), Op::Archive(Empty {})).unwrap();
     let before = log_snapshot(&t);
     let no_ops = vec![
-        (u(T1), status("draft")),
+        (u(T1), status("todo")),
         (u(T1), Op::Title(TextTo { to: "one".into() })),
         (u(T1), Op::Kind(crate::event::KindData { to: None })),
         (u(T1), Op::Parent(ParentData { to: None })),
@@ -434,7 +434,7 @@ fn unnamed_actor_does_not_write_a_lone_declaration() {
     let dir = disposable_dir();
     let t = based(&dir);
     let mut c = FixedClock::new(1_000_000);
-    let w = write_one(&t, &mut c, u(T1), status("draft")).unwrap();
+    let w = write_one(&t, &mut c, u(T1), status("todo")).unwrap();
     assert!(!w.written());
     assert!(
         log_snapshot(&t)
@@ -449,7 +449,7 @@ fn lagging_wall_clock_still_sorts_after_everything_seen() {
     let t = based(&dir);
     // The wall clock is far behind the newest event in the clone.
     let mut c = FixedClock::new(1);
-    let w = write_one(&t, &mut c, u(T1), status("doing")).unwrap();
+    let w = write_one(&t, &mut c, u(T1), status("agnt")).unwrap();
     assert_eq!(w.events[0].id, Ulid::from_parts(BASE_LAST, 1));
     assert_eq!(w.events[1].id, Ulid::from_parts(BASE_LAST, 2));
     // Another actor's event from the future, which this clone has seen.
@@ -461,7 +461,7 @@ fn lagging_wall_clock_still_sorts_after_everything_seen() {
             ACTOR_B,
             Some(w.events[1].id),
             u(T2),
-            status("todo"),
+            status("next"),
         )],
     );
     c.now = 2_000;
@@ -478,7 +478,7 @@ fn lagging_wall_clock_still_sorts_after_everything_seen() {
             u(T1)
         )],
     );
-    let w = write_one(&t, &mut c, u(T1), status("review")).unwrap();
+    let w = write_one(&t, &mut c, u(T1), status("revw")).unwrap();
     assert_eq!(w.events[0].id, Ulid::from_parts(9_500_000_000, 6));
     assert!(
         load(&t)
@@ -537,17 +537,17 @@ fn ids_at_the_end_of_the_range_do_not_block_writes() {
     // So writes go on, several events in one command and again afterwards.
     let now = 1_794_054_896_000;
     let mut c = FixedClock::new(now);
-    let w = write_one(&t, &mut c, u(T1), status("doing")).unwrap();
+    let w = write_one(&t, &mut c, u(T1), status("agnt")).unwrap();
     assert_eq!(w.events.len(), 2, "actor declaration and the status");
     assert_eq!(w.events[0].parent, Some(u(BASE_LAST)));
     assert_eq!(w.events[0].id.time_ms(), now);
     assert_eq!(w.events[1].parent, Some(w.events[0].id));
     let seen = load(&t).highest_seen;
     assert!(seen > Some(w.events[1].id), "numbers were written after it");
-    let w2 = write_one(&t, &mut c, u(T2), status("doing")).unwrap();
+    let w2 = write_one(&t, &mut c, u(T2), status("agnt")).unwrap();
     assert_eq!(w2.events[0].parent, seen);
     let rp = load(&t);
-    assert_eq!(rp.state.tickets[&u(T2)].status, "doing");
+    assert_eq!(rp.state.tickets[&u(T2)].status, "agnt");
     assert_eq!(rp.highest_seen, Some(w2.events[0].id));
 
     // An id far ahead but within the bound counts: the clock follows it, as
@@ -573,7 +573,7 @@ fn ids_at_the_end_of_the_range_do_not_block_writes() {
     let before = log_snapshot(&t);
     c.now = further.time_ms() + MAX_LEAP_MS + 1;
     assert_eq!(
-        rejected_code(write_one(&t, &mut c, u(T2), status("todo"))),
+        rejected_code(write_one(&t, &mut c, u(T2), status("next"))),
         "id-out-of-range"
     );
     assert_eq!(log_snapshot(&t), before);

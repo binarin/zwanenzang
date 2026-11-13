@@ -108,13 +108,23 @@ fn imports_every_frontmatter_shape() {
             ("AIWF-0001", "done"),
             ("AIWF-0002", "todo"),
             ("AIWF-0003", "todo"),
-            ("AIWF-0005", "draft"),
-            ("AIWF-0006", "draft"),
-            ("AIWF-0007", "review"),
-            ("AIWF-0008", "blocked"),
-            ("AIWF-0010", "draft"),
+            ("AIWF-0005", "todo"),
+            ("AIWF-0006", "todo"),
+            ("AIWF-0007", "revw"),
+            ("AIWF-0008", "wait"),
+            ("AIWF-0010", "todo"),
         ]
     );
+    // Waiting on the human and ready for review both carry needs_human.
+    let tagged: Vec<(&str, &Value)> = t.iter().map(|(k, v)| (k.as_str(), &v["tags"])).collect();
+    for (k, tags) in tagged {
+        let want = if matches!(k, "AIWF-0007" | "AIWF-0008") {
+            json!(["needs_human"])
+        } else {
+            json!([])
+        };
+        assert_eq!(tags, &want, "{k}");
+    }
     assert_eq!(t["AIWF-0002"]["source_status"], "needs-triage");
     assert_eq!(t["AIWF-0006"]["source_status"], Value::Null);
 
@@ -220,7 +230,14 @@ fn imports_every_frontmatter_shape() {
     // the description.
     let five = show("AIWF-0005");
     assert_eq!(five["title"], "no title heading");
-    assert!(comment_texts(&five)[0].contains("Status there: in-limbo (imported as draft)\n"));
+    assert!(comment_texts(&five)[0].contains("Status there: in-limbo (imported as todo)\n"));
+    let seven = show("AIWF-0007");
+    assert_eq!(seven["status"], "revw");
+    assert_eq!(seven["tags"], json!(["needs_human"]));
+    assert!(
+        comment_texts(&seven)[0]
+            .contains("Status there: ready-for-review (imported as revw, tagged needs_human)\n")
+    );
     let desc = ok(p, &["doc", "get", &id("AIWF-0005"), "description"]);
     assert_eq!(
         desc["text"],

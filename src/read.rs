@@ -164,6 +164,7 @@ pub fn read(tracker: &Tracker, request: Request) -> Result<Value> {
             "name": tracker.config.name,
             "prefix": tracker.config.prefix,
             "statuses": rp.state.statuses,
+            "retired_statuses": tracker.config.retired_statuses,
             "kinds": rp.state.kinds,
             "priority": tracker.config.priority,
             "actors": actors,
