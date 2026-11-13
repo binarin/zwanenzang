@@ -538,6 +538,60 @@ retargeted, duplicate or foreign source heading is refused before writing.
 The generated comments drawer remains a one-way projection, not an input;
 manual edits there are overwritten on pull (no new edit warning is added).
 
+### New comments
+
+Decided 2026-11-13. Comments arrive only through explicit pulls and syncs,
+and land in folded drawers, so the client remembers which ones a pull
+brought and lets the human step through them. Nothing about this is
+written to Org or the tracker, and nothing is persisted: it lives in the
+buffer for the Emacs session, and restarting Emacs or killing the buffer
+forgets it. Reading a comment does not clear it.
+
+- Each scope has its own set of new comments. Every pull compares the
+  comments it renders with those it rendered before in this session, by
+  comment id, so a reset replaying old history marks only comments this
+  session has not shown, a late lower-id one included.
+- The first pull of a scope in a session, and a ticket rendered in a scope
+  for the first time (discovered, or a heading the human added), are the
+  baseline: none of their comments are new.
+- Comments sent from this Emacs session are never new, remembered by their
+  accepted event id as soon as `apply` accepts them, so also when the pull
+  after the send fails. Comments from agents and from `zz` in a terminal,
+  even as the same actor, are new.
+- A command that brings new comments to a scope replaces that scope's set;
+  one bringing none keeps it. Every pull of one command counts together:
+  a sync whose push pulls again keeps what its first pull brought. Other
+  scopes, and the other scopes of a `zwanenzang-sync-all`, keep theirs.
+- The command's report adds the count and the tickets, sorted by number,
+  for example `3 new comments: ZZ-12 (2), ZZ-40`; nothing when none are new.
+- In a graphical frame each ticket heading with new comments gets a fringe
+  mark, like the one Org's capture leaves through bookmarks
+  (`zwanenzang-new-comment-fringe-mark`, face
+  `zwanenzang-new-comment-fringe`; nil turns it off). Text terminals have
+  no substitute.
+- `zwanenzang-next-new-comment` and `zwanenzang-previous-new-comment` move
+  like `org-next-link`: within the current buffer (its accessible part),
+  from point, skipping a comment point is on. Point lands at the start of
+  the comment's first line in `:ZWANENZANG_COMMENTS:`; when that is hidden
+  the ticket heading, its entry and that drawer are revealed, and siblings
+  and other drawers keep their folds. With no further comment the message
+  is `No further new comment` and point stays; the same command again
+  wraps to the buffer's start or end. They do not touch `next-error`.
+- `zwanenzang-clear-new-comments` forgets the sets of every scope in the
+  current buffer, and their marks; with `C-u`, of every buffer.
+- None of these commands is bound to a key.
+
+Positions are never stored. Navigation and the fringe marks find each
+comment again from the buffer: the ticket heading by `ZWANENZANG_ID` in the
+scope, then, in its comments drawer, the comments as the last pull rendered
+them, each matched whole (header line, text and link) and in order after
+the one before. A comment quoting another's `[timestamp] actor:` line, or
+sharing it, is therefore not taken for that comment. Body rewrites, parent
+moves and text the human adds do not lose them; a comment the drawer no
+longer holds, and a ticket whose heading left the scope or has a
+duplicate, are skipped. Marks are rebuilt after
+every pull and navigation.
+
 ### Showing branches
 
 Org's `C-c C-k` outside a note (`org-kill-note-or-show-branches`) shows
