@@ -203,7 +203,7 @@ impl Tracker {
                     numbered.push(Numbered {
                         id: t.id,
                         number: next,
-                        display: format!("{}-{next:04}", self.config.prefix),
+                        display: self.config.number_text(next),
                         event: Ulid(0),
                     });
                     plan.ops.push((

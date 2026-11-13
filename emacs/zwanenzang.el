@@ -873,10 +873,55 @@ in this buffer, or a status outside the vocabulary, is left out."
 
 ;;;; Dependencies
 
+(defun zwanenzang--ticket-number (ref)
+  "Parse REF, a ticket number such as ZZ-42 or zz-0042, into (PREFIX . N).
+PREFIX is upcased and N an integer, so case and leading zeros do not
+matter.  Return nil when REF is not number syntax."
+  (save-match-data
+    (when (string-match "\\`\\([^ \t\n]+\\)-\\([0-9]+\\)\\'" ref)
+      (cons (upcase (match-string 1 ref)) (string-to-number (match-string 2 ref))))))
+
+(defun zwanenzang--ticket-ref-normalize (ref)
+  "REF in the form the tracker displays numbers, such as ZZ-42.
+Anything that is not number syntax is only upcased."
+  (let ((number (zwanenzang--ticket-number ref)))
+    (if number (format "%s-%d" (car number) (cdr number)) (upcase ref))))
+
+(defun zwanenzang--ticket-ref< (a b)
+  "Whether ticket ref A sorts before B: by prefix, then numerically.
+Refs that are not number syntax sort after numbers, as strings."
+  (let ((na (zwanenzang--ticket-number a))
+        (nb (zwanenzang--ticket-number b)))
+    (cond ((and na nb) (if (equal (car na) (car nb)) (< (cdr na) (cdr nb))
+                         (string< (car na) (car nb))))
+          (na t)
+          (nb nil)
+          (t (string< a b)))))
+
 (defun zwanenzang--dependency-refs ()
-  "The entry's prerequisite numbers, normalized as a set."
-  (sort (delete-dups (split-string (upcase (or (org-entry-get nil "ZWANENZANG_DEPENDS_ON") ""))))
-        #'string<))
+  "The entry's prerequisite numbers, normalized as a sorted set."
+  (sort (delete-dups (mapcar #'zwanenzang--ticket-ref-normalize
+                             (split-string (or (org-entry-get nil "ZWANENZANG_DEPENDS_ON") ""))))
+        #'zwanenzang--ticket-ref<))
+
+(defun zwanenzang--dependency-base (sync &rest candidates)
+  "The last synced dependency hash in SYNC, read against CANDIDATES.
+Versions before unpadded numbers hashed four-digit forms such as ZZ-0042.
+When the stored hash is the padded form of one of the ref lists in
+CANDIDATES, return that list's current hash, so the old padding alone
+never counts as an edit or a conflict."
+  (let ((base (zwanenzang--sync-get sync 'depends)))
+    (or (and (stringp base)
+             (seq-some
+              (lambda (refs)
+                (and (equal base (zwanenzang--tags-hash
+                                  (mapcar (lambda (ref)
+                                            (let ((n (zwanenzang--ticket-number ref)))
+                                              (if n (format "%s-%04d" (car n) (cdr n)) ref)))
+                                          refs)))
+                     (zwanenzang--tags-hash refs)))
+              candidates))
+        base)))
 
 (defun zwanenzang--dependency-displays (ticket known)
   "Resolve TICKET's dependency identities through KNOWN to published numbers.
@@ -885,9 +930,9 @@ An unpublished prerequisite cannot be represented in the manual property."
                   (let ((target (and known (gethash id known))))
                     (unless (integerp (alist-get 'number target))
                       (user-error "prerequisite %s has no published ticket number" id))
-                    (alist-get 'display target)))
+                    (zwanenzang--ticket-ref-normalize (alist-get 'display target))))
                 (alist-get 'depends_on ticket))
-        #'string<))
+        #'zwanenzang--ticket-ref<))
 
 (defvar-local zwanenzang--dependency-snapshots nil
   "In-memory tracker snapshots for dependency checks in this buffer.
@@ -907,7 +952,8 @@ Each plist holds a scope :root marker, :location, :tracker identity,
 
 (defun zwanenzang--dependency-reasons (root refs)
   "Explain why prerequisite ticket REFS in ROOT are not known to be done.
-REFS are human-facing numbers such as ZZ-0042, not internal ULIDs.
+REFS are human-facing numbers such as ZZ-42, not internal ULIDs; case
+and leading zeros do not matter.
 Local Org keywords take precedence over snapshot statuses.  Missing,
 duplicate, tombstoned and unmapped prerequisites are not satisfied."
   (let* ((snapshot (zwanenzang--dependency-snapshot root))
@@ -922,18 +968,20 @@ duplicate, tombstoned and unmapped prerequisites are not satisfied."
          reasons)
     (when known
       (maphash (lambda (_id summary)
-                 (puthash (alist-get 'display summary) summary summaries))
+                 (puthash (zwanenzang--ticket-ref-normalize (alist-get 'display summary))
+                          summary summaries))
                known))
     (dolist (heading headings)
       (push (plist-get heading :marker) (gethash (plist-get heading :id) local)))
     (dolist (heading headings)
       (let ((number (org-entry-get (plist-get heading :marker) "ZWANENZANG_NUMBER")))
         (when number
+          (setq number (zwanenzang--ticket-ref-normalize number))
           (puthash number (seq-union (gethash number local-numbers)
                                     (gethash (plist-get heading :id) local) #'eq)
                    local-numbers))))
-    (dolist (ref (delete-dups refs))
-      (let* ((number-p (string-match-p "\\`[^ \t\n]+-[0-9]+\\'" ref))
+    (dolist (ref (delete-dups (mapcar #'zwanenzang--ticket-ref-normalize refs)))
+      (let* ((number-p (zwanenzang--ticket-number ref))
              (summary (and number-p (gethash ref summaries)))
              ;; Resolve through the snapshot's canonical number when possible,
              ;; then match Org by stable identity, even if its number is stale.
@@ -952,7 +1000,7 @@ duplicate, tombstoned and unmapped prerequisites are not satisfied."
                       (if summary (zwanenzang--label summary) ref)))
              (reason
               (cond
-               ((not number-p) "expected a ticket ID such as ZZ-0042")
+               ((not number-p) "expected a ticket ID such as ZZ-42")
                ((> (length headings) 1) "duplicate headings")
                ((and snapshot (not summary)) "unknown ticket in this tracker")
                ((eq (alist-get 'tombstoned summary) t) "tombstoned")
@@ -1341,12 +1389,16 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                    (remote (zwanenzang--dependency-displays ticket (zwanenzang--pull-known pull)))
                    ;; Upgrade old Org-only properties without discarding them.
                    (base (if fresh (zwanenzang--tags-hash local)
-                           (or (alist-get 'depends sync) (zwanenzang--tags-hash nil)))))
-              (when (settle "dependencies"
-                            (zwanenzang--merge (zwanenzang--tags-hash local) base
-                                              (zwanenzang--tags-hash remote))
-                            "tracker prerequisites skipped; Org dependencies kept"
-                            (string-join remote " ") 'depends (zwanenzang--tags-hash remote))
+                           (let ((b (zwanenzang--dependency-base sync local remote)))
+                             (if (eq b :unknown) (zwanenzang--tags-hash nil) b))))
+                   (decision (zwanenzang--merge (zwanenzang--tags-hash local) base
+                                                (zwanenzang--tags-hash remote))))
+              ;; `same' rewrites too: Org may hold the refs in another
+              ;; spelling, such as the old padded ZZ-0042.
+              (when (or (settle "dependencies" decision
+                                "tracker prerequisites skipped; Org dependencies kept"
+                                (string-join remote " ") 'depends (zwanenzang--tags-hash remote))
+                        (eq decision 'same))
                 (zwanenzang--put "ZWANENZANG_DEPENDS_ON"
                                  (and remote (string-join remote " ")))))
           (user-error
@@ -2163,17 +2215,19 @@ summaries for resolving dependency numbers, including absent prerequisites."
         (dolist (tag (seq-difference remote tags))
           (zwanenzang--plan-add plan "untag" ref `((tag . ,tag))))))
     (let* ((refs (zwanenzang--dependency-refs))
-           (base (zwanenzang--sync-get sync 'depends)))
+           (base (zwanenzang--dependency-base sync refs)))
       (when (zwanenzang--edited-p (zwanenzang--tags-hash refs) base (null refs))
         (let (local)
           ;; Never silently drop malformed/unknown references from a push.
           ;; Refuse before apply, so no other field is partially written.
           (dolist (number refs)
-            (let (matches)
-              (when known
+            (let ((parsed (zwanenzang--ticket-number number))
+                  matches)
+              (when (and known parsed)
                 (maphash (lambda (id summary)
                            (when (and (integerp (alist-get 'number summary))
-                                      (equal number (alist-get 'display summary)))
+                                      (equal parsed (zwanenzang--ticket-number
+                                                     (alist-get 'display summary))))
                              (push id matches)))
                          known))
               (unless (= (length matches) 1)
@@ -2737,7 +2791,9 @@ Compare with saved sync hashes, without compiling or sending a push."
                      (tags ,(zwanenzang--tags-hash tags) ,(null tags))
                      (depends ,(zwanenzang--tags-hash depends) ,(null depends))))
       (when (zwanenzang--edited-p (nth 1 field)
-                                 (zwanenzang--sync-get sync (car field))
+                                 (if (eq (car field) 'depends)
+                                     (zwanenzang--dependency-base sync depends)
+                                   (zwanenzang--sync-get sync (car field)))
                                  (nth 2 field))
         (push (symbol-name (car field)) fields)))
     (unless (equal (number-to-string (or (plist-get shown :priority) -1))

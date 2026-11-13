@@ -31,9 +31,9 @@ The script sees the arguments it was given in \"$@\" and its stdin."
       (should (eq (alist-get 'reset v) :false))
       (should (null (alist-get 'tickets v)))
       (should (assq 'o v))))
-  (should (equal (zwanenzang--json-encode '((cursors . ((ZZ-0042 . :null)))
+  (should (equal (zwanenzang--json-encode '((cursors . ((ZZ-42 . :null)))
                                             (since . :null)))
-                 "{\"cursors\":{\"ZZ-0042\":null},\"since\":null}"))
+                 "{\"cursors\":{\"ZZ-42\":null},\"since\":null}"))
   (should (equal (zwanenzang--json-encode nil) "{}")))
 
 ;;;; Calling the CLI

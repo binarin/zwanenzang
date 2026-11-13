@@ -54,7 +54,7 @@ owners. Process lives elsewhere.
 - **Event**: one immutable line in an actor's log. Has an id, a causal parent,
   an entity and an operation.
 - **Entity**: a ticket or the tracker itself. Identity is a ULID.
-- **Number**: the human-facing alias of a ticket, such as `ZZ-0042`. Assigned
+- **Number**: the human-facing alias of a ticket, such as `ZZ-42`. Assigned
   at publish, never reused.
 - **Document**: a named, versioned piece of prose attached to an entity.
   Text lives in content-addressed blobs.

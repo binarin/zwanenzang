@@ -44,7 +44,7 @@
             (should (equal program "zwanenzang"))
             (should (equal default-directory "/ssh:operator@example.invalid#2222:/tracker's dir/"))
             (should-not display)
-            (should (equal args '("-C" "/tracker's dir/" "comment" "ZZ-0042" "spaces ' and \"quotes\"")))
+            (should (equal args '("-C" "/tracker's dir/" "comment" "ZZ-42" "spaces ' and \"quotes\"")))
             (if input
                 (with-temp-buffer
                   (insert-file-contents infile)
@@ -55,7 +55,7 @@
             0)
         (let ((result (zwanenzang--run
                        "/ssh:operator@example.invalid#2222:/tracker's dir"
-                       '("comment" "ZZ-0042" "spaces ' and \"quotes\"") input)))
+                       '("comment" "ZZ-42" "spaces ' and \"quotes\"") input)))
           (should (= calls 1))
           (should (equal (plist-get result :json) '((title . "café 雪"))))
           (should (equal (plist-get result :stderr) "diagnostic 雪"))

@@ -85,7 +85,7 @@ for command in zz zwanenzang; do
     cli "$command" agent-hooks show-document overview > "$repo/$command.overview"
     if grep -F /nix/store "$repo/$command.overview"; then exit 1; fi
     cli "$command" agent-hooks init > "$repo/$command.bootstrap"
-    grep -F '`TEST-0042`' "$repo/$command.bootstrap"
+    grep -F '`TEST-42`' "$repo/$command.bootstrap"
     grep -F '`zz agent-hooks show-document overview`' "$repo/$command.bootstrap"
     if grep -F / "$repo/$command.bootstrap"; then exit 1; fi
 done

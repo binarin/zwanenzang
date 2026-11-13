@@ -439,7 +439,7 @@ standard Org `ID` is only filled in when missing, as described above.
 - Inbox: the child heading of the root with `ZWANENZANG_INBOX: t`, created
   as "Inbox" under the root the first time a pull needs it.
 - Ticket heading: `ZWANENZANG_ID` (ULID), `ZWANENZANG_NUMBER` (display
-  form), `ZWANENZANG_CURSOR`, `ZWANENZANG_SYNC`, `ZWANENZANG_DESC_VERSION`
+  form, such as `ZZ-42`), `ZWANENZANG_CURSOR`, `ZWANENZANG_SYNC`, `ZWANENZANG_DESC_VERSION`
   and `ZWANENZANG_DESC_HASH`. `ZWANENZANG_SYNC` is a compact snapshot of
   the last synced fields, for example `status=draft title=<hash>
   tags=<hash> depends=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
@@ -772,19 +772,21 @@ Enter dependencies manually on the dependent heading:
 ** TODO A prerequisite
 :PROPERTIES:
 :ZWANENZANG_ID: 01M00000000000000000000001
-:ZWANENZANG_NUMBER: ZZ-0042
+:ZWANENZANG_NUMBER: ZZ-42
 :END:
 ** TODO The dependent ticket
 :PROPERTIES:
 :ZWANENZANG_ID: 01M00000000000000000000002
-:ZWANENZANG_DEPENDS_ON: ZZ-0042
+:ZWANENZANG_DEPENDS_ON: ZZ-42
 :END:
 ```
 
 Both headings must be inside a scope carrying `ZWANENZANG`. The property
 is a whitespace-separated list of human-facing ticket IDs in that same
-tracker, such as `ZZ-0042`, not internal ULIDs, Org links or Org `ID`
-values. Resolve them through the snapshot's display references or local
+tracker, such as `ZZ-42`, not internal ULIDs, Org links or Org `ID`
+values. A reference is compared by its prefix, ignoring letter case, and
+its number as an integer, so `zz-0042` is the same reference; this applies
+to local `ZWANENZANG_NUMBER` values too. Resolve them through the snapshot's display references or local
 `ZWANENZANG_NUMBER` properties; use stable identity internally to find
 local edits. Unpublished tickets must acquire a number before they can be
 referenced. Every prerequisite must be done. The dependency property itself
@@ -837,7 +839,10 @@ stores stable identities; the property always shows published ticket numbers.
   `depend`/`undepend` edit edges without imposing any status policy.
 - Pull reconciles the dependency set as one field, using the normalized,
   sorted ticket-number set's hash in `ZWANENZANG_SYNC` as `depends=`.
-  Order, repeated references and letter case are not edits. Remote-only
+  Order, repeated references, letter case and leading zeros are not
+  edits; the set sorts by prefix, then numerically (`ZZ-9 ZZ-10`). Pull
+  writes the property in the tracker's unpadded form whenever Org holds
+  the same set in another spelling. Remote-only
   changes apply; simultaneous disagreement keeps Org, with the skipped
   remote numbers in the conflict drawer. Push sends edge differences between
   the edited Org set and its own current read; the human's set wins over
@@ -847,6 +852,11 @@ stores stable identities; the property always shows published ticket numbers.
   manually entered dependencies are therefore preserved and pushed; an
   empty property can receive remotely stored relationships. Removing a
   property with recorded sync state explicitly clears the dependency set.
+- Clients before unpadded numbers wrote `ZWANENZANG_NUMBER` and the
+  property as `ZZ-0042` and hashed that padded set as `depends=`. A
+  `depends=` equal to the padded form of the Org or tracker set counts as
+  that set, so padding alone is never an edit or a conflict. The first pull
+  rewrites both properties; there is no migration command.
 - Resolution uses pull/push's existing `list --all` number map, including
   archived/tombstoned prerequisites absent from Org. No org-id lookup, global
   registry or extra TODO-transition CLI calls are introduced. Unknown or

@@ -78,6 +78,12 @@ impl Config {
         }
     }
 
+    /// The human-facing form of a ticket number: prefix, hyphen and the
+    /// decimal number without padding, such as `ZZ-42`.
+    pub fn number_text(&self, n: u64) -> String {
+        format!("{}-{n}", self.prefix)
+    }
+
     pub fn parse(text: &str) -> Result<Config, String> {
         let c: Config = toml::from_str(text).map_err(|e| e.to_string())?;
         c.validate()?;

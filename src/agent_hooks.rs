@@ -66,10 +66,10 @@ pub fn bootstrap(prefix: &str) -> String {
     let lower = prefix.to_ascii_lowercase();
     format!(
         "This project's tickets are kept in a zwanenzang tracker. A ticket id is\n\
-         the prefix `{prefix}`, a hyphen and digits, such as `{prefix}-0042`; padding\n\
-         and letter case are optional, so `{lower}-42` is the same ticket. Before\n\
-         reading or changing tickets, including when a task mentions such an id,\n\
-         run `{SHOW} overview` and follow it.\n"
+         the prefix `{prefix}`, a hyphen and a number, such as `{prefix}-42`; letter\n\
+         case and leading zeros do not matter, so `{lower}-0042` is the same ticket.\n\
+         Before reading or changing tickets, including when a task mentions such\n\
+         an id, run `{SHOW} overview` and follow it.\n"
     )
 }
 
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn bootstrap_names_prefix_and_entry_point_only() {
         let b = bootstrap("ZZ");
-        assert!(b.contains("`ZZ-0042`") && b.contains("`zz-42`"));
+        assert!(b.contains("`ZZ-42`") && b.contains("`zz-0042`"));
         assert!(b.contains("zz agent-hooks show-document overview"));
         // No path of any kind: nothing machine-local or store-bound.
         assert!(!b.contains('/'), "{b}");

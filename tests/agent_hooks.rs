@@ -150,8 +150,8 @@ fn init_prints_the_prefix_bootstrap_and_writes_nothing() {
     );
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert!(o.stderr.is_empty());
-    assert!(o.stdout.contains("`QX-0042`"), "{}", o.stdout);
-    assert!(o.stdout.contains("`qx-42`"), "{}", o.stdout);
+    assert!(o.stdout.contains("`QX-42`"), "{}", o.stdout);
+    assert!(o.stdout.contains("`qx-0042`"), "{}", o.stdout);
     assert!(o.stdout.contains("`zz agent-hooks show-document overview`"));
     assert!(!o.stdout.contains('/'), "{}", o.stdout);
     assert!(!o.stdout.contains("# Using"), "not the overview itself");
@@ -193,7 +193,7 @@ fn init_follows_url_selection() {
     ] {
         let o = hooks(project.path(), home.path(), args);
         assert_eq!(o.code, 0, "{args:?}: {}", o.stderr);
-        assert!(o.stdout.contains("`UR-0042`"), "{}", o.stdout);
+        assert!(o.stdout.contains("`UR-42`"), "{}", o.stdout);
     }
     assert_eq!(git(t.path(), &["rev-parse", "HEAD"]), head);
     // Conflicting selectors are a usage error, as for every command.

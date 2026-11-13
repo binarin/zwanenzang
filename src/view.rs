@@ -61,7 +61,7 @@ impl<'a> View<'a> {
     }
 
     pub fn number_text(&self, n: u64) -> String {
-        format!("{}-{n:04}", self.tracker.config.prefix)
+        self.tracker.config.number_text(n)
     }
 
     /// The number when published, the short id otherwise.
@@ -73,7 +73,8 @@ impl<'a> View<'a> {
     }
 
     /// Resolves a full ULID, a unique prefix of at least 4 characters
-    /// (case-insensitive) or a number such as `ZZ-0042`.
+    /// (case-insensitive) or a number such as `ZZ-42`; leading zeros in
+    /// the number are accepted, so `zz-0042` is the same ticket.
     pub fn resolve(&self, reference: &str) -> Result<Ulid> {
         let tickets = &self.replay.state.tickets;
         let r = reference.trim();

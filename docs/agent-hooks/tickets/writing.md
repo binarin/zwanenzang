@@ -2,11 +2,11 @@
 
 ```sh
 zz create "A title" --status todo --tag example
-zz status ZZ-0042 doing
-zz priority ZZ-0042 65   # Native Org A
-zz priority ZZ-0042 --clear
-zz mr ZZ-0042 app https://forge.example/app/pulls/7
-zz depend ZZ-0043 ZZ-0042
+zz status ZZ-42 doing
+zz priority ZZ-42 65   # Native Org A
+zz priority ZZ-42 --clear
+zz mr ZZ-42 app https://forge.example/app/pulls/7
+zz depend ZZ-43 ZZ-42
 ```
 
 An unknown status or kind is refused; an unknown repository alias is written

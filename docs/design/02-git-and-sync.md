@@ -269,7 +269,7 @@ None at present.
   no git identity of its own and history shows who wrote what. Commits
   skip hooks and signing, since an agent cannot answer a passphrase prompt
   and the clone is the tool's. The message names the main operation and
-  ticket, `status ZZ-0042`; a ticket committed before it has a number
+  ticket, `status ZZ-42`; a ticket committed before it has a number
   appears under its short id.
 - **Upstream.** Sync uses the current branch's configured upstream
   (`branch.<name>.remote` and `.merge`). A branch without one, or a

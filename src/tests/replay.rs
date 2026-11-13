@@ -947,10 +947,23 @@ fn short_ids_and_references() {
     let t2 = &rp.state.tickets[&u(T2)];
     // Ids differing in the time part need only the 10 time characters.
     assert_eq!(view.short_id(u(T2)), "000000000C");
-    assert_eq!(view.display(t1), "ZZ-0005");
+    // Numbers display unpadded; padded input still resolves.
+    assert_eq!(view.display(t1), "ZZ-5");
+    assert_eq!(view.number_text(1234), "ZZ-1234");
     assert_eq!(view.display(t2), "000000000C");
-    assert_eq!(view.resolve("ZZ-0005").unwrap(), u(T1));
-    assert_eq!(view.resolve("zz-5").unwrap(), u(T1));
+    for r in [
+        "ZZ-5",
+        "zz-5",
+        "ZZ-0005",
+        "zz-005",
+        "ZZ-00000000000000000005",
+    ] {
+        assert_eq!(view.resolve(r).unwrap(), u(T1), "{r}");
+    }
+    assert!(matches!(
+        view.resolve("5"),
+        Err(crate::error::Error::UnknownTicket(_))
+    ));
     assert_eq!(view.resolve(&u(T2).to_canonical()).unwrap(), u(T2));
     assert_eq!(
         view.resolve(&u(T2).to_canonical().to_lowercase()).unwrap(),
@@ -965,7 +978,7 @@ fn short_ids_and_references() {
         Err(crate::error::Error::UnknownTicket(_))
     ));
     assert!(matches!(
-        view.resolve("ZZ-0006"),
+        view.resolve("ZZ-6"),
         Err(crate::error::Error::UnknownTicket(_))
     ));
     assert!(matches!(
