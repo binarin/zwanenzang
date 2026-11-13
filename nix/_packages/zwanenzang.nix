@@ -20,6 +20,8 @@ rustPlatform.buildRustPackage {
       ../../build.rs
       # Bundled into the executable for `agent-hooks show-document`.
       ../../docs/agent-hooks
+      # The page `render` writes, embedded with include_str!.
+      ../../site
       ../../src
       ../../tests
     ];

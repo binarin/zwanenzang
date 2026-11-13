@@ -10,8 +10,8 @@ A small, local-first issue tracker for one person and their agents.
 - Agents use the same CLI with JSON in and out. Their instructions ship with
   the executable (`zz agent-hooks show-document overview`); the sources are in
   [docs/agent-hooks](docs/agent-hooks/overview.md).
-- Current state, dashboards and a browsable rendering for the forge are
-  derived views, never sources.
+- Current state, dashboards and a browsable static HTML site
+  (`zz render DIR`) are derived views, never sources.
 - One tracker is one event log, one branch and one compartment. Nothing
   aggregates trackers across projects or clients.
 

@@ -1,0 +1,221 @@
+/* zwanenzang static site. Two panes on wide screens, list then detail on
+   narrow ones. No external resources. */
+
+:root {
+  --bg: #fdfdfc;
+  --fg: #1d1d1b;
+  --muted: #6b6b66;
+  --line: #e2e1dc;
+  --pane: #f4f3ef;
+  --accent: #2f5d8a;
+  --sel: #dde7f1;
+  --chip: #ebe9e3;
+  --chip-on: #2f5d8a;
+  --code: #efeee9;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1c1e;
+    --fg: #e6e4df;
+    --muted: #9a9892;
+    --line: #34353a;
+    --pane: #222327;
+    --accent: #8db8e3;
+    --sel: #2e3d4d;
+    --chip: #303136;
+    --chip-on: #4f7fae;
+    --code: #2a2b30;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a { color: var(--accent); }
+
+#app {
+  display: grid;
+  grid-template-columns: minmax(18rem, 28rem) 1fr;
+  height: 100vh;
+}
+
+#list-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--pane);
+  border-right: 1px solid var(--line);
+}
+
+.pane-head {
+  padding: .75rem;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+}
+
+h1#tracker-name { font-size: 1.1rem; margin: 0; }
+
+input[type=search], select {
+  font: inherit;
+  width: 100%;
+  padding: .35rem .5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+select { width: auto; padding: .1rem .3rem; }
+
+#filters summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+#filter-summary { font-size: .8rem; }
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin: .35rem 0;
+  align-items: center;
+}
+
+.chip {
+  font: inherit;
+  font-size: .8rem;
+  padding: .05rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--chip);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.chip[aria-pressed=true] {
+  background: var(--chip-on);
+  border-color: var(--chip-on);
+  color: #fff;
+}
+
+.chip-row .chip.tag::before { content: "#"; opacity: .6; }
+.sort { font-size: .8rem; color: var(--muted); margin-left: auto; }
+
+#count { font-size: .8rem; color: var(--muted); }
+
+#tree {
+  overflow-y: auto;
+  flex: 1;
+  padding: .25rem 0 2rem;
+}
+
+#tree ul { list-style: none; margin: 0; padding: 0; }
+#tree ul ul { padding-left: 1rem; border-left: 1px dotted var(--line); margin-left: .9rem; }
+
+.row {
+  display: flex;
+  gap: .4rem;
+  align-items: baseline;
+  padding: .2rem .75rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.row:hover { background: var(--sel); }
+.row.selected { background: var(--sel); font-weight: 600; }
+.row.context { opacity: .5; }
+.row .num { font-family: var(--mono); font-size: .8rem; color: var(--muted); white-space: nowrap; }
+.row .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.row .snippet { display: block; font-size: .8rem; color: var(--muted); font-weight: normal; }
+.row mark { background: #f3dd8a; color: #000; }
+
+.status {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  padding: 0 .35rem;
+  border-radius: 3px;
+  background: var(--chip);
+  white-space: nowrap;
+}
+
+.status.s-done, .status.s-cncl, .status.s-cancelled { opacity: .6; }
+
+#detail-pane {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 1rem 2rem 4rem;
+}
+
+#back { display: none; }
+
+#detail { max-width: 48rem; }
+#detail h2 { margin: .2rem 0 .5rem; font-size: 1.4rem; line-height: 1.3; }
+#detail h2 .num { font-family: var(--mono); color: var(--muted); font-size: 1rem; margin-right: .5rem; }
+.empty { color: var(--muted); }
+
+.meta { display: flex; flex-wrap: wrap; gap: .35rem .9rem; font-size: .85rem; color: var(--muted); }
+.meta b { color: var(--fg); font-weight: 600; }
+.tags .tag { margin-right: .3rem; }
+.tags .tag::before { content: "#"; opacity: .6; }
+.archived-note { color: #a8611c; }
+
+.relations { margin: .8rem 0; font-size: .9rem; }
+.relations dt { color: var(--muted); float: left; clear: left; width: 7rem; }
+.relations dd { margin: 0 0 .2rem 7rem; }
+.relations dd a { display: block; }
+
+section.doc, section.comments { margin-top: 1.5rem; }
+section > h3.section {
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: .2rem;
+  margin: 0 0 .5rem;
+}
+
+.by { font-size: .8rem; color: var(--muted); text-transform: none; letter-spacing: 0; float: right; }
+
+.comment { border-left: 3px solid var(--line); padding: .1rem .8rem; margin: .8rem 0; }
+.comment .by { float: none; display: block; }
+
+.prose pre, .prose code { font-family: var(--mono); font-size: .85rem; }
+.prose code { background: var(--code); padding: 0 .2rem; border-radius: 3px; }
+.prose pre { background: var(--code); padding: .6rem; overflow-x: auto; border-radius: 4px; }
+.prose pre code { padding: 0; background: none; }
+.prose pre.org { border-left: 3px solid var(--muted); }
+.prose blockquote { margin: .5rem 0; padding-left: .8rem; border-left: 3px solid var(--line); color: var(--muted); }
+.prose table { border-collapse: collapse; margin: .5rem 0; display: block; overflow-x: auto; }
+.prose th, .prose td { border: 1px solid var(--line); padding: .2rem .5rem; text-align: left; }
+.prose h3, .prose h4, .prose h5, .prose h6 { margin: 1rem 0 .3rem; }
+.prose li > ul, .prose li > ol { margin: 0; }
+.prose dt { font-weight: 600; }
+.prose dd { margin: 0 0 .3rem 1.2rem; }
+.prose .ticket-ref { white-space: nowrap; }
+.relations .status, .row .status { text-decoration: none; display: inline-block; }
+.attachment { font-size: .85rem; color: var(--muted); }
+.prose .link { border-bottom: 1px dotted var(--muted); }
+.prose { overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  #app { display: block; height: auto; }
+  #list-pane { border-right: none; min-height: 100vh; }
+  #tree { overflow: visible; }
+  #detail-pane { display: none; padding: .75rem 1rem 3rem; }
+  body.show-detail #list-pane { display: none; }
+  body.show-detail #detail-pane { display: block; }
+  #back { display: inline-block; margin-bottom: .5rem; text-decoration: none; }
+  .row { padding: .45rem .75rem; }
+  .relations dt { float: none; width: auto; }
+  .relations dd { margin-left: 0; }
+}

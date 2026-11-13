@@ -42,6 +42,10 @@ pub enum Error {
     NotARepository(PathBuf),
     #[error("{0} is inside the git work tree at {1}; a tracker is its own repository")]
     InsideRepository(PathBuf, PathBuf),
+    #[error("{0} is inside the tracker clone; render outside it")]
+    InsideTracker(PathBuf),
+    #[error("{0} {1}; render replaces only files it generated")]
+    RenderConflict(PathBuf, String),
     #[error("{0}")]
     Git(String),
     #[error("{message}")]
@@ -67,6 +71,8 @@ impl Error {
             Error::BranchExists(_) => "branch-exists",
             Error::NotARepository(_) => "not-a-repository",
             Error::InsideRepository(..) => "inside-repository",
+            Error::InsideTracker(_) => "inside-tracker",
+            Error::RenderConflict(..) => "render-conflict",
             Error::Git(_) => "git",
             Error::Sync { code, .. } => code,
         }

@@ -145,6 +145,10 @@ private on the forge, while the implementation repository mirrors to GitHub.
 
 ## Rendered view for the forge
 
+Superseded by the [static site](05-static-site.md): `render` writes HTML
+into a directory outside the tracker, and no `rendered` branch or lint check
+of it exists. The earlier plan, kept for reference:
+
 A render-only branch (working name `rendered`) in the tracker repository holds
 a browsable snapshot: a `README.md` index with grouped summaries and one
 markdown page per ticket assembling description, current documents and a

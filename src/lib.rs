@@ -8,6 +8,7 @@
 //!   and application rule shared by replay and live writes.
 //! - [`replay`], [`write`]: reading everything back, and appending.
 //! - [`view`], [`lint`], [`cli`]: JSON output and the command line.
+//! - [`render`], [`org`]: the static HTML site and its Org renderer.
 //! - [`agent_hooks`]: agent instructions bundled from `docs/agent-hooks/`.
 
 pub mod agent_hooks;
@@ -25,7 +26,9 @@ pub mod init;
 pub mod lint;
 mod locator;
 pub mod names;
+pub mod org;
 pub mod read;
+pub mod render;
 pub mod replay;
 pub mod state;
 pub mod store;
