@@ -7,8 +7,9 @@ A small, local-first issue tracker for one person and their agents.
   merging it.
 - Org mode in Emacs is the human's authority. An org subtree syncs two-way
   with one tracker, org-caldav style.
-- Agents use the same CLI with JSON in and out; see
-  [docs/agents.md](docs/agents.md).
+- Agents use the same CLI with JSON in and out. Their instructions ship with
+  the executable (`zz agent-hooks show-document overview`); the sources are in
+  [docs/agent-hooks](docs/agent-hooks/overview.md).
 - Current state, dashboards and a browsable rendering for the forge are
   derived views, never sources.
 - One tracker is one repository and one compartment. Nothing aggregates

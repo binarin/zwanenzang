@@ -70,6 +70,22 @@ for command in zz zwanenzang; do
     grep -F -- '--tracker-url' "$repo/$command.help"
 done
 cmp "$repo/zz.error" "$repo/zwanenzang.error"
+
+# Bundled instructions are plain text served by both names, with no store paths.
+for command in zz zwanenzang; do
+    cli "$command" agent-hooks show-document tickets/conflicts/stale-doc-base \
+        > "$repo/$command.doc" 2> "$repo/stderr"
+    test ! -s "$repo/stderr"
+    grep -F 'stale-doc-base' "$repo/$command.doc"
+    cli "$command" agent-hooks show-document overview > "$repo/$command.overview"
+    if grep -F /nix/store "$repo/$command.overview"; then exit 1; fi
+    cli "$command" agent-hooks init > "$repo/$command.bootstrap"
+    grep -F '`TEST-0042`' "$repo/$command.bootstrap"
+    grep -F '`zz agent-hooks show-document overview`' "$repo/$command.bootstrap"
+    if grep -F / "$repo/$command.bootstrap"; then exit 1; fi
+done
+cmp "$repo/zz.doc" "$repo/zwanenzang.doc"
+cmp "$repo/zz.bootstrap" "$repo/zwanenzang.bootstrap"
 cmp "$repo/zz.version" "$repo/zwanenzang.version"
 
 # A git supplied by the caller must still take precedence over the fallback.

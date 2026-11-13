@@ -214,7 +214,7 @@ checkout"). Implemented in milestone 3 with these concrete boundaries:
   owned-clone/disk error that prevents a sync report still fails as before;
   no checkout phase runs in that case. No-op writes still skip sync entirely.
 
-The exact result and reason vocabulary is in [cli-json](../cli-json.md).
+The exact result and reason vocabulary is in [cli-json](../agent-hooks/cli-json.md).
 
 ## Open questions
 

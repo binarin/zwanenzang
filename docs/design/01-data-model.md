@@ -350,7 +350,7 @@ none changes a decision above.
   Documents take text plus a required base; stale bases fail even for
   identical text, while identical text with a current base is a no-op.
   Per-operation outcomes retain input positions including no-ops. The
-  [CLI contract](../cli-json.md) specifies the accepted operations, reference
+  [CLI contract](../agent-hooks/cli-json.md) specifies the accepted operations, reference
   syntax, mapping back to created tickets, and failure boundaries.
 - **Interrupted appends.** If a log does not end in a newline (an
   interrupted write), the next append starts with one, so lines never run

@@ -8,7 +8,9 @@
 //!   and application rule shared by replay and live writes.
 //! - [`replay`], [`write`]: reading everything back, and appending.
 //! - [`view`], [`lint`], [`cli`]: JSON output and the command line.
+//! - [`agent_hooks`]: agent instructions bundled from `docs/agent-hooks/`.
 
+pub mod agent_hooks;
 pub mod batch;
 pub mod checkout;
 pub mod cli;

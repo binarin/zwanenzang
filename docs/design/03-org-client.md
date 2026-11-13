@@ -325,7 +325,7 @@ result holds the full ticket, current document text, accepted events after
 its cursor, and the next cursor. A scope read also returns tracker identity,
 the replayed vocabularies, so a client can validate its keyword map, and
 the declared actor names, so it can name comment authors.
-The exact JSON is in [cli-json](../cli-json.md).
+The exact JSON is in [cli-json](../agent-hooks/cli-json.md).
 
 Per-ticket history includes events that affect its visible state from the
 other side: relations on either end, a child's parent change on both the
@@ -375,7 +375,7 @@ failure. Validation is atomic locally; disk failures and concurrently merged
 remote events have the same semantics as ordinary writes. A subsequent
 `read` supplies cursors and any indirect or concurrent changes; clients must
 not infer cursors from apply event ids. Exact shapes and error semantics are
-in [cli-json](../cli-json.md).
+in [cli-json](../agent-hooks/cli-json.md).
 
 Human checkout fast-forwarding is implemented in the CLI's sync phase (see
 [git and sync](02-git-and-sync.md)). The Emacs implementation lives in `emacs/`

@@ -21,7 +21,8 @@ design decisions.
 
 This project's tracker is `zwanenzang-tracker` on the forge
 (`https://forgejo.lynx-lizard.ts.net/binarin/zwanenzang-tracker`). How to use
-it is in [docs/agents.md](docs/agents.md). An agent orchestrating a batch run
+it is in [docs/agent-hooks](docs/agent-hooks/overview.md), the same text
+`zz agent-hooks show-document overview` prints. An agent orchestrating a batch run
 of implementer and reviewer agents over its tickets follows
 `docs/batch-ticket-run.md` in that tracker repository.
 

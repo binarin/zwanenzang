@@ -17,6 +17,9 @@ rustPlatform.buildRustPackage {
     fileset = lib.fileset.unions [
       ../../Cargo.toml
       ../../Cargo.lock
+      ../../build.rs
+      # Bundled into the executable for `agent-hooks show-document`.
+      ../../docs/agent-hooks
       ../../src
       ../../tests
     ];
