@@ -1,0 +1,25 @@
+# Tickets
+
+A ticket reference is a prefixed number such as `ZZ-0042` or `zz-42`, a full
+ULID, or a unique case-insensitive ULID prefix of at least 4 characters. Bare
+decimal input is not ticket-number syntax, but may match a ULID prefix. The
+prefix is the tracker's own; numbers are shown padded to four digits, and the
+padding is optional when typing them.
+
+Read-only commands answer from the clone and do not fetch, so run `zz sync`
+first when current state matters. Every write commits and then syncs.
+
+Status and kind names, and the repository aliases that `branch` and `mr` take,
+are in the clone's `zwanenzang.toml`.
+
+## Topics
+
+- `zz agent-hooks show-document tickets/reading`: `show`, `list`, `query` and
+  `doc get`.
+- `zz agent-hooks show-document tickets/writing`: changing tickets, and what a
+  write reports.
+- `zz agent-hooks show-document tickets/prose`: comments and named documents.
+- `zz agent-hooks show-document tickets/numbers`: when a ticket gets its
+  number.
+- `zz agent-hooks show-document tickets/conflicts`: when a write meets another
+  clone's concurrent work.

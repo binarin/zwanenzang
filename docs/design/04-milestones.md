@@ -22,8 +22,22 @@ org file on the desktop until milestone 3 makes it a synced scope.
 - `zwanenzang` on the forge mirrors to GitHub; `zwanenzang-tracker` is
   private and holds this project's own events.
 - Agent-facing documentation is done, moved out of milestone 5: the
-  [agent note](../agents.md) says how an agent uses a tracker from a project,
-  with no process rules attached.
+  [agent hooks](../agent-hooks/overview.md) say how an agent uses a tracker
+  from a project, with no process rules attached. They ship inside the
+  executable rather than being copied into each project:
+  `zz agent-hooks init` prints a bootstrap paragraph naming the selected
+  tracker's prefix, for the project to paste into its own agent
+  instructions, and `zz agent-hooks show-document NAME` prints one document
+  of the tree as plain text, needing no tracker. Agents read them
+  progressively: each landing document lists only its immediate subtopics,
+  by command, never by file path, so no store path or version reaches agent
+  context and a session reads whatever the executable it runs bundles.
+  `docs/agent-hooks/` is the only source: a file's name is its path without
+  `.md`, and a directory's `overview.md` is named after the directory
+  (`tickets/overview.md` is `tickets`). `build.rs` embeds the tree, so Cargo
+  and Nix builds carry the same text. The JSON contract lives there too, as
+  `cli-json`, not copied. Project policy, workflow rules and agent-framework
+  formats such as skill files stay out of the bundle.
 
 ## 1. Design notes and schema
 

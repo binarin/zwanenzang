@@ -73,6 +73,9 @@ persistent data, not a cache: do not remove it during workspace cleanup.
 
 Nothing is printed on stderr on success.
 
+`agent-hooks` is the one exception: it prints plain text, not JSON. See
+[Agent hooks](#agent-hooks).
+
 ## Ticket references
 
 Wherever a command takes a ticket it accepts:
@@ -114,6 +117,8 @@ them; any change to them fails with `tombstoned`.
 | `read` | nothing; request from stdin | scope read object (below) |
 | `apply` | list of changes from stdin, one mutation commit and one sync | batch apply object (below) |
 | `lint` | nothing | lint report |
+| `agent-hooks init` | nothing | bootstrap text (not JSON) |
+| `agent-hooks show-document NAME` | nothing | document text (not JSON) |
 | `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
 
 `comment` reads its text from the argument, from `--file`, or from stdin.
@@ -182,8 +187,33 @@ use must be declared in `zwanenzang.toml` first. The import is written as a
 new actor named `ai-workflow import`; `--actor-name` names only this clone's actor, which numbers the imported tickets in the sync afterwards. All
 of it is written or none of it; `--dry-run` validates everything and
 writes nothing. Running it again imports only tickets not imported yet.
-How tickets map to events is listed in the
-[data model](design/01-data-model.md) under the milestone 2 choices.
+Which events each imported ticket becomes is an importer detail, not part
+of this contract.
+
+### Agent hooks
+
+Instructions for agents ship with the executable, so a project using a
+tracker does not copy them. Both commands print plain text on stdout and exit
+0. On failure they print a message on stderr, nothing on stdout, and exit 1.
+
+`agent-hooks init` prints a short bootstrap paragraph to paste into a
+project's agent instructions (such as `AGENTS.md`). It names the selected
+tracker's ticket prefix and tells an agent to run `zz agent-hooks
+show-document overview` before working with tickets. The tracker is selected
+as for any other command, which may provision a URL-selected clone; nothing
+else is written. It contains no local paths. Without a usable tracker
+configuration it fails and prints no bootstrap.
+
+`agent-hooks show-document NAME` prints one bundled document. It needs no
+tracker, git or network, ignores `-C` and `--tracker-url`, and reads and
+writes nothing on disk. Documents are named by topic, with `/` between
+levels: `overview` is the entry point, a topic such as `tickets` is the
+landing document of its subtopics, and `tickets/reading` is one of those.
+Each landing document lists its immediate subtopics, each as the command
+that prints it. An unknown name fails and lists the topics
+under its nearest known parent, or the top-level topics. Names are not
+paths; nothing outside the bundle can be read. The text is that of the
+executable being run; documents carry no version marker.
 
 ### Batch apply
 
@@ -513,7 +543,7 @@ be serialized with sync.
 
 ### Event
 
-Each event is the envelope from the [data model](design/01-data-model.md):
+Each event is one envelope:
 
 ```json
 {"id": "...", "actor": "...", "parent": "..." | null, "ts": "2026-11-07T12:34:56Z",

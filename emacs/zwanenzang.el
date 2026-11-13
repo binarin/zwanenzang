@@ -19,7 +19,7 @@
 ;; it never calls the CLI.  There is no minor mode or timer.
 ;;
 ;; The design is in docs/design/03-org-client.md and the CLI contract in
-;; docs/cli-json.md of the zwanenzang repository.
+;; docs/agent-hooks/cli-json.md of the zwanenzang repository.
 
 ;;; Code:
 

@@ -1,5 +1,5 @@
 //! The command line: argument definitions and dispatch. Every command prints
-//! one JSON value on stdout.
+//! one JSON value on stdout, except `agent-hooks`, which prints plain text.
 
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -219,6 +219,22 @@ pub enum Command {
         #[command(subcommand)]
         command: ImportCommand,
     },
+    /// Agent instructions bundled with this executable. Prints plain text,
+    /// not JSON.
+    AgentHooks {
+        #[command(subcommand)]
+        command: AgentHooksCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentHooksCommand {
+    /// Print a bootstrap paragraph naming the selected tracker's prefix, to
+    /// paste into a project's agent instructions. Writes nothing.
+    Init,
+    /// Print a bundled document by name, starting with `overview`. Needs no
+    /// tracker.
+    ShowDocument { name: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -267,12 +283,39 @@ pub enum DocCommand {
 /// code.
 pub fn main() -> i32 {
     let cli = Cli::parse();
+    if let Command::AgentHooks { command } = &cli.command {
+        return match agent_hooks(&cli, command) {
+            Ok(text) => {
+                print!("{text}");
+                0
+            }
+            Err(message) => {
+                eprint!("{message}");
+                1
+            }
+        };
+    }
     let (value, code) = run(cli, &mut SystemClock, &mut std::io::stdin());
     println!(
         "{}",
         serde_json::to_string_pretty(&value).expect("JSON values serialize")
     );
     code
+}
+
+/// Runs an `agent-hooks` command: the text for stdout, or a message for
+/// stderr. Only `init` selects a tracker, and it writes nothing to it.
+pub fn agent_hooks(cli: &Cli, command: &AgentHooksCommand) -> std::result::Result<String, String> {
+    match command {
+        AgentHooksCommand::ShowDocument { name } => {
+            crate::agent_hooks::show(name).map(str::to_string)
+        }
+        AgentHooksCommand::Init => {
+            crate::locator::open(cli.tracker.as_deref(), cli.tracker_url.as_deref())
+                .map(|t| crate::agent_hooks::bootstrap(&t.config.prefix))
+                .map_err(|e| format!("error: {e} ({})\n", e.code()))
+        }
+    }
 }
 
 /// Runs a parsed command. Returns the JSON to print and the exit code.
@@ -356,6 +399,11 @@ fn parse_base(s: &str) -> Result<Option<Ulid>> {
 }
 
 fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Value, i32)> {
+    if matches!(cli.command, Command::AgentHooks { .. }) {
+        return Err(Error::InvalidArgument(
+            "agent-hooks prints text, not JSON; run it through `agent_hooks`".into(),
+        ));
+    }
     if let Command::Init { prefix, name } = &cli.command {
         if cli.tracker_url.is_some() {
             return Err(Error::InvalidArgument(
@@ -415,6 +463,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             Ok((crate::read::read(&ctx.tracker, request)?, 0))
         }
         Command::Init { .. } => unreachable!("handled above"),
+        Command::AgentHooks { .. } => unreachable!("handled above"),
         Command::Create {
             title,
             status,
