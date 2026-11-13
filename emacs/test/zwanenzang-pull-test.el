@@ -618,6 +618,90 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
                                                    (plan (current . :null)))))
                    "[[zwanenzang:01T/status][status (hidden)]]\n"))))
 
+(defun zwanenzang-test--known (&rest summaries)
+  "A hash table from id to each of SUMMARIES, as pull's known tickets."
+  (let ((known (make-hash-table :test #'equal)))
+    (dolist (s summaries) (puthash (alist-get 'id s) s known))
+    known))
+
+(ert-deftest zwanenzang-relations-render-links-by-kind-and-number ()
+  (let ((known (zwanenzang-test--known
+                '((id . "P9") (display . "ZZ-9") (status . "done") (title . "Nine"))
+                '((id . "P10") (display . "ZZ-10") (status . "agnt") (title . "Ten [x]"))
+                '((id . "B1") (display . "ZZ-3") (status . "todo") (title . "Gone")
+                  (tombstoned . t))
+                '((id . "R1") (display . "01R1SHORT0") (status . "lost") (title . "Old")
+                  (archived . t))))
+        (map '(("todo" . "TODO") ("agnt" . "NEXT") ("done" . "DONE"))))
+    (should (equal (zwanenzang--relations-content
+                    '((depends_on "P10" "P9") (blocks "B1") (related "R1" "XX"))
+                    known map)
+                   (concat "- Prerequisites\n"
+                           "  - [[zwanenzang:P9][ZZ-9 DONE Nine]]\n"
+                           ;; Org separates the title's ] from the link's end.
+                           "  - [[zwanenzang:P10][ZZ-10 NEXT Ten [x]\u200b]]\n"
+                           "- Blocks\n"
+                           "  - [[zwanenzang:B1][ZZ-3 TODO Gone (tombstoned)]]\n"
+                           "- Related\n"
+                           "  - [[zwanenzang:R1][01R1SHORT0 lost Old (archived)]]\n"
+                           "  - [[zwanenzang:XX][XX (unknown)]]\n")))
+    ;; Empty kinds are left out, and with them the whole drawer.
+    (should (equal (zwanenzang--relations-content '((blocks "P9")) known map)
+                   "- Blocks\n  - [[zwanenzang:P9][ZZ-9 DONE Nine]]\n"))
+    (should (equal (zwanenzang--relations-content '((depends_on) (related)) known map) ""))))
+
+(ert-deftest zwanenzang-code-renders-branches-and-merge-requests ()
+  (should (equal (zwanenzang--code-content
+                  '((branches ((repo . "app") (name . "zz-28-drawers")))
+                    (mrs ((repo . "app") (url . "https://forge.example/o/app/pulls/12"))
+                         ((repo . "lib") (url . "https://forge.example/o/lib/-/merge_requests/7/?tab=x"))
+                         ((repo . "web") (url . "https://forge.example/o/web/review/abc#top")))))
+                 (concat "- Branches\n"
+                         "  - app: zz-28-drawers\n"
+                         "- MRs\n"
+                         "  - [[https://forge.example/o/app/pulls/12][app #12]]\n"
+                         "  - [[https://forge.example/o/lib/-/merge_requests/7/?tab=x][lib #7]]\n"
+                         "  - [[https://forge.example/o/web/review/abc#top][web abc]]\n")))
+  (should (equal (zwanenzang--code-content '((mrs ((repo . "app") (url . "x")))))
+                 "- MRs\n  - [[x][app x]]\n"))
+  (should (equal (zwanenzang--code-content '((branches) (mrs))) "")))
+
+(ert-deftest zwanenzang-compose-body-puts-link-drawers-after-the-others ()
+  (should (equal (zwanenzang--compose-body
+                  (concat ":PROPERTIES:\n:A: 1\n:END:\n"
+                          ":ZWANENZANG_CODE:\n- old\n:END:\n"
+                          "Text\n"
+                          ":ZWANENZANG_COMMENTS:\nc\n:END:\n")
+                  '(("ZWANENZANG_RELATIONS" . "- Related\n")
+                    ("ZWANENZANG_CODE" . "- MRs\n")
+                    ("ZWANENZANG_HIDDEN" . "h\n")
+                    ("ZWANENZANG_CONFLICT" . "- x\n")))
+                 (concat ":PROPERTIES:\n:A: 1\n:END:\n"
+                         ":ZWANENZANG_CONFLICT:\n- x\n:END:\n"
+                         "Text\n"
+                         ":ZWANENZANG_COMMENTS:\nc\n:END:\n"
+                         ":ZWANENZANG_HIDDEN:\nh\n:END:\n"
+                         ":ZWANENZANG_RELATIONS:\n- Related\n:END:\n"
+                         ":ZWANENZANG_CODE:\n- MRs\n:END:\n")))
+  ;; Text written below a link drawer stays text, ahead of the tail.
+  (should (equal (zwanenzang--body-description
+                  ":ZWANENZANG_RELATIONS:\n- Related\n:END:\nMine\n")
+                 "Mine\n")))
+
+(ert-deftest zwanenzang-shown-state-ignores-link-drawers ()
+  (zwanenzang-test-with-org
+      "* TODO T\n:PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\nText\n"
+    (let ((before (zwanenzang--shown-state)))
+      (zwanenzang--write-body
+       (zwanenzang--compose-body (zwanenzang--body)
+                                 '(("ZWANENZANG_RELATIONS" . "- Related\n")
+                                   ("ZWANENZANG_CODE" . "- MRs\n"))))
+      (should (string-match-p "ZWANENZANG_CODE" (buffer-string)))
+      (should (equal (zwanenzang--shown-state) before))
+      (zwanenzang--write-body
+       (zwanenzang--compose-body (zwanenzang--body) '(("ZWANENZANG_COMMENTS" . "c\n"))))
+      (should-not (equal (zwanenzang--shown-state) before)))))
+
 (ert-deftest zwanenzang-add-conflict-appends-to-the-drawer ()
   (zwanenzang-test-with-org
       (concat "* TODO T :a:\n:PROPERTIES:\n:ZWANENZANG_ID: X\n:END:\n"

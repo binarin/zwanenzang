@@ -67,7 +67,8 @@ Mapping between heading and ticket:
 | body text before the first subheading | document `description` |
 | subheadings marked with a document property | named documents |
 | a read-only drawer or subtree | comments, newest first |
-| properties | number, dependencies, relations, branches, MRs, repo links |
+| properties | number, dependencies (`ZWANENZANG_DEPENDS_ON`, editable) |
+| read-only generated drawers | prerequisites, dependents, relations, branches, MRs |
 
 ## Keyword map
 
@@ -595,6 +596,34 @@ never call the CLI or modify the buffer. Setting
   of the description. `description` in `ZWANENZANG_HIDE_DOCS` is
   reported and ignored. `zwanenzang-open` shows the document in a read-only
   `org-mode` buffer.
+- References go in two more generated drawers after the hidden one, both
+  rewritten from tracker state by every pull and never read back:
+  `:ZWANENZANG_RELATIONS:` (Prerequisites, Blocks, Related) and
+  `:ZWANENZANG_CODE:` (Branches, MRs). Each holds one top-level list item
+  per kind with the references as sub-items; an empty kind is left out,
+  and a drawer with nothing in it is not written. No properties carry
+  these: a property drawer holds one value per key, and a drawer can be
+  rendered freely. `ZWANENZANG_DEPENDS_ON` stays the only editable
+  dependency input; the relations drawer repeats it as links.
+- A ticket reference is `[[zwanenzang:<id>][NUMBER KEYWORD Title]]`, the
+  keyword the scope's keyword map shows for the ticket's status (the
+  status itself when the map has none), sorted by number. An archived or
+  tombstoned ticket is marked so; one the tracker does not know is named
+  by its id with `(unknown)`. Labels come from `list --all` with `read`'s
+  newer state over it, so a prerequisite's new title or status reaches its
+  dependents on the next pull even though they have no events of their own.
+- A branch is plain text `ALIAS: name`. A merge request is
+  `[[url][ALIAS #N]]` when the URL's last path segment (query and fragment
+  dropped) is a number N, otherwise `ALIAS SEGMENT`, or just the alias.
+  Repository URLs in `zwanenzang.toml` are not used.
+- `zwanenzang:<id>` without a document name is a ticket link. Following it
+  jumps to that ticket's heading in the scope the link is in, widening if
+  needed. A ticket with no heading there opens a read-only `org-mode`
+  buffer `*zwanenzang NUMBER*` built from one `read` and `list --all`:
+  title, status, kind, tags, description, comments and references
+  (parent, children, the relations and code lists). Buffers the client
+  opens this way remember the scope and tracker they came from, so their
+  links work too, leading back into that scope when it has the heading.
 - A comment's actor is its display name from `read`'s `tracker.actors`,
   or the first ten characters of its id when it declared none.
 
@@ -712,7 +741,7 @@ tracker.
   then do not read as edited.
 - Writing a body keeps planning lines first and the other drawers in
   their order, then `:ZWANENZANG_CONFLICT:`, then the text, then the
-  comments and hidden drawers. A comments drawer in the old position above
+  comments, hidden, relations and code drawers. A comments drawer in the old position above
   the text moves down the next time the body is written. Human text around
   drawers moves, verbatim, in front of the tail drawers; the description it
   forms is unchanged.
@@ -817,6 +846,10 @@ does.
   of several steps makes one report; the conflicts in it are the last
   pull's, so ones a push settled are gone. The echo points at the buffer
   only when something needs a look; a clean run is one line.
+- A ticket counts as pulled when what Org shows of it changed. The
+  relations and code drawers are left out of that comparison: a change
+  confined to them is written but not reported, so a renamed prerequisite
+  does not report every dependent as pulled.
 
 ### Bootstrap and tests
 
