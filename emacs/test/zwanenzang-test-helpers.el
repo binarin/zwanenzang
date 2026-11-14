@@ -325,13 +325,18 @@ SPEC is (NET TRACKER BUFFER ORG-TEXT), ORG-TEXT as in
     (insert text)))
 
 (defun zwanenzang-test-id-of (title)
-  "The ZWANENZANG_ID of the only heading titled TITLE."
+  "The ZWANENZANG_ID of the first heading titled TITLE.
+The title is the client's, without the number prefix."
   (save-excursion
     (goto-char (point-min))
-    (unless (re-search-forward (format org-complex-heading-regexp-format (regexp-quote title))
-                               nil t)
-      (error "No heading %s" title))
-    (org-entry-get nil "ZWANENZANG_ID")))
+    (let (found)
+      (unless (org-at-heading-p) (outline-next-heading))
+      (while (and (not found) (org-at-heading-p))
+        (if (equal (plist-get (zwanenzang--heading) :title) title)
+            (setq found (point))
+          (outline-next-heading)))
+      (unless found (error "No heading %s" title))
+      (org-entry-get found "ZWANENZANG_ID"))))
 
 (defun zwanenzang-test-goto (id)
   "Move to the only heading with ZWANENZANG_ID ID and return point."
@@ -364,7 +369,7 @@ SPEC is (NET TRACKER BUFFER ORG-TEXT), ORG-TEXT as in
   (save-excursion
     (zwanenzang-test-goto id)
     (org-up-heading-safe)
-    (org-get-heading t t t t)))
+    (plist-get (zwanenzang--heading) :title)))
 
 (defun zwanenzang-test-report ()
   "The text of the report buffer."

@@ -1389,7 +1389,7 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
       (zwanenzang-test-pull)
       (should-not (string-match-p "keyword map\\|blocked\\|conflict" (zwanenzang-test-report)))
       (cl-loop for id in ids for s in statuses
-               do (should (string-match-p (format "\\`\\*+ %s %s" (upcase s) s)
+               do (should (string-match-p (format "\\`\\*+ %s \\[ZZ-[0-9]+\\] %s" (upcase s) s)
                                           (zwanenzang-test-heading id))))
       ;; Status changes arriving by pull are tracker history, not Org log.
       (cl-loop for id in ids for s in (append (cdr statuses) (list (car statuses)))
