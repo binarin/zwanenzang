@@ -1292,6 +1292,7 @@ nesting changed) or `conflict'."
   lines                                 ; what needs a look, newest first
   info                                  ; what happened, newest first
   pulled                                ; ids whose shown state changed
+  comments                              ; (ID FRESH RECORDS) per pulled ticket
   (new 0) (moved 0)
   conflicted                            ; ids, each counted once
   (blocked 0)
@@ -1318,23 +1319,30 @@ nesting changed) or `conflict'."
   (or (alist-get (intern actor) (zwanenzang--pull-actors pull))
       (substring actor 0 (min 10 (length actor)))))
 
+(defun zwanenzang--comment-record (pull comment)
+  "COMMENT as PULL renders it in the comments drawer: a header line, text, link."
+  (let ((link (zwanenzang--null (alist-get 'link comment))))
+    (concat (format "[%s] %s:\n" (alist-get 'ts comment)
+                    (zwanenzang--actor-name pull (alist-get 'actor comment)))
+            (zwanenzang--comment-text (alist-get 'text comment))
+            (and link
+                 (concat (org-link-make-string
+                          (if (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" link)
+                              link
+                            (concat "file:" (expand-file-name
+                                             link (zwanenzang--pull-tracker-dir pull)))))
+                         "\n")))))
+
+(defun zwanenzang--comment-records (pull ticket)
+  "TICKET's comments as (ID . RECORD), in the drawer's order, newest first.
+RECORD is as `zwanenzang--comment-record' renders it for PULL."
+  (mapcar (lambda (c) (cons (alist-get 'id c) (zwanenzang--comment-record pull c)))
+          (reverse (alist-get 'comments ticket))))
+
 (defun zwanenzang--comments-content (pull ticket)
   "The :ZWANENZANG_COMMENTS: drawer content for TICKET, newest first.
 Reverse replay order, not wall-clock timestamps; leave TICKET unchanged."
-  (mapconcat
-   (lambda (c)
-     (let ((link (zwanenzang--null (alist-get 'link c))))
-       (concat (format "[%s] %s:\n" (alist-get 'ts c)
-                       (zwanenzang--actor-name pull (alist-get 'actor c)))
-               (zwanenzang--comment-text (alist-get 'text c))
-               (and link
-                    (concat (org-link-make-string
-                             (if (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" link)
-                                 link
-                               (concat "file:" (expand-file-name
-                                                link (zwanenzang--pull-tracker-dir pull)))))
-                            "\n")))))
-   (reverse (alist-get 'comments ticket)) ""))
+  (mapconcat #'cdr (zwanenzang--comment-records pull ticket) ""))
 
 (defun zwanenzang--documents-content (pull ticket)
   "The :ZWANENZANG_DOCUMENTS: drawer content for TICKET.
@@ -1743,6 +1751,8 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
             ("ZWANENZANG_CODE" . ,(zwanenzang--code-content ticket))
             ("ZWANENZANG_CONFLICT" . ,(zwanenzang--conflict-content conflicts)))
           description))
+        (push (list (alist-get 'id ticket) fresh (zwanenzang--comment-records pull ticket))
+              (zwanenzang--pull-comments pull))
         (when (integerp (alist-get 'number ticket))
           (zwanenzang--put "ZWANENZANG_NUMBER" (alist-get 'display ticket)))
         (zwanenzang--put "ZWANENZANG_ACTIVITY" (alist-get 'ts (alist-get 'activity ticket)))
@@ -2098,12 +2108,15 @@ and the buffer is not saved."
   pull                                  ; the last pull: its conflicts still stand
   problems info                         ; lines, newest first
   pulled (new 0) (moved 0) (created 0) (pushed 0)
+  comments                              ; a ticket number per new comment
   saved                                 ; the file was saved for new identities
   refused)
 
 (defun zwanenzang--pull-into (outcome root)
   "Pull the scope at ROOT and add the result to OUTCOME."
   (let ((pull (zwanenzang--pull-scope root)))
+    (unless (zwanenzang--pull-refused pull)
+      (zwanenzang--take-new-comments outcome pull))
     (setf (zwanenzang--outcome-pull outcome) pull
           (zwanenzang--outcome-refused outcome) (zwanenzang--pull-refused pull)
           (zwanenzang--outcome-info outcome) (append (zwanenzang--pull-info pull)
@@ -2160,6 +2173,8 @@ Publication errors and skipped checkouts are not failures, but need a look."
                                   (zwanenzang--pull-blocked pull))
                             '("pulled" "new" "moved" "created" "pushed"
                               "with conflicts" "blocked")))
+                     (delq nil (list (zwanenzang--new-comments-summary
+                                      (zwanenzang--outcome-comments outcome))))
                      (and (zwanenzang--outcome-saved outcome) '("file saved")))))
         (zwanenzang-report
          (format "zwanenzang: %s %s: %s" verb
@@ -2186,6 +2201,288 @@ report appended to the `*zwanenzang*' buffer."
         (outcome (zwanenzang--outcome-create)))
     (zwanenzang--pull-into outcome root)
     (zwanenzang--report-outcome "pulled" root outcome)))
+
+;;;; New comments
+
+;; Comments a pull brings into a scope are remembered for the session, so
+;; the human can step through them and see their tickets in the fringe.
+;; None of it is written anywhere: it lives in the buffer and goes with
+;; it.  Positions are found again from the buffer whenever they are
+;; needed, because pulls rewrite bodies and move subtrees.
+
+(defcustom zwanenzang-new-comment-fringe-mark 'zwanenzang-new-comment
+  "Fringe bitmap on ticket headings with new comments, or nil for none.
+Text terminals have no fringe; there only the navigation commands work."
+  :type '(choice (const :tag "No mark" nil) (symbol :tag "Fringe bitmap")))
+
+(defface zwanenzang-new-comment-fringe
+  '((t :inherit warning))
+  "Face of the fringe mark on ticket headings with new comments.")
+
+(when (fboundp 'define-fringe-bitmap)
+  (define-fringe-bitmap 'zwanenzang-new-comment
+    [#b11111110
+     #b10000010
+     #b10111010
+     #b10000010
+     #b10110010
+     #b10000010
+     #b11111110
+     #b00110000
+     #b00100000]))
+
+(cl-defstruct (zwanenzang--new-comments (:constructor zwanenzang--new-comments-create)
+                                        (:copier nil))
+  "What this session knows about the comments of one scope."
+  root                                  ; marker at the scope root
+  (seen (make-hash-table :test #'equal)) ; ticket id -> (ID . RECORD), newest first
+  new                                   ; (TICKET-ID . COMMENT-ID), in arrival order
+  overlays)                             ; the fringe marks
+
+(defvar-local zwanenzang--new-comment-scopes nil
+  "The `zwanenzang--new-comments' of each scope in this buffer pulled this session.")
+
+(defvar zwanenzang--sent-comments (make-hash-table :test #'equal)
+  "Event ids of the comments this Emacs session sent; they are never new.")
+
+(defvar zwanenzang--new-comment-search-failed nil
+  "Non-nil when the last new-comment search found nothing, so a repeat wraps.")
+
+(defun zwanenzang--new-comment-states ()
+  "This buffer's scope comment states, dropping those whose root is gone."
+  (setq zwanenzang--new-comment-scopes
+        (seq-filter (lambda (state)
+                      (or (eq (marker-buffer (zwanenzang--new-comments-root state))
+                              (current-buffer))
+                          (progn (mapc #'delete-overlay (zwanenzang--new-comments-overlays state))
+                                 nil)))
+                    zwanenzang--new-comment-scopes)))
+
+(defun zwanenzang--new-comments-of (root &optional create)
+  "The comment state of the scope at ROOT, or nil; CREATE makes one if missing.
+Call it in ROOT's buffer."
+  (or (seq-find (lambda (state) (= (zwanenzang--new-comments-root state) root))
+                (zwanenzang--new-comment-states))
+      (and create
+           (car (push (zwanenzang--new-comments-create :root (copy-marker root t))
+                      zwanenzang--new-comment-scopes)))))
+
+(defun zwanenzang--note-new-comments (pull)
+  "Record the comments PULL rendered; return those new this session.
+The first pull of a scope in a session, and a ticket rendered in it for
+the first time, set the baseline: none of their comments are new.
+Comments this session sent are never new.  The result is a list of
+\(TICKET-ID . COMMENT-ID), oldest first per ticket."
+  (with-current-buffer (marker-buffer (zwanenzang--pull-root pull))
+    (let* ((root (zwanenzang--pull-root pull))
+           (first (null (zwanenzang--new-comments-of root)))
+           (seen (zwanenzang--new-comments-seen (zwanenzang--new-comments-of root t)))
+           new)
+      (pcase-dolist (`(,id ,fresh ,records) (reverse (zwanenzang--pull-comments pull)))
+        (let ((old (gethash id seen :none)))
+          ;; Comments are compared by id, so a reset that replays old
+          ;; ones, or one that slots a late comment in among them, marks
+          ;; only the comments this session has not rendered before.
+          (unless (or first fresh (eq old :none))
+            (dolist (record (reverse records))
+              (unless (or (assoc (car record) old)
+                          (gethash (car record) zwanenzang--sent-comments))
+                (push (cons id (car record)) new))))
+          (puthash id records seen)))
+      (nreverse new))))
+
+(defun zwanenzang--comment-position (heading records id)
+  "Where comment ID starts in the comments drawer of the ticket at HEADING.
+RECORDS are the ticket's comments as the last pull rendered them, as
+`zwanenzang--comment-records' returns them.  They are matched whole and
+in order, each after the one before it, so a comment quoting another's
+header line, or one sharing its timestamp and author, is not taken for
+it.  A record the drawer no longer holds is skipped.  Return nil when
+ID's record is not found."
+  (save-excursion
+    (goto-char heading)
+    (pcase-let ((`(,start . ,end) (zwanenzang--body-bounds)))
+      (goto-char start)
+      (when (let ((case-fold-search t))
+              (re-search-forward "^[ \t]*:ZWANENZANG_COMMENTS:[ \t]*\n" end t))
+        (let ((limit (save-excursion
+                       (let ((case-fold-search t))
+                         (if (re-search-forward "^[ \t]*:END:[ \t]*$" end t)
+                             (match-beginning 0)
+                           end))))
+              (case-fold-search nil)
+              found)
+          (while (and records (not found))
+            (pcase-let ((`(,rid . ,text) (pop records))
+                        (from (point))
+                        (at nil))
+              ;; Usually the drawer is exactly what the pull wrote, and the
+              ;; record starts at point; otherwise it starts on a line further on.
+              (if (and (<= (+ from (length text)) limit)
+                       (string= text (buffer-substring-no-properties
+                                      from (+ from (length text)))))
+                  (setq at from)
+                (while (and (not at) (search-forward text limit t))
+                  (if (save-excursion (goto-char (match-beginning 0)) (bolp))
+                      (setq at (match-beginning 0))
+                    (goto-char (1+ (match-beginning 0)))))
+                (unless at (goto-char from)))
+              (when at
+                (goto-char (+ at (length text)))
+                (when (equal rid id) (setq found at)))))
+          found)))))
+
+(defun zwanenzang--new-comment-targets (state)
+  "Where STATE's new comments are now, as (POS . HEADING), in buffer order.
+HEADING is the position of the comment's ticket heading.  A comment is
+found in that ticket's comments drawer as the last pull rendered it, by
+`zwanenzang--comment-position'; one whose ticket heading left the scope,
+has a duplicate or lost the comment is left out."
+  (let ((root (zwanenzang--new-comments-root state))
+        (seen (zwanenzang--new-comments-seen state))
+        targets)
+    (when (and (zwanenzang--new-comments-new state)
+               (eq (marker-buffer root) (current-buffer)))
+      (org-with-wide-buffer
+       (when (save-excursion
+               (goto-char root)
+               (and (org-at-heading-p) (org-entry-get nil "ZWANENZANG")))
+         (let ((counts (make-hash-table :test #'equal))
+               (headings (make-hash-table :test #'equal)))
+           (dolist (tk (car (zwanenzang--scan root)))
+             (cl-incf (gethash (plist-get tk :id) counts 0))
+             (puthash (plist-get tk :id) (marker-position (plist-get tk :marker)) headings)
+             (set-marker (plist-get tk :marker) nil))
+           (pcase-dolist (`(,id . ,cid) (zwanenzang--new-comments-new state))
+             (let* ((heading (and (= 1 (gethash id counts 0)) (gethash id headings)))
+                    (pos (and heading
+                              (zwanenzang--comment-position heading (gethash id seen) cid))))
+               (when pos (push (cons pos heading) targets))))))))
+    (sort targets :key #'car)))
+
+(defun zwanenzang--mark-new-comments (state &optional targets)
+  "Put a fringe mark on each ticket heading with STATE's new comments.
+TARGETS are STATE's `zwanenzang--new-comment-targets', when known.  The
+marks of an earlier call are removed first."
+  (mapc #'delete-overlay (zwanenzang--new-comments-overlays state))
+  (setf (zwanenzang--new-comments-overlays state) nil)
+  (when zwanenzang-new-comment-fringe-mark
+    (save-restriction
+      (widen)
+      (dolist (heading (seq-uniq (mapcar #'cdr (or targets
+                                                 (zwanenzang--new-comment-targets state)))))
+      (let ((overlay (make-overlay heading (min (1+ heading) (point-max)))))
+        (overlay-put overlay 'zwanenzang-new-comment t)
+        (overlay-put overlay 'evaporate t)
+        (overlay-put overlay 'before-string
+                     (propertize "*" 'display
+                                 `(left-fringe ,zwanenzang-new-comment-fringe-mark
+                                               zwanenzang-new-comment-fringe)))
+        (push overlay (zwanenzang--new-comments-overlays state)))))))
+
+(defun zwanenzang--take-new-comments (outcome pull)
+  "Record PULL's comments; make the new ones its scope's new comments.
+The first pull of OUTCOME's command that brings any replaces the
+scope's earlier set; later pulls of the same command add to it, so one
+sync keeps what its first pull brought.  A pull bringing none keeps the
+set.  OUTCOME collects the new comments' ticket numbers for its report."
+  (let ((new (zwanenzang--note-new-comments pull)))
+    (with-current-buffer (marker-buffer (zwanenzang--pull-root pull))
+      (let ((state (zwanenzang--new-comments-of (zwanenzang--pull-root pull))))
+        (when new
+          (setf (zwanenzang--new-comments-new state)
+                (if (zwanenzang--outcome-comments outcome)
+                    (append (zwanenzang--new-comments-new state)
+                            (seq-difference new (zwanenzang--new-comments-new state)))
+                  new))
+          (setf (zwanenzang--outcome-comments outcome)
+                (append (zwanenzang--outcome-comments outcome)
+                        (mapcar (lambda (n)
+                                  (alist-get 'display
+                                             (gethash (car n) (zwanenzang--pull-known pull))))
+                                new))))
+        (zwanenzang--mark-new-comments state)))))
+
+(defun zwanenzang--new-comments-summary (displays)
+  "The report part for new comments on the tickets DISPLAYS name, or nil.
+DISPLAYS has one ticket number per comment."
+  (when displays
+    (let (counts)
+      (dolist (display displays)
+        (cl-incf (alist-get display counts 0 nil #'equal)))
+      (format "%d new comment%s: %s" (length displays) (if (cdr displays) "s" "")
+              (mapconcat (lambda (c)
+                           (if (> (cdr c) 1) (format "%s (%d)" (car c) (cdr c)) (car c)))
+                         (sort counts :key #'car :lessp #'zwanenzang--ticket-ref<)
+                         ", ")))))
+
+(defun zwanenzang--move-to-new-comment (backward)
+  "Move to the next new comment in this buffer, or the previous when BACKWARD.
+As `org-next-link': from point, skipping a comment point is on; when
+there is none, stay, and the same command again wraps around."
+  (let* ((targets (sort (mapcan (lambda (state)
+                                  (let ((targets (zwanenzang--new-comment-targets state)))
+                                    (zwanenzang--mark-new-comments state targets)
+                                    (mapcar #'car targets)))
+                                (zwanenzang--new-comment-states))
+                        #'<))
+         (targets (seq-filter (lambda (pos) (<= (point-min) pos (point-max))) targets))
+         (wrap (and zwanenzang--new-comment-search-failed (eq this-command last-command)))
+         (found
+          (cond
+           ((and wrap backward) (car (last targets)))
+           (wrap (car targets))
+           ;; Point anywhere on a comment's first line is on that comment.
+           (backward (car (last (seq-filter (lambda (pos)
+                                              (< (save-excursion (goto-char pos) (pos-eol))
+                                                 (point)))
+                                            targets))))
+           (t (seq-find (lambda (pos) (> pos (point))) targets)))))
+    (setq zwanenzang--new-comment-search-failed nil)
+    (when wrap
+      (message "New comment search wrapped back to %s of buffer"
+               (if backward "end" "beginning")))
+    (if (not found)
+        (progn (setq zwanenzang--new-comment-search-failed t)
+               (message "No further new comment"))
+      (goto-char found)
+      ;; Reveal the ticket heading, its entry and the comments drawer;
+      ;; siblings and other drawers keep their folds.
+      (when (org-invisible-p)
+        (org-fold-show-set-visibility 'ancestors))
+      (point))))
+
+;;;###autoload
+(defun zwanenzang-next-new-comment ()
+  "Move to the next comment a pull brought into this buffer this session.
+New comments are those the last pull or sync bringing any brought, not
+counting comments this session sent; a scope's first pull of the
+session brings none.  Point lands on the comment's first line in the
+ticket's comments drawer, revealed.  When there is none after point,
+point stays; the same command again wraps to the beginning, as
+`org-next-link' does."
+  (interactive)
+  (zwanenzang--move-to-new-comment nil))
+
+;;;###autoload
+(defun zwanenzang-previous-new-comment ()
+  "Move to the previous new comment in this buffer.
+See `zwanenzang-next-new-comment'; a repeat wraps to the end."
+  (interactive)
+  (zwanenzang--move-to-new-comment t))
+
+;;;###autoload
+(defun zwanenzang-clear-new-comments (&optional all-buffers)
+  "Forget the new comments of every scope in this buffer, and their marks.
+With prefix argument ALL-BUFFERS, of every buffer.  Nothing is written;
+the next pull bringing comments starts a new set."
+  (interactive "P")
+  (dolist (buffer (if all-buffers (buffer-list) (list (current-buffer))))
+    (with-current-buffer buffer
+      (dolist (state (zwanenzang--new-comment-states))
+        (setf (zwanenzang--new-comments-new state) nil)
+        (zwanenzang--mark-new-comments state nil))))
+  (message "zwanenzang: new comments cleared%s" (if all-buffers " in every buffer" "")))
 
 ;;;; Comments
 
@@ -2536,6 +2833,8 @@ to avoid resend.  Return the comment's event id."
                                  `((changes . ,(vconcat changes)))))
                 (event (alist-get 'event (car (alist-get 'results result))))
                 (outcome (zwanenzang--outcome-create)))
+           ;; Before any pull, so the comment is never new to this session.
+           (when (stringp event) (puthash event t zwanenzang--sent-comments))
            ;; Acceptance is the boundary: never offer to resend after this.
            (with-current-buffer draft
              (zwanenzang--comment-close))
