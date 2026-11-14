@@ -43,8 +43,8 @@ It shows KEYWORD, SHOWN-TITLE and SHOWN-TAGS, and has an empty description."
             (documents . ,(mapcar (lambda (d) `(,(intern (nth 0 d)) (current . ,(nth 1 d)))) docs)))
     (documents . ,(mapcar (lambda (d) (cons (intern (nth 0 d)) (nth 2 d))) docs))))
 
-(defun zwanenzang-test--plan (text entries &optional hidden)
-  "The plan for the scope in the Org TEXT, given read ENTRIES and HIDDEN docs.
+(defun zwanenzang-test--plan (text entries)
+  "The plan for the scope in the Org TEXT, given read ENTRIES.
 A ticket without an entry is foreign to the tracker."
   (with-temp-buffer
     (insert text)
@@ -60,11 +60,11 @@ A ticket without an entry is foreign to the tracker."
       (zwanenzang--plan-push
        headings
        (zwanenzang--blocked-headings (seq-filter (lambda (h) (plist-get h :id)) headings) known)
-       entries zwanenzang-test--map hidden))))
+       entries zwanenzang-test--map))))
 
-(defun zwanenzang-test--changes (text entries &optional hidden)
+(defun zwanenzang-test--changes (text entries)
   "The changes planned for TEXT and ENTRIES, in the order they are sent."
-  (reverse (zwanenzang--plan-changes (zwanenzang-test--plan text entries hidden))))
+  (reverse (zwanenzang--plan-changes (zwanenzang-test--plan text entries))))
 
 (ert-deftest zwanenzang-plan-sends-nothing-when-org-matches-the-sync-state ()
   (should-not (zwanenzang-test--changes
@@ -158,21 +158,25 @@ A ticket without an entry is foreign to the tracker."
                  '(((op . "doc") (ticket . "A")
                     (data (name . "plan") (text . "New plan\n") (base . :null)))))))
 
-(ert-deftest zwanenzang-plan-refuses-hidden-and-repeated-documents ()
+(ert-deftest zwanenzang-plan-refuses-description-and-repeated-documents ()
+  ;; ZWANENZANG_HIDE_DOCS no longer exists: an inline heading of any other
+  ;; name is pushed like the rest, so its text is not lost.
   (let ((plan (zwanenzang-test--plan
-               (concat zwanenzang-test--root
+               (concat (replace-regexp-in-string
+                        ":END:" ":ZWANENZANG_HIDE_DOCS: status\n:END:" zwanenzang-test--root)
                        (zwanenzang-test--synced "A" "T")
                        "*** s\n:PROPERTIES:\n:ZWANENZANG_DOC: status\n:END:\nText\n"
                        "*** d\n:PROPERTIES:\n:ZWANENZANG_DOC: description\n:END:\nText\n"
                        "*** p\n:PROPERTIES:\n:ZWANENZANG_DOC: plan\n:END:\nOne\n"
                        "*** p\n:PROPERTIES:\n:ZWANENZANG_DOC: plan\n:END:\nTwo\n")
-               (list (zwanenzang-test--entry "A" "T"))
-               '("status"))))
+               (list (zwanenzang-test--entry "A" "T")))))
     (should (equal (reverse (zwanenzang--plan-changes plan))
                    '(((op . "doc") (ticket . "A")
+                      (data (name . "status") (text . "Text\n") (base . :null)))
+                     ((op . "doc") (ticket . "A")
                       (data (name . "plan") (text . "One\n") (base . :null))))))
     (let ((lines (string-join (zwanenzang--plan-lines plan) "\n")))
-      (should (string-match-p "document status not pushed: it is in ZWANENZANG_HIDE_DOCS" lines))
+      (should-not (string-match-p "HIDE_DOCS" lines))
       (should (string-match-p "\"description\" not pushed" lines))
       (should (string-match-p "second heading for document plan" lines)))))
 

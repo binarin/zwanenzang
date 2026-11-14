@@ -65,7 +65,7 @@ Mapping between heading and ticket:
 | nesting under a non-ticket heading | nothing |
 | tags | tags (all of them; a per-tracker allowlist is not pursued, since local-only tags are not expected in tracker trees) |
 | body text before the first subheading | document `description` |
-| subheadings marked with a document property | named documents |
+| links in a read-only generated drawer, opening document buffers | named documents |
 | a read-only drawer or subtree | comments, newest first |
 | properties | number, dependencies (`ZWANENZANG_DEPENDS_ON`, editable) |
 | read-only generated drawers | prerequisites, dependents, relations, branches, MRs |
@@ -122,19 +122,22 @@ sets, for example:
 Terminal statuses are the ones mapped from org's done-state keywords (those
 after `|`), so the tracker needs no list of its own.
 
-## Hidden documents
+## Named documents
 
-Agents may keep documents the human does not want in org, such as a
-running status summary. The scope root lists them:
+Named documents are not written into Org. A ticket heading lists them in
+a generated `:ZWANENZANG_DOCUMENTS:` drawer, one link each with the date
+and author of the current version; following a link opens the document in
+a buffer of its own, filled from the CLI, and saving that buffer writes a
+new version. Org files never hold a copy, so there is nothing to keep in
+sync and nothing to hide: the description is the only prose a ticket
+heading carries. Documents are blobs without a file extension, so the
+client opens them as Org buffers rather than as files. Details are under
+"Document buffers" below.
 
-```
-:ZWANENZANG_HIDE_DOCS: status plan
-```
-
-A hidden document is never pulled or pushed and has no sync state, so it
-cannot conflict. The heading shows a single link line in place of each
-hidden document, which opens it through the CLI, so nothing disappears
-without trace. The description cannot be hidden.
+Earlier versions wrote named documents as subheadings and could leave some
+out with the scope root's `ZWANENZANG_HIDE_DOCS`. That property is now
+ignored and reported once per scope in each Emacs session; the inline
+subheadings are migrated away by pull, as described under Pull.
 
 ## Sync state per heading
 
@@ -143,7 +146,6 @@ properties:
 
 - the opaque event cursor returned by the batched read for this ticket
 - a hash of the description text as last synced
-- per named document: its synced version id and a hash of its text
 
 State travels with the org file, so files on different machines never share
 or leak state, and a refiled heading carries its state with it.
@@ -203,13 +205,14 @@ archived/tombstoned tickets) are refused; duplicates of a foreign id can be
 adopted one at a time. No history is transferred.
 
 Adoption clears the ticket's `ZWANENZANG*` properties, `ARCHIVE_*`
-properties, conflict tag and generated comments/hidden/conflict drawers.
-Direct named-document children keep `ZWANENZANG_DOC`, but lose their old
+properties, conflict tag and generated drawers.
+Direct inline named-document children of the old form keep `ZWANENZANG_DOC`, but lose their old
 tracker state and generated drawers too. Human properties, standard Org
 IDs, text and other children remain. In particular, old dependency numbers
 are not reinterpreted in the destination tracker. The description gains a
-plain `Former tracker id: ...` line. Hidden named documents follow the
-scope's ordinary push rules. New identity and saving follow create-on-push;
+plain `Former tracker id: ...` line. Those inline documents are created as
+documents of the new ticket, like any inline document a push finds, and
+the final pull removes them. New identity and saving follow create-on-push;
 a final scope pull installs fresh sync state. A refused create restores the
 original buffer; failures after successful apply retain the new identity
 and report recovery information, as for ordinary push.
@@ -309,14 +312,10 @@ The CLI stays format-blind and nothing converts it.
 
 - The description is the human's. Pull overwrites it only when the local text
   is unchanged since the cursor. Agents cannot write it.
-- Named documents render as subheadings carrying a document property, with
-  editable inline `org` source blocks. `C-c '` opens the ordinary Org source
-  editor with real, unshifted headings; `C-c '` again returns, `C-c C-k`
-  aborts. Returning edits the host buffer only; push sends a new version.
-  Pull applies an agent's new version only when the local text is unchanged;
-  otherwise conflict tag,
-  the agent's text in a drawer, and the agent will have to rebase on its next
-  write anyway.
+- Named documents are links on the ticket heading, edited in document
+  buffers of their own (see "Document buffers"). Saving one writes a new
+  version based on the version it was opened with, so an agent's version
+  written since is never overwritten unseen.
 - Comments render read-only, newest first, each with a link to any file or URL
   it names. Removing them from the buffer changes nothing.
 - Bulky files are links, opened over tramp.
@@ -325,6 +324,7 @@ The CLI stays format-blind and nothing converts it.
 
 Pull one heading, pull scope, pull all scopes; push one heading, push scope,
 push all scopes; sync (pull then push then pull); create from heading; open a
+named document for editing, or start a new one; open a
 linked file or the forge page; doctor (duplicate ids, foreign ids, orphaned
 sync properties, scope roots pointing at the same tracker, keyword maps that
 leave a status without a keyword or give it two).
@@ -457,7 +457,7 @@ Every tracker property the client owns starts with `ZWANENZANG`. The
 standard Org `ID` is only filled in when missing, as described above.
 
 - Scope root: `ZWANENZANG` (the location), `ZWANENZANG_KEYWORDS`,
-  `ZWANENZANG_HIDE_DOCS`, `ZWANENZANG_CURSOR` (scope cursor) and
+  `ZWANENZANG_CURSOR` (scope cursor) and
   `ZWANENZANG_TRACKER`, the tracker id recorded on first pull. A later
   read that returns another id blocks the scope.
 - Inbox: the child heading of the root with `ZWANENZANG_INBOX: t`, created
@@ -468,10 +468,11 @@ standard Org `ID` is only filled in when missing, as described above.
   the last synced fields, for example `status=agnt title=<hash>
   tags=<hash> depends=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
   stores the tracker status, so an `agnt` shown as NEXT stays `agnt`.
-- Named document: a subheading with `ZWANENZANG_DOC: <name>`,
-  `ZWANENZANG_VERSION` and `ZWANENZANG_HASH`. `ZWANENZANG_DOC_FORMAT`
-  set to `org-src-v1` identifies its literal source-block body (not tracker
-  metadata).
+- Inline named document, the old form pull migrates away: a subheading
+  with `ZWANENZANG_DOC: <name>`, `ZWANENZANG_VERSION` and
+  `ZWANENZANG_HASH`. `ZWANENZANG_DOC_FORMAT` set to `org-src-v1`
+  identifies its literal source-block body (not tracker metadata). The
+  client no longer writes any of these.
 
 ### Adding comments
 
@@ -588,15 +589,16 @@ never call the CLI or modify the buffer. Setting
   including cursor resets; the CLI keeps its ascending replay order.
 - Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The
   conflict tag is `zz_conflict`; it is never pushed as a tracker tag.
-- Each hidden document is one link line using a `zwanenzang:` Org link
-  type, which opens the document read-only through the CLI. The lines go
-  in a `:ZWANENZANG_HIDDEN:` drawer after the comments drawer,
-  `[[zwanenzang:<id>/<doc>][<doc> (hidden)]]` for each hidden document the
-  ticket has, rewritten from tracker state. Being a drawer, it is not part
-  of the description. `description` in `ZWANENZANG_HIDE_DOCS` is
-  reported and ignored. `zwanenzang-open` shows the document in a read-only
-  `org-mode` buffer.
-- References go in two more generated drawers after the hidden one, both
+- Named documents go in a `:ZWANENZANG_DOCUMENTS:` drawer after the
+  comments drawer, rewritten from tracker state by every pull and never
+  read back: one item per document with a current version,
+  `- [[zwanenzang:<id>/<name>][<name>]] DATE ACTOR`, the date and author
+  of that version. The description is the body and is not listed; a
+  ticket without other documents gets no drawer. A new version changes
+  the drawer, so unlike the link drawers below it counts as pulling the
+  ticket. Pull removes the `:ZWANENZANG_HIDDEN:` drawer earlier versions
+  wrote in its place.
+- References go in two more generated drawers after the documents one, both
   rewritten from tracker state by every pull and never read back:
   `:ZWANENZANG_RELATIONS:` (Prerequisites, Blocks, Related) and
   `:ZWANENZANG_CODE:` (Branches, MRs). Each holds one top-level list item
@@ -649,8 +651,8 @@ tracker.
   naming a keyword the buffer does not define, or a status outside the
   vocabulary, is reported and ignored. Without the property, each TODO
   keyword maps the status of the same name, ignoring case.
-- Field by field, for status, title, tags, dependencies, parent, description and each
-  named document: the remote value applies when Org still shows the
+- Field by field, for status, title, tags, dependencies, parent and
+  description: the remote value applies when Org still shows the
   value as last synced; Org's value stays when only Org changed; when
   both changed, Org's value stays, the heading gets `zz_conflict` and
   the skipped remote value goes in the conflict drawer. A field with no
@@ -702,9 +704,10 @@ tracker.
   lines and `:END:` lines get the comma. Skipped values are fixed-width
   `: ` lines. Drawers end at `:END:` in any case, as in Org. This comma is
   the client's own: descriptions and comments are entry text, not source
-  blocks, and Org has no quoting convention there. Named documents use
-  Org's source-block quoting instead, below.
-- Visible named documents use a dedicated codec, not the description/drawer
+  blocks, and Org has no quoting convention there. Inline named documents
+  of the old form used Org's source-block quoting instead, below.
+- Inline named documents (the old form, read for migration and push only)
+  use a dedicated codec, not the description/drawer
   parser. `org-src-v1` bodies end in one `#+begin_src org -i :eval never
   :exports code :noweb no` block. Its content uses Org's own source-block
   quoting (`org-escape-code-in-string`): one more comma before a `*` or
@@ -718,9 +721,7 @@ tracker.
   Parent moves and refiles do not shift contained prose headings. Links keep
   their existing Org-file base; no checkout projection is introduced.
 - An absent format property means the legacy comma-escaped representation,
-  even if its prose contains source blocks. Pull migrates visible documents,
-  preserving unsynced local edits and their decoded baseline; migration alone
-  writes no tracker version. Adoption retains the codec while clearing old
+  even if its prose contains source blocks. Adoption retains the codec while clearing old
   state; duplicate detachment preserves literal prose before dropping client
   properties. Unknown formats or malformed wrappers refuse sync before any
   apply, rather than publishing fences or truncated text. Repair the wrapper
@@ -741,7 +742,7 @@ tracker.
   then do not read as edited.
 - Writing a body keeps planning lines first and the other drawers in
   their order, then `:ZWANENZANG_CONFLICT:`, then the text, then the
-  comments, hidden, relations and code drawers. A comments drawer in the old position above
+  comments, documents, relations and code drawers. A comments drawer in the old position above
   the text moves down the next time the body is written. Human text around
   drawers moves, verbatim, in front of the tail drawers; the description it
   forms is unchanged.
@@ -760,10 +761,19 @@ tracker.
   the moved entries' outline hiding and respect a folded destination.
   Opening a changed drawer does not reveal it through an outline fold.
   These visibility updates do not save the file or repair pre-existing damage.
-- Named documents are the ticket heading's direct children with
-  `ZWANENZANG_DOC`, titled with the document name. A tracker document
-  without such a subheading gets one, including one the human deleted:
-  removing it from the buffer is not a deletion.
+- Inline named documents, the ticket heading's direct children with
+  `ZWANENZANG_DOC` that earlier versions wrote, are migrated away: pull
+  deletes such a subheading with its subtree when its text is the one
+  last synced (`ZWANENZANG_HASH`), the tracker's current text, or empty
+  with no such document in the tracker. One with edits the tracker
+  lacks stays, with a conflict note on its ticket to push it or delete
+  the heading; so does one carrying anything of the human's that the
+  tracker does not have and deleting would lose: subheadings, properties
+  other than the client's (`ID`, `CUSTOM_ID` and the like), planning
+  lines, a TODO keyword, priority, tags or drawers of its own. A second
+  heading for one name, and one named `description`, stay too. Pull never writes such a subheading, and the
+  tracker's text is never compared into Org: the documents drawer links
+  it. Migration writes no tracker version.
 - `reset: true` needs nothing special: pull always compares full state
   with the sync state, and comments are re-rendered from state, so
   nothing is duplicated. It is reported.
@@ -811,9 +821,12 @@ does.
   included. Grouping headings are transparent; the inbox or scope root
   means no ancestor. `parent` is sent only when the nesting changed since
   `nest=`, so a ticket parked in the inbox keeps its tracker parent.
-- New documents: a direct child with `ZWANENZANG_DOC` and no recorded hash.
-  A name in `ZWANENZANG_HIDE_DOCS`, the name `description` and a second
-  heading for a name already seen are refused with a report line.
+- Inline documents of the old form are still pushed during the
+  transition, so text typed into one is not lost: an edited one sends a
+  new version, one with no recorded hash a first version, and the pull
+  ending the push then removes it as synced. The name `description` and
+  a second heading for a name already seen are refused with a report
+  line. `ZWANENZANG_HIDE_DOCS` no longer holds any back.
 - Blocked and skipped: foreign and duplicate ids, a tombstoned ticket, an
   Org keyword with no status or no keyword at all, a tracker status with no
   keyword, an empty title. The final pull writes the tag and note, because
@@ -831,6 +844,42 @@ does.
   unreachable remote is reported and the rest works on the local clone.
   `zwanenzang-sync-all` does that for every scope in `zwanenzang-org-files`;
   a scope that fails is reported and the others still run.
+
+### Document buffers
+
+Decided 2026-11-13 (ZZ-0028/ZZ-0042): named documents leave the outline.
+
+- Following a `zwanenzang:<id>/<name>` link, from a ticket's documents
+  drawer, a show buffer or anywhere `zwanenzang-open` works, opens an
+  editable `org-mode` buffer `*zwanenzang NUMBER NAME*`
+  (`zwanenzang-document-mode`) filled by `doc get`. It remembers the
+  version it shows and the scope and tracker it was opened from. Nothing
+  is written to a file. A buffer already open for that document is shown
+  as it is when it holds unsaved edits and refreshed from the tracker
+  otherwise.
+- `C-c C-c` writes the whole text, however the buffer is narrowed,
+  normalized as all prose is, as a new version
+  in one `apply` `doc` change with the shown version as `base`, the same
+  compare-and-set as `doc set --base`. It then closes the buffer and
+  pulls the scope once, as sending a comment does; a document opened
+  outside any live scope is only reported. Unchanged text writes nothing
+  and closes the buffer. An empty new document is refused.
+- When another version was written since (`stale-doc-base`), nothing is
+  written and the buffer stays as it is. The refusal and the header line
+  name that version's author. A second `C-c C-c` asks "Replace version by
+  AUTHOR?"; yes writes against that version as the new base, no keeps
+  the text. `M-x zwanenzang-document-ediff` compares the buffer with the
+  tracker's current text.
+- `C-c C-k` closes the buffer without writing, asking first when it was
+  edited.
+- `zwanenzang-new-document` asks for a name on a pushed ticket heading
+  and opens an empty buffer; its first save creates the document (`base`
+  null). The name must be what the CLI accepts (letters, digits, `-`,
+  `_`, at most 64) and not `description`; a name the ticket has opens
+  that document.
+- A document buffer is prose, not a scope: client commands that act on a
+  scope refuse there, and Org notes behave as in any Org buffer, as in a
+  source editor.
 
 ### Errors and reports
 

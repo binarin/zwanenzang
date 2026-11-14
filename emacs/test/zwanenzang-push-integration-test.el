@@ -21,7 +21,6 @@
           ":ZWANENZANG: %s\n"
           ":ZWANENZANG_KEYWORDS: TODO=next,todo NEXT=agnt,revw DONE=done"
           " CNCL=cncl,wait\n"
-          ":ZWANENZANG_HIDE_DOCS: status\n"
           ":END:\n")
   "An Org file with one scope; %s is the tracker.  WAIT has no status.")
 
@@ -386,8 +385,9 @@
       (zwanenzang-test-at-root #'zwanenzang-sync)
       (save-excursion
         (zwanenzang-test-goto id)
-        (search-forward "Base text") (replace-match "My text")
-        (search-forward "Base plan") (replace-match "My plan"))
+        (search-forward "Base text") (replace-match "My text"))
+      ;; An inline copy earlier versions wrote, edited before upgrading.
+      (zwanenzang-test-inline-doc trk id "plan" "My plan\n")
       ;; The agent works in its own clone and publishes first.
       (let ((agent (zwanenzang-test-clone net "agent-test-repo")))
         (zwanenzang-test-set-doc agent id "plan" "Agent plan\n")
@@ -406,6 +406,7 @@
                               (zwanenzang-test--doc-versions trk id "plan")))
         (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))
         (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
+        (should-not (save-excursion (zwanenzang-test-goto id) (zwanenzang--doc-headings)))
         ;; The agent gets the human's version on its next sync.
         (zwanenzang-test-cli agent "sync")
         (should (equal (zwanenzang-test--doc-text agent id "plan") "My plan\n"))))))
@@ -419,14 +420,13 @@
       (zwanenzang-test-pull)
       (let ((agent (zwanenzang-test-clone net "agent-test-repo")))
         (zwanenzang-test-set-doc agent id "plan" "Agent plan\n")
-        (save-excursion
-          (zwanenzang-test-goto id)
-          (search-forward "Base plan") (replace-match "My plan"))
+        (zwanenzang-test-inline-doc trk id "plan" "My plan\n")
         (zwanenzang-test-at-root #'zwanenzang-push)
         (should (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))
         (should (string-match-p "My plan" (buffer-string)))
         (zwanenzang-test-at-root #'zwanenzang-push)
         (should (equal (zwanenzang-test--doc-text trk id "plan") "My plan\n"))
+        (should-not (save-excursion (zwanenzang-test-goto id) (zwanenzang--doc-headings)))
         (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))))))
 
 (ert-deftest zwanenzang-push-keeps-a-drawer-like-line-with-a-human-drawer-below ()
@@ -468,6 +468,8 @@
         (pushes-nothing)))))
 
 (ert-deftest zwanenzang-push-sends-a-new-document ()
+  ;; Inline document headings of the old form are still pushed, whatever
+  ;; their name; the pull after the push removes them.
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
     (let ((id (zwanenzang-test-create trk "Ticket")))
       (zwanenzang-test-pull)
@@ -479,12 +481,15 @@
       (zwanenzang-test-clear-report)
       (zwanenzang-test-at-root #'zwanenzang-push)
       (should (equal (zwanenzang-test--doc-text trk id "notes") "A note\n"))
-      (should-not (alist-get 'status (alist-get 'documents (zwanenzang-test-show trk id))))
-      (should (string-match-p "document status not pushed" (zwanenzang-test-report)))
+      (should (equal (zwanenzang-test--doc-text trk id "status") "No\n"))
+      (should-not (string-match-p "not pushed" (zwanenzang-test-report)))
       (save-excursion
         (zwanenzang-test-goto id)
-        (goto-char (cdr (assoc "notes" (zwanenzang--doc-headings))))
-        (should (org-entry-get nil "ZWANENZANG_VERSION"))))))
+        (should-not (zwanenzang--doc-headings)))
+      (should-not (string-match-p "Notes for later\\|Secret" (buffer-string)))
+      (let ((entry (zwanenzang-test-entry id)))
+        (should (string-match-p (regexp-quote (format "[[zwanenzang:%s/notes][notes]]" id)) entry))
+        (should (string-match-p (regexp-quote (format "[[zwanenzang:%s/status][status]]" id)) entry))))))
 
 (ert-deftest zwanenzang-push-reparents-through-a-grouping-heading ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
@@ -712,8 +717,7 @@
       (zwanenzang-test-goto top)
       (zwanenzang--write-body
        (zwanenzang--compose-body (zwanenzang--body) nil "Unsynced description\n"))
-      (goto-char (cdr (assoc "plan" (zwanenzang--doc-headings))))
-      (zwanenzang--write-document "Unsynced plan\n")
+      (zwanenzang-test-inline-doc trk top "plan" "Unsynced plan\n")
       (zwanenzang-test-goto kid)
       (org-todo "CNCL")
       (zwanenzang-test--edit-title top "Unsynced title")
@@ -1028,9 +1032,7 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
     (let ((id (zwanenzang-test-create trk "Ticket")))
       (zwanenzang-test-set-doc trk id "plan" "Base plan\n")
       (zwanenzang-test-pull)
-      (save-excursion
-        (zwanenzang-test-goto id)
-        (search-forward "Base plan") (replace-match "My plan"))
+      (zwanenzang-test-inline-doc trk id "plan" "My plan\n")
       (zwanenzang-test-append "** TODO Also new\n")
       (pcase-let ((`(,call . ,applies) (zwanenzang-test--writing-before-apply trk id 1)))
         (let ((zwanenzang--call call))
@@ -1047,9 +1049,7 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
     (let ((id (zwanenzang-test-create trk "Ticket")))
       (zwanenzang-test-set-doc trk id "plan" "Base plan\n")
       (zwanenzang-test-pull)
-      (save-excursion
-        (zwanenzang-test-goto id)
-        (search-forward "Base plan") (replace-match "My plan"))
+      (zwanenzang-test-inline-doc trk id "plan" "My plan\n")
       (zwanenzang-test-append "** TODO Also new\n")
       (let ((before (buffer-string))
             (on-disk (zwanenzang-test--on-disk)))
@@ -1085,12 +1085,7 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
                                "Text\n#+begin_src sh\nls\n#+end_src\n#+TITLE: x\n")
       (zwanenzang-test-set-doc trk id "plan" "Plan\n#+begin_quote\nq\n#+end_quote\n")
       (zwanenzang-test-pull)
-      (save-excursion
-        (zwanenzang-test-goto id)
-        (goto-char (cdr (assoc "plan" (zwanenzang--doc-headings))))
-        (let ((parts (zwanenzang--document-parts)))
-          (zwanenzang--write-body (zwanenzang--compose-body (car parts) nil (cdr parts))))
-        (org-entry-delete nil "ZWANENZANG_DOC_FORMAT"))
+      (zwanenzang-test-inline-doc trk id "plan" "Plan\n#+begin_quote\nq\n#+end_quote\n" t)
       (save-excursion
         (goto-char (point-min))
         (outline-next-heading)
@@ -1101,8 +1096,10 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
             (zwanenzang--call (lambda (dir args &optional input)
                                 (when (member "apply" args) (setq applied t))
                                 (zwanenzang-test-call dir args input))))
-        (should (string-match-p ": nothing changed\\'"
+        ;; The synced inline copy goes; nothing is pushed.
+        (should (string-match-p ": 1 pulled\\'"
                                 (zwanenzang-test-at-root #'zwanenzang-push)))
+        (should-not (save-excursion (zwanenzang-test-goto id) (zwanenzang--doc-headings)))
         (should-not applied)
         (should (equal (zwanenzang-test-head trk) head)))
       (should (equal (zwanenzang-test--doc-text trk id "description")

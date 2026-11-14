@@ -196,6 +196,41 @@ the tracker does."
           (zwanenzang-test-cli dir "doc" "set" ref name "--base" base "--file" file))
       (delete-file file))))
 
+(defun zwanenzang-test-write-inline-doc (text)
+  "Write TEXT in the inline named-document heading at point.
+The client no longer writes named documents into Org; this recreates the
+`org-src-v1' form earlier versions wrote, for migration and push tests."
+  (zwanenzang--write-body (zwanenzang--compose-document nil text))
+  (zwanenzang--put "ZWANENZANG_DOC_FORMAT" zwanenzang--document-format))
+
+(defun zwanenzang-test-inline-doc (dir id name text &optional legacy)
+  "Give ticket ID's heading an inline document NAME holding TEXT; return a marker.
+This is the subheading earlier versions pulled.  Its sync state is the
+current version of NAME in the tracker DIR and the hash of that text,
+so TEXT other than the tracker's is a local edit.  LEGACY writes the
+comma-escaped body instead of the `org-src-v1' source block."
+  (let* ((doc (alist-get (intern name) (alist-get 'documents (zwanenzang-test-show dir id))))
+         (version (and doc (stringp (alist-get 'current doc)) (alist-get 'current doc)))
+         (synced (and version (alist-get 'text (zwanenzang-test-cli dir "doc" "get" id name)))))
+    (save-excursion
+      (zwanenzang-test-goto id)
+      (let ((level (org-current-level)))
+        (goto-char (zwanenzang--subtree-end (point)))
+        (unless (bolp) (insert "\n"))
+        (let ((marker (copy-marker (point))))
+          (insert (make-string (1+ level) ?*) " " name
+                  "\n:PROPERTIES:\n:ZWANENZANG_DOC: " name "\n:END:\n")
+          (goto-char marker)
+          (if legacy
+              (zwanenzang--write-body
+               (zwanenzang--compose-body (zwanenzang--body) nil text))
+            (zwanenzang-test-write-inline-doc text))
+          (when version
+            (org-entry-put nil "ZWANENZANG_VERSION" version)
+            (org-entry-put nil "ZWANENZANG_HASH"
+                           (zwanenzang--hash (zwanenzang--normalize-text synced))))
+          marker)))))
+
 (defun zwanenzang-test-append-raw (dir actor line)
   "Append the raw event LINE to ACTOR's log in the disposable tracker DIR."
   (zwanenzang-test-assert-disposable dir)

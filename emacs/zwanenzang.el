@@ -303,12 +303,15 @@ Nothing in such a line is markup, so any text is safe in a drawer."
 ;; next heading.  Planning lines come first, then drawers (the property
 ;; drawer among them) and text, which may be interleaved.  The
 ;; description is the text, without drawers or planning lines.  The
-;; client writes its comments, hidden, relations and code drawers last,
+;; client writes its comments, documents, relations and code drawers last,
 ;; after the text.
 
 (defconst zwanenzang--tail-drawers
-  '("ZWANENZANG_COMMENTS" "ZWANENZANG_HIDDEN" "ZWANENZANG_RELATIONS" "ZWANENZANG_CODE")
+  '("ZWANENZANG_COMMENTS" "ZWANENZANG_DOCUMENTS" "ZWANENZANG_RELATIONS" "ZWANENZANG_CODE")
   "Drawers kept at the end of a ticket's body, in this order.")
+
+(defconst zwanenzang--legacy-drawers '("ZWANENZANG_HIDDEN")
+  "Generated drawers earlier versions wrote, which pulls now remove.")
 
 (defconst zwanenzang--link-drawers '("ZWANENZANG_RELATIONS" "ZWANENZANG_CODE")
   "Tail drawers of references only, rewritten from tracker state by every pull.
@@ -433,11 +436,6 @@ Keep host drawers separate from the literal source payload."
             (org-escape-code-in-string
              (zwanenzang--normalize-text (or text local)))
             "#+end_src\n")))
-
-(defun zwanenzang--write-document (text)
-  "Write TEXT in the named document at point, migrating legacy bodies."
-  (zwanenzang--write-body (zwanenzang--compose-document nil text))
-  (zwanenzang--put "ZWANENZANG_DOC_FORMAT" zwanenzang--document-format))
 
 (defun zwanenzang--check-source-edit ()
   "Refuse a client operation while this host buffer has a source editor.
@@ -758,11 +756,15 @@ If BODY exits non-locally, every change it made is undone."
 
 ;;;; Scopes
 
+(defvar zwanenzang--document)           ; Document buffers, below
+
 (defun zwanenzang--scope-root ()
   "A marker at the scope root containing point.
 That is the nearest heading at or above point with a ZWANENZANG property."
   (when (bound-and-true-p org-src-mode)
     (user-error "zwanenzang: source editors are prose, not tracker scopes"))
+  (when zwanenzang--document
+    (user-error "zwanenzang: document buffers are prose, not tracker scopes"))
   (zwanenzang--check-source-edit)
   (org-with-wide-buffer
    (when (org-before-first-heading-p)
@@ -1283,7 +1285,7 @@ nesting changed) or `conflict'."
 (cl-defstruct (zwanenzang--pull (:constructor zwanenzang--pull-create)
                                 (:copier nil))
   "What one scope's pull works with and collects."
-  root dir tracker-dir map hidden actors
+  root dir tracker-dir map actors
   known statuses tracker                ; last successful read, for dependency checks
   (ids (make-hash-table :test #'equal)) ; id -> marker, unique headings only
   moves
@@ -1334,19 +1336,31 @@ Reverse replay order, not wall-clock timestamps; leave TICKET unchanged."
                             "\n")))))
    (reverse (alist-get 'comments ticket)) ""))
 
-(defun zwanenzang--hidden-content (pull ticket)
-  "The :ZWANENZANG_HIDDEN: drawer content for TICKET.
-One link for each hidden document it has."
+(defun zwanenzang--documents-content (pull ticket)
+  "The :ZWANENZANG_DOCUMENTS: drawer content for TICKET.
+One item per named document with a current version: a link that opens
+it, then the date and author of that version.  The description is the
+body, so it is not listed."
   (mapconcat
-   (lambda (name)
-     (let ((doc (alist-get (intern name) (alist-get 'documents ticket))))
-       (if (and doc (zwanenzang--null (alist-get 'current doc)))
-           (concat (org-link-make-string
-                    (format "zwanenzang:%s/%s" (alist-get 'id ticket) name)
-                    (format "%s (hidden)" name))
-                   "\n")
-         "")))
-   (zwanenzang--pull-hidden pull) ""))
+   (lambda (doc)
+     (let* ((name (symbol-name (car doc)))
+            (current (zwanenzang--null (alist-get 'current (cdr doc))))
+            (version (and current
+                          (seq-find (lambda (v) (equal (alist-get 'id v) current))
+                                    (alist-get 'versions (cdr doc))))))
+       (if (or (equal name "description") (null current))
+           ""
+         (concat "- "
+                 (org-link-make-string
+                  (format "zwanenzang:%s/%s" (alist-get 'id ticket) name) name)
+                 (if version
+                     (format " %s %s"
+                             (substring (alist-get 'ts version) 0
+                                        (min 10 (length (alist-get 'ts version))))
+                             (zwanenzang--actor-name pull (alist-get 'actor version)))
+                   "")
+                 "\n"))))
+   (alist-get 'documents ticket) ""))
 
 (defun zwanenzang--list-content (kinds)
   "Org list text for KINDS, an alist of labels and lists of item lines.
@@ -1483,42 +1497,73 @@ as `zwanenzang--merge' does."
   "The normalized current text of document NAME, a symbol, in TEXTS."
   (zwanenzang--normalize-text (or (alist-get name texts) "")))
 
-(defun zwanenzang--pull-docs (pull ticket texts)
-  "Pull the named documents of TICKET into subheadings at point.
-TEXTS maps document names to their current text.  A document without
-a subheading gets one.  Return the conflicts."
-  (let ((docs (zwanenzang--doc-headings))
-        conflicts)
-    (dolist (doc (alist-get 'documents ticket))
-      (let ((name (symbol-name (car doc)))
-            (version (zwanenzang--null (alist-get 'current (cdr doc))))
-            (remote (zwanenzang--remote-text texts (car doc))))
-        (unless (or (equal name "description") (null version)
-                    (member name (zwanenzang--pull-hidden pull)))
-          (let* ((marker (cdr (assoc name docs)))
-                 (fresh (null marker)))
-            (unless marker
-              (setq marker (zwanenzang--insert-heading
-                            (if docs
-                                (zwanenzang--subtree-end (cdar (last docs)))
-                              (cdr (zwanenzang--body-bounds)))
-                            (1+ (org-current-level)) name `(("ZWANENZANG_DOC" . ,name))))
-              (setq docs (append docs (list (cons name marker)))))
+(defun zwanenzang--inline-doc-own-content-p ()
+  "Whether the named-document heading at point holds more than its document.
+That is what removing the heading would lose and the tracker does not
+have: subheadings, properties other than the client's (an Org ID or
+CUSTOM_ID among them), planning lines, a TODO keyword, priority or tags
+on the heading, or drawers other than its properties and the client's."
+  (let ((heading (zwanenzang--heading)))
+    (or (save-excursion
+          (let ((level (org-current-level)))
+            (and (outline-next-heading) (not (eobp))
+                 (> (org-current-level) level))))
+        (plist-get heading :keyword)
+        (plist-get heading :priority)
+        (plist-get heading :tags)
+        ;; The drawer itself, not `org-entry-properties', which adds
+        ;; CATEGORY and other values no heading wrote.
+        (let ((block (org-get-property-block)) found)
+          (when block
             (save-excursion
-              (goto-char marker)
-              (let ((local (zwanenzang--document-text)))
-                (zwanenzang--write-document local))
-              (pcase (zwanenzang--merge-prose remote fresh "ZWANENZANG_HASH")
-                ('conflict
-                 (push (list (format "document %s" name)
-                             (format "tracker version %s skipped; Org text kept" version)
-                             remote)
-                       conflicts))
-                (decision
-                 (when (eq decision 'apply)
-                   (zwanenzang--write-document remote))
-                 (zwanenzang--put "ZWANENZANG_VERSION" version)
-                 (zwanenzang--put "ZWANENZANG_HASH" (zwanenzang--hash remote)))))))))
+              (goto-char (car block))
+              (while (and (not found) (re-search-forward org-property-re (cdr block) t))
+                (unless (string-prefix-p "ZWANENZANG" (match-string-no-properties 2))
+                  (setq found t)))))
+          found)
+        (seq-some (lambda (s)
+                    (or (eq (car s) 'planning)
+                        (and (eq (car s) 'drawer)
+                             (not (equal (nth 2 s) "PROPERTIES"))
+                             (not (string-prefix-p "ZWANENZANG_" (nth 2 s))))))
+                  (zwanenzang--body-segments (car (zwanenzang--document-parts)))))))
+
+(defun zwanenzang--migrate-docs (texts)
+  "Remove the inline named documents of the ticket at point once synced.
+Earlier versions wrote named documents as subheadings; the documents
+drawer now links them instead.  A subheading whose text is the one last
+synced, or the tracker's current text, is deleted with its subtree.  One
+holding edits the tracker lacks, or anything else, stays and is noted, so
+the human pushes or discards it.  TEXTS maps document names to their
+current text.  Return the conflicts."
+  (let ((docs (zwanenzang--doc-headings))
+        seen conflicts doomed)
+    (dolist (doc docs)
+      (let ((name (car doc)))
+        (save-excursion
+          (goto-char (cdr doc))
+          (let* ((local (zwanenzang--document-text))
+                 (hash (org-entry-get nil "ZWANENZANG_HASH"))
+                 (remote (alist-get (intern name) texts))
+                 (note
+                  (cond
+                   ((or (equal name "description") (member name seen))
+                    "this inline heading is not a synced document; move its text and delete it")
+                   ((zwanenzang--inline-doc-own-content-p)
+                    "the inline heading holds subheadings, properties, planning, tags or drawers of its own; move them, then delete it")
+                   ((or (and hash (equal hash (zwanenzang--hash local)))
+                        (and remote (equal local (zwanenzang--normalize-text remote)))
+                        ;; Nothing to lose, and push would not create it.
+                        (and (not remote) (string-empty-p local)))
+                    nil)
+                   (t "the inline copy has edits the tracker lacks; push it or delete the heading"))))
+            (push name seen)
+            (if note
+                (push (list (format "document %s" name) note nil) conflicts)
+              (push (cdr doc) doomed))))))
+    ;; Last first, so the earlier subtrees' positions stay valid.
+    (dolist (marker doomed)
+      (delete-region marker (zwanenzang--subtree-end marker)))
     (nreverse conflicts)))
 
 (defun zwanenzang--tags-hash (tags)
@@ -1686,12 +1731,13 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                         "the heading has no TODO keyword; not pushed")
                       nil)
                 conflicts))
-        (setq conflicts (append (nreverse conflicts) (zwanenzang--pull-docs pull ticket texts)))
+        (setq conflicts (append (nreverse conflicts) (zwanenzang--migrate-docs texts)))
         (zwanenzang--write-body
          (zwanenzang--compose-body
           (zwanenzang--body)
           `(("ZWANENZANG_COMMENTS" . ,(zwanenzang--comments-content pull ticket))
-            ("ZWANENZANG_HIDDEN" . ,(zwanenzang--hidden-content pull ticket))
+            ("ZWANENZANG_DOCUMENTS" . ,(zwanenzang--documents-content pull ticket))
+            ("ZWANENZANG_HIDDEN")
             ("ZWANENZANG_RELATIONS"
              . ,(zwanenzang--relations-content ticket (zwanenzang--pull-known pull) map))
             ("ZWANENZANG_CODE" . ,(zwanenzang--code-content ticket))
@@ -1977,9 +2023,21 @@ Only priority refusals carry this metadata.  Never edit or save the file."
       (find-file-other-window (car remedy)))
     (message "zwanenzang: [priority] snippet copied to kill-ring (see *zwanenzang*); align Org to tracker values, or replace the TOML section tracker-wide, save, commit and push, then retry")))
 
-(defun zwanenzang--hide-docs (root)
-  "The names in the ZWANENZANG_HIDE_DOCS of the scope at ROOT."
-  (split-string (or (org-entry-get root "ZWANENZANG_HIDE_DOCS") "")))
+(defvar-local zwanenzang--hide-docs-reported nil
+  "Markers at the scope roots whose ZWANENZANG_HIDE_DOCS was reported.")
+
+(defun zwanenzang--report-hide-docs (pull root)
+  "Report in PULL that the scope at ROOT has ZWANENZANG_HIDE_DOCS, once.
+Named documents are never written inline any more, so there is nothing
+to hide.  The property is the human's, so it is not removed; the report
+says so once per scope in each Emacs session."
+  (setq zwanenzang--hide-docs-reported
+        (seq-filter #'marker-buffer zwanenzang--hide-docs-reported))
+  (when (and (org-entry-get root "ZWANENZANG_HIDE_DOCS")
+             (not (seq-find (lambda (m) (= m root)) zwanenzang--hide-docs-reported)))
+    (push (copy-marker root) zwanenzang--hide-docs-reported)
+    (zwanenzang--pull-line
+     pull "ZWANENZANG_HIDE_DOCS is ignored: documents are links in :ZWANENZANG_DOCUMENTS:; remove the property")))
 
 (defun zwanenzang--pull-scope (root)
   "Pull the scope at ROOT, a marker at its root heading; return the pull.
@@ -2010,16 +2068,12 @@ and the buffer is not saved."
            (let ((km (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
                                               (alist-get 'statuses tracker)
                                               org-todo-keywords-1
-                                              (alist-get 'retired_statuses tracker)))
-                 (hide (zwanenzang--hide-docs root)))
+                                              (alist-get 'retired_statuses tracker))))
              (setf (zwanenzang--pull-map pull) (car km)
-                   (zwanenzang--pull-hidden pull) (remove "description" hide)
                    (zwanenzang--pull-actors pull) (alist-get 'actors tracker)
                    (zwanenzang--pull-tracker-dir pull) dir)
              (dolist (p (cdr km)) (zwanenzang--pull-line pull "%s" p))
-             (when (member "description" hide)
-               (zwanenzang--pull-line
-                pull "ZWANENZANG_HIDE_DOCS: the description cannot be hidden; ignored")))
+             (zwanenzang--report-hide-docs pull root))
            (when (eq (alist-get 'reset result) t)
              (zwanenzang--pull-line
               pull "history changed under the scope cursor: compared in full"))
@@ -2178,7 +2232,7 @@ the send writes together with the comment; until then nothing changes.")
   "The ticket heading for a note at point, or nil.
 A named document belongs to its direct parent ticket, not an inherited ID.
 Structural headings and nested scopes never borrow an ancestor's ticket."
-  (when (derived-mode-p 'org-mode)
+  (when (and (derived-mode-p 'org-mode) (not zwanenzang--document))
     (org-with-wide-buffer
      (unless (org-before-first-heading-p)
        (org-back-to-heading t)
@@ -2728,10 +2782,11 @@ The base is the current version, so a stale one cannot refuse the batch."
       (zwanenzang--plan-add plan "doc" ref
                             `((name . ,name) (text . ,local) (base . ,(or version :null)))))))
 
-(defun zwanenzang--plan-docs (plan ref ticket texts hidden)
-  "Add to PLAN the named documents of ticket REF, the heading at point.
-TICKET and TEXTS are as in `zwanenzang--plan-doc'; HIDDEN lists the
-names that are never pushed."
+(defun zwanenzang--plan-docs (plan ref ticket texts)
+  "Add to PLAN the inline named documents of ticket REF, the heading at point.
+Earlier versions wrote them as subheadings, and push still sends their
+edits, so nothing typed there is lost; the pull after it removes them.
+TICKET and TEXTS are as in `zwanenzang--plan-doc'."
   (let (seen)
     (dolist (doc (zwanenzang--doc-headings))
       (let ((name (car doc)))
@@ -2740,9 +2795,6 @@ names that are never pushed."
           (zwanenzang--plan-line plan "%s: document heading \"description\" not pushed: %s"
                                  (zwanenzang--heading-label)
                                  "the description is the ticket's body"))
-         ((member name hidden)
-          (zwanenzang--plan-line plan "%s: document %s not pushed: it is in ZWANENZANG_HIDE_DOCS"
-                                 (zwanenzang--heading-label) name))
          ((member name seen)
           (zwanenzang--plan-line plan "%s: second heading for document %s not pushed"
                                  (zwanenzang--heading-label) name))
@@ -2752,11 +2804,11 @@ names that are never pushed."
             (goto-char (cdr doc))
             (zwanenzang--plan-doc plan ref name ticket texts))))))))
 
-(defun zwanenzang--plan-fields (plan heading ref entry map hidden targets &optional known)
+(defun zwanenzang--plan-fields (plan heading ref entry map targets &optional known)
   "Add to PLAN what differs from sync state on HEADING, a scanned heading at point.
 REF names its ticket in the request.  ENTRY is its read result, nil for a
-new ticket.  MAP is the keyword map, HIDDEN the hidden documents and
-TARGETS the ids that cannot be parents.  KNOWN maps all tracker ids to
+new ticket.  MAP is the keyword map and TARGETS the ids that cannot be
+parents.  KNOWN maps all tracker ids to
 summaries for resolving dependency numbers, including absent prerequisites."
   (let* ((ticket (alist-get 'ticket entry))
          (shown (zwanenzang--heading))
@@ -2829,7 +2881,7 @@ summaries for resolving dependency numbers, including absent prerequisites."
           (zwanenzang--plan-add plan "parent" ref
                                 `((to . ,(or (zwanenzang--plan-ref plan up) :null)))))))
     (zwanenzang--plan-doc plan ref "description" ticket (alist-get 'documents entry))
-    (zwanenzang--plan-docs plan ref ticket (alist-get 'documents entry) hidden)))
+    (zwanenzang--plan-docs plan ref ticket (alist-get 'documents entry))))
 
 (defun zwanenzang--plan-create-ticket (plan heading map targets)
   "Add to PLAN the create for HEADING, a scanned new ticket at point.
@@ -2863,11 +2915,11 @@ Unless something blocks it, which is reported.  MAP and TARGETS are as in
              (if (equal name "description") name (format "document %s" name))))
     (op op)))
 
-(defun zwanenzang--plan-push (headings blocked entries map hidden &optional known)
+(defun zwanenzang--plan-push (headings blocked entries map &optional known)
   "The plan of one push, comparing Org with a read; the buffer is not changed.
 HEADINGS is from `zwanenzang--scan-all', BLOCKED from
 `zwanenzang--blocked-headings', ENTRIES the tickets of the read, MAP the
-keyword map and HIDDEN the hidden documents.  Creates come first, so later
+keyword map.  Creates come first, so later
 changes can refer to them.  The rest go in buffer order, ancestors first,
 so a reshuffled nesting has no moment with a parent cycle.  KNOWN maps all
 tracker ids to summaries for resolving dependency numbers."
@@ -2895,14 +2947,14 @@ tracker ids to summaries for resolving dependency numbers."
                (shown (zwanenzang--heading)))
           (cond
            (new
-            (zwanenzang--plan-fields plan h `((created . ,(cdr new))) nil map hidden targets known))
+            (zwanenzang--plan-fields plan h `((created . ,(cdr new))) nil map targets known))
            ((or (not id) (gethash id targets)))
            ((not (and (rassoc (plist-get shown :keyword) map)
                       (assoc (alist-get 'status (alist-get 'ticket entry)) map))))
            ((string-empty-p (plist-get shown :title))
             (zwanenzang--plan-line plan "%s: not pushed: the heading has no title" id))
            (t
-            (zwanenzang--plan-fields plan h id entry map hidden targets known))))))
+            (zwanenzang--plan-fields plan h id entry map targets known))))))
     ;; Remove old edges before adding replacements, avoiding transient cycles.
     ;; Creates remain first and in order: their change-index references stay valid.
     (setf (zwanenzang--plan-changes plan)
@@ -3020,7 +3072,7 @@ Refusing the scope, or failing, adds nothing to OUTCOME's lines."
                                                  org-todo-keywords-1
                                                  (alist-get 'retired_statuses
                                                             (alist-get 'tracker result))))
-                   (remove "description" (zwanenzang--hide-docs root)) known)))
+                   known)))
         (zwanenzang--send-plan plan dir outcome)
         (setf (zwanenzang--outcome-problems outcome)
               (append (zwanenzang--plan-lines plan) (zwanenzang--outcome-problems outcome)))))))
@@ -3247,7 +3299,8 @@ Human properties, Org IDs and body text are retained."
   (zwanenzang--drop-archive-properties)
   (when (member "zz_conflict" (org-get-tags nil t))
     (org-set-tags (remove "zz_conflict" (org-get-tags nil t))))
-  (let ((drawers (mapcar #'list (cons "ZWANENZANG_CONFLICT" zwanenzang--tail-drawers))))
+  (let ((drawers (mapcar #'list (append '("ZWANENZANG_CONFLICT") zwanenzang--tail-drawers
+                                       zwanenzang--legacy-drawers))))
     (zwanenzang--write-body
      (if document
          (zwanenzang--compose-document drawers)
@@ -3312,8 +3365,7 @@ create-on-push, save the file as soon as the new identity lands."
            (let* ((headings (plist-get (zwanenzang--scan-all root) :headings))
                   (heading (seq-find (lambda (h) (= start (plist-get h :marker))) headings))
                   (plan (zwanenzang--plan-push
-                         (list heading) blocked (alist-get 'tickets result) map
-                         (remove "description" (zwanenzang--hide-docs root)) known)))
+                         (list heading) blocked (alist-get 'tickets result) map known)))
              (unless (zwanenzang--plan-news plan)
                (user-error "zwanenzang: cannot adopt: %s"
                            (string-join (zwanenzang--plan-lines plan) "; ")))
@@ -3592,6 +3644,7 @@ PULL carries the actor names and tracker directory for its comments."
          (description (zwanenzang--normalize-text
                        (or (alist-get 'description (alist-get 'documents entry)) "")))
          (comments (zwanenzang--comments-content pull ticket))
+         (documents (zwanenzang--documents-content pull ticket))
          (references (concat
                       (zwanenzang--list-content
                        `(("Parent" ,@(and parent (zwanenzang--ticket-links (list parent) known map)))
@@ -3611,6 +3664,7 @@ PULL carries the actor names and tracker directory for its comments."
             (if (string-empty-p description) ""
               (concat "** Description\n" (zwanenzang--escape-text description)))
             (if (string-empty-p comments) "" (concat "** Comments\n" comments))
+            (if (string-empty-p documents) "" (concat "** Documents\n" documents))
             (if (string-empty-p references) "" (concat "** References\n" references)))))
 
 (defun zwanenzang--show-ticket (id origin)
@@ -3646,8 +3700,9 @@ PULL carries the actor names and tracker directory for its comments."
 (defun zwanenzang-open (&optional path)
   "Open what a zwanenzang: link names; interactively, the link at point.
 PATH is a ticket id or `<ticket id>/<document name>'.  A ticket with a
-heading in the scope the link is in is shown there; any other ticket,
-and a document, is shown read-only in a buffer of its own.  The tracker
+heading in the scope the link is in is shown there; any other ticket
+is shown read-only in a buffer of its own.  A document opens in a
+buffer for editing it, `zwanenzang-document-mode'.  The tracker
 is the one of the scope containing point, or the one the buffer at
 point was opened from."
   (interactive)
@@ -3667,13 +3722,263 @@ point was opened from."
             (zwanenzang--jump-to (marker-buffer root) pos)
           (zwanenzang--show-ticket path origin))))
      ((string-match "\\`\\([^/]+\\)/\\(.+\\)\\'" path)
-      (let* ((name (match-string 2 path))
-             (doc (funcall zwanenzang--call (plist-get origin :dir)
-                           (list "doc" "get" (match-string 1 path) name))))
-        (zwanenzang--display-buffer
-         (format "*zwanenzang %s %s*" (alist-get 'display doc) name)
-         (alist-get 'text doc) origin)))
+      (zwanenzang--open-document (match-string 1 path) (match-string 2 path) origin))
      (t (user-error "zwanenzang: malformed link zwanenzang:%s" path)))))
+
+;;;; Document buffers
+
+;; Named documents are not written into Org files.  Following a document
+;; link opens an editable Org buffer filled from `doc get', remembering the
+;; version it shows; saving writes a new version with that version as its
+;; base, so a version written since refuses the save instead of being
+;; overwritten unseen.  Nothing is written to files.
+
+(defvar-local zwanenzang--document nil
+  "What this document buffer edits, a plist.
+:id is the ticket id, :name the document name, :display the ticket's
+number, :base the version shown (`:null' for a new document), :text the
+text as loaded, :origin the link origin (tracker directory and scope
+root), :windows and :return-to what to restore when closing, and
+:replace the version a refused save found, with :replace-actor its
+author.")
+
+(defvar zwanenzang-document-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'zwanenzang-document-save)
+    (define-key map (kbd "C-c C-k") #'zwanenzang-document-abort)
+    map))
+
+(define-derived-mode zwanenzang-document-mode org-mode "ZW-Doc"
+  "Edit a tracker document.
+\\[zwanenzang-document-save] writes a new version and pulls the scope the
+document was opened from; \\[zwanenzang-document-abort] discards the edit.
+When a version was written since this one, saving is refused and the
+text kept; saving again asks whether to replace that version.
+\\[zwanenzang-document-ediff] compares the text with the tracker's.")
+
+(defun zwanenzang--document-update-header ()
+  "Show this document buffer's target and keys in the header line."
+  (let ((doc zwanenzang--document))
+    (setq header-line-format
+          (format "Document %s of %s%s: C-c C-c save, C-c C-k abort"
+                  (plist-get doc :name) (plist-get doc :display)
+                  (cond ((plist-get doc :replace)
+                         (format " (newer version by %s; saving replaces it)"
+                                 (plist-get doc :replace-actor)))
+                        ((eq (plist-get doc :base) :null) " (new)")
+                        (t "")))))
+  (force-mode-line-update))
+
+(defun zwanenzang--document-buffer (dir id name)
+  "The live buffer editing document NAME of ticket ID in the tracker at DIR."
+  (seq-find (lambda (buffer)
+              (with-current-buffer buffer
+                (let ((doc zwanenzang--document))
+                  (and doc (equal (plist-get doc :id) id) (equal (plist-get doc :name) name)
+                       (equal (plist-get (plist-get doc :origin) :dir) dir)))))
+            (buffer-list)))
+
+(defun zwanenzang--open-document (id name origin &optional new)
+  "Open document NAME of ticket ID of ORIGIN's tracker; return the buffer.
+Unless NEW, the document's current version is read with `doc get'; NEW
+opens an empty buffer for a document to be created.  A buffer already
+editing that document is shown as it is when it holds unsaved edits,
+and refreshed otherwise."
+  (let* ((dir (plist-get origin :dir))
+         (existing (zwanenzang--document-buffer dir id name)))
+    (if (and existing (buffer-modified-p existing))
+        (progn (pop-to-buffer existing) existing)
+      (let* ((doc (and (not new)
+                       (funcall zwanenzang--call dir (list "doc" "get" id name))))
+             (display (if doc (alist-get 'display doc)
+                        (or (alist-get 'display (funcall zwanenzang--call dir (list "show" id)))
+                            id)))
+             (windows (current-window-configuration))
+             (return-to (point-marker))
+             (buffer (or existing
+                         (generate-new-buffer (format "*zwanenzang %s %s*" display name)))))
+        (pop-to-buffer buffer)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (or (alist-get 'text doc) ""))
+          (goto-char (point-min)))
+        (zwanenzang-document-mode)
+        (setq zwanenzang--link-origin origin
+              zwanenzang--document
+              (list :id id :name name :display display
+                    :base (or (and doc (alist-get 'version doc)) :null)
+                    :text (zwanenzang--normalize-text (or (alist-get 'text doc) ""))
+                    :origin origin :windows windows :return-to return-to))
+        (set-buffer-modified-p nil)
+        (setq buffer-undo-list nil)
+        (zwanenzang--document-update-header)
+        buffer))))
+
+(defun zwanenzang--document-check ()
+  "Signal unless the current buffer edits a tracker document."
+  (unless zwanenzang--document
+    (user-error "zwanenzang: not a document buffer")))
+
+(defun zwanenzang--document-close ()
+  "Kill this document buffer, restoring the windows and point before it."
+  (let ((windows (plist-get zwanenzang--document :windows))
+        (return-to (plist-get zwanenzang--document :return-to)))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer))
+    (when windows (set-window-configuration windows))
+    (when (and return-to (marker-buffer return-to))
+      (with-current-buffer (marker-buffer return-to)
+        (goto-char return-to)))
+    (when return-to (set-marker return-to nil))))
+
+(defun zwanenzang-document-abort ()
+  "Discard this document buffer without writing a version."
+  (interactive)
+  (zwanenzang--document-check)
+  (when (or (not (buffer-modified-p)) noninteractive
+            (y-or-n-p "zwanenzang: discard the edits to this document? "))
+    (zwanenzang--document-close)))
+
+(defun zwanenzang--document-current (doc)
+  "The current version of DOC's document, as (VERSION ACTOR TEXT).
+ACTOR is the author's display name.  Nil when the document has none."
+  (let* ((origin (plist-get doc :origin))
+         (dir (plist-get origin :dir))
+         (root (plist-get origin :root))
+         (since (or (and root (buffer-live-p (marker-buffer root))
+                         (org-entry-get root "ZWANENZANG_CURSOR"))
+                    :null))
+         (read (funcall zwanenzang--call dir '("read")
+                        `((cursors . ((,(intern (plist-get doc :id)) . :null)))
+                          (since . ,since))))
+         (entry (seq-find (lambda (e) (equal (alist-get 'id (alist-get 'ticket e))
+                                             (plist-get doc :id)))
+                          (alist-get 'tickets read)))
+         (name (intern (plist-get doc :name)))
+         (state (alist-get name (alist-get 'documents (alist-get 'ticket entry))))
+         (current (zwanenzang--null (alist-get 'current state)))
+         (version (and current (seq-find (lambda (v) (equal (alist-get 'id v) current))
+                                         (alist-get 'versions state)))))
+    (when current
+      (list current
+            (if version
+                (zwanenzang--actor-name
+                 (zwanenzang--pull-create :actors (alist-get 'actors (alist-get 'tracker read)))
+                 (alist-get 'actor version))
+              "unknown")
+            (or (alist-get name (alist-get 'documents entry)) "")))))
+
+(defun zwanenzang-document-save ()
+  "Write this buffer as a new version of its document, then pull its scope.
+The base is the version the buffer was opened with.  When another
+version was written since, nothing is written: the text stays, and
+saving again asks whether to replace that version.  An unchanged
+document is not written.  Return the accepted event, or nil."
+  (interactive)
+  (zwanenzang--document-check)
+  (let* ((doc zwanenzang--document)
+         (origin (plist-get doc :origin))
+         (dir (plist-get origin :dir))
+         (root (plist-get origin :root))
+         ;; The whole document, whatever is narrowed: a save replaces it.
+         (text (zwanenzang--normalize-text
+                (save-restriction
+                  (widen)
+                  (buffer-substring-no-properties (point-min) (point-max)))))
+         (base (plist-get doc :base)))
+    (when (plist-get doc :replace)
+      (unless (y-or-n-p (format "Replace version by %s? " (plist-get doc :replace-actor)))
+        (user-error "zwanenzang: not saved; the text is kept"))
+      (setq base (plist-get doc :replace)))
+    (cond
+     ((and (eq base :null) (string-empty-p text))
+      (user-error "zwanenzang: the document is empty; nothing to save"))
+     ((and (not (plist-get doc :replace)) (equal text (plist-get doc :text)))
+      (zwanenzang--document-close)
+      (message "zwanenzang: document %s unchanged; nothing written" (plist-get doc :name))
+      nil)
+     (t
+      (let ((result
+             (condition-case nil
+                 (funcall zwanenzang--call dir '("apply")
+                          `((changes . [((op . "doc") (ticket . ,(plist-get doc :id))
+                                         (data . ((name . ,(plist-get doc :name))
+                                                  (text . ,text)
+                                                  (base . ,base))))])))
+               (zwanenzang-stale-doc-base
+                (pcase-let ((`(,version ,actor ,_text) (zwanenzang--document-current doc)))
+                  (setq zwanenzang--document
+                        (plist-put (plist-put doc :replace (or version :null))
+                                   :replace-actor actor))
+                  (zwanenzang--document-update-header)
+                  (user-error "zwanenzang: %s wrote a version of %s since; text kept.  %s"
+                              actor (plist-get doc :name)
+                              "Save again to replace it, or abort"))))))
+        (let ((event (alist-get 'event (car (alist-get 'results result))))
+              (outcome (zwanenzang--outcome-create)))
+          ;; The version is written: never offer to write it again.
+          (zwanenzang--document-close)
+          (zwanenzang--note-sync outcome (alist-get 'sync result))
+          (push (format "saved document %s of %s" (plist-get doc :name) (plist-get doc :display))
+                (zwanenzang--outcome-info outcome))
+          (if (and root (buffer-live-p (marker-buffer root)))
+              (progn
+                (condition-case err
+                    (zwanenzang--pull-into outcome root)
+                  (error
+                   (push (format "Document saved; pull failed: %s. Pull again; do not save again."
+                                 (error-message-string err))
+                         (zwanenzang--outcome-problems outcome))
+                   (setf (zwanenzang--outcome-pull outcome) (zwanenzang--pull-create))))
+                (zwanenzang--report-outcome "document saved in" root outcome))
+            (zwanenzang-report
+             (format "zwanenzang: saved document %s of %s"
+                     (plist-get doc :name) (plist-get doc :display))
+             (reverse (zwanenzang--outcome-problems outcome))
+             (reverse (zwanenzang--outcome-info outcome))))
+          event))))))
+
+(defun zwanenzang-document-ediff ()
+  "Compare this document buffer with the tracker's current version, in Ediff."
+  (interactive)
+  (zwanenzang--document-check)
+  (let* ((doc zwanenzang--document)
+         (current (zwanenzang--document-current doc))
+         (buffer (get-buffer-create (format "*zwanenzang %s %s (tracker)*"
+                                            (plist-get doc :display) (plist-get doc :name)))))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (or (nth 2 current) ""))
+        (org-mode))
+      (setq buffer-read-only t))
+    (ediff-buffers (current-buffer) buffer)))
+
+;;;###autoload
+(defun zwanenzang-new-document (name)
+  "Open an empty buffer for a new document NAME of the ticket at point.
+Saving it with \\[zwanenzang-document-save] creates the document.  A
+name the ticket already has opens that document instead."
+  (interactive (list (read-string "Document name: ")))
+  (let* ((root (zwanenzang--root-at-point))
+         (heading (or (zwanenzang--comment-heading)
+                      (user-error "zwanenzang: point is not on a ticket")))
+         (id (or (org-entry-get heading "ZWANENZANG_ID")
+                 (user-error "zwanenzang: push this ticket before adding a document")))
+         (dir (zwanenzang--scope-directory root))
+         (origin (list :dir dir :root root)))
+    (cond
+     ((equal name "description")
+      (user-error "zwanenzang: the description is the ticket's body, not a named document"))
+     ((not (string-match-p "\\`[A-Za-z0-9_-]\\{1,64\\}\\'" name))
+      (user-error "zwanenzang: a document name is 1 to 64 letters, digits, `-' or `_'")))
+    (let* ((ticket (funcall zwanenzang--call dir (list "show" id)))
+           (exists (zwanenzang--null
+                    (alist-get 'current (alist-get (intern name) (alist-get 'documents ticket))))))
+      (prog1 (zwanenzang--open-document id name origin (not exists))
+        (when exists
+          (message "zwanenzang: %s already has a document %s; opened it"
+                   (alist-get 'display ticket) name))))))
 
 (add-hook 'org-blocker-hook #'zwanenzang--block-dependencies)
 (add-hook 'org-archive-hook #'zwanenzang--archive-hook)
