@@ -115,7 +115,8 @@ Recorded so they are not re-surveyed.
   confirmation that the pattern works at this scale.
 
 See [data model](01-data-model.md), [git and sync](02-git-and-sync.md),
-[org client](03-org-client.md), [milestones](04-milestones.md). The JSON
+[org client](03-org-client.md), [milestones](04-milestones.md),
+[static site](05-static-site.md). The JSON
 contract of the CLI, which clients build on, is in
 [cli-json](../agent-hooks/cli-json.md); how an agent uses a tracker starts at
 the [agent hooks overview](../agent-hooks/overview.md).

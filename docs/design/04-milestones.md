@@ -79,12 +79,17 @@ open questions that block milestone 2 are answered; the rest stay listed.
 - Bootstrap complete: the org file tracking this work becomes a synced scope
   of `zwanenzang-tracker`.
 
-## 4. Rendering
+## 4. Static HTML site via `zz render`
 
-- `render` producing the index and per-ticket pages, deterministic. Tracker
-  prose is Org, so the pages are Org too; the forge renders those.
-- Forge CI on `zwanenzang-tracker` pushing the `rendered` branch.
-- Lint check that the rendered branch matches the log.
+- Local first, implemented: `zz render DIR` writes a self-contained site
+  (two panes, fuzzy filter, full-text search, status, tag and archived
+  filters) that opens from `file://`. It reads replayed state directly and
+  converts Org prose with its own small renderer; the page is hand-written
+  under `site/`. See [static site](05-static-site.md).
+- Later: hosting the output (on the tailnet, for phone viewing) and building
+  it in CI. Forgejo serves no HTML pages from a branch, so this replaces the
+  earlier plan of Org pages on a `rendered` branch and the lint check that
+  compared that branch with the log.
 
 ## 5. Multiple trackers and remote execution
 

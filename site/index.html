@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="zwanenzang render">
+<title>Tracker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="list-pane">
+    <header class="pane-head">
+      <h1 id="tracker-name">Tracker</h1>
+      <input id="filter" type="search" placeholder="Filter by number or title  (/)"
+             autocomplete="off" spellcheck="false" aria-label="Filter tickets">
+      <input id="search" type="search" placeholder="Search all text"
+             autocomplete="off" spellcheck="false" aria-label="Search all text">
+      <details id="filters">
+        <summary>Filters <span id="filter-summary"></span></summary>
+        <div class="chip-row" id="status-chips" aria-label="Statuses"></div>
+        <div class="chip-row" id="tag-chips" aria-label="Tags"></div>
+        <div class="chip-row">
+          <button type="button" class="chip" id="archived-chip" aria-pressed="false">archived</button>
+          <label class="sort">Sort
+            <select id="sort">
+              <option value="number">by number</option>
+              <option value="activity">by last activity</option>
+            </select>
+          </label>
+        </div>
+      </details>
+      <div id="count"></div>
+    </header>
+    <nav id="tree" aria-label="Tickets"></nav>
+  </aside>
+  <main id="detail-pane">
+    <a id="back" href="#">&larr; Tickets</a>
+    <article id="detail"><p class="empty">Select a ticket.</p></article>
+  </main>
+</div>
+<noscript>This page needs JavaScript; its content is in data.js.</noscript>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

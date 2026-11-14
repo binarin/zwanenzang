@@ -221,6 +221,16 @@ pub enum Command {
     /// Report skipped events, concurrent changes, lost document edits,
     /// dangling repository aliases and unnamed actors. Exits 1 on issues.
     Lint,
+    /// Write a static HTML site of the tracker into DIR, outside the
+    /// tracker. Reads the tracker only; replaces only files an earlier
+    /// render generated there.
+    Render {
+        dir: PathBuf,
+        /// Take index.html, style.css and app.js from this directory (such
+        /// as a checkout's `site/`) instead of the embedded copies.
+        #[arg(long, value_name = "SRC")]
+        assets: Option<PathBuf>,
+    },
     /// Import tickets from another tracker.
     Import {
         #[command(subcommand)]
@@ -846,6 +856,10 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             let code = if report.error.is_some() { 1 } else { 0 };
             Ok((json!({ "sync": report }), code))
         }
+        Command::Render { dir, assets } => Ok((
+            crate::render::render(&ctx.tracker, &crate::render::Options { dir, assets })?,
+            0,
+        )),
         Command::Lint => {
             let rp = ctx.tracker.load()?;
             let (report, issues) = lint(&ctx.tracker.config, &rp);

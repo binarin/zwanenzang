@@ -132,6 +132,7 @@ them; any change to them fails with `tombstoned`.
 | `read` | nothing; request from stdin | scope read object (below) |
 | `apply` | list of changes from stdin, one mutation commit and one sync | batch apply object (below) |
 | `lint` | nothing | lint report |
+| `render DIR [--assets SRC]` | nothing in the tracker; the site in `DIR` | render object (below) |
 | `agent-hooks init` | nothing | bootstrap text (not JSON) |
 | `agent-hooks show-document NAME` | nothing | document text (not JSON) |
 | `import ai-workflow SOURCE [--exclude ENTRIES]... [--exclude-file PATH]... [--repo-alias FROM=TO]... [--dry-run]` | `actor`, then per ticket `create`, `doc`, `comment`, `branch`, `mr`, then `relate`, `parent`; copies linked files into `docs/` | import report |
@@ -692,6 +693,28 @@ against the new version. A concurrent version the clone has not fetched yet
 is not refused; once both are known, the one with the lower id stays current
 and the other is marked `lost` in `versions`.
 
+### Render object
+
+```json
+{"render": {"dir": "/abs/out", "assets": null,
+  "files": ["app.js", "data.js", "files/notes.org", "index.html", "style.css"],
+  "removed": [],
+  "counts": {"tickets": 3, "archived": 1, "documents": 2, "comments": 2,
+             "attachments": 1}}}
+```
+
+`render` writes a static HTML site of the tracker into `DIR`, which must
+lie outside the tracker clone (`inside-tracker`). It reads the tracker only.
+`dir` is the canonical output directory; `assets` is the `--assets`
+directory, or null for the page embedded in the executable. `files` lists
+the generated files, relative to `dir`; `removed` lists files an earlier
+run generated that this one deleted. `counts` covers what went into the
+site: tickets (tombstoned ones never do), of them archived, current
+documents, comments and attachments copied under `files/`. A file in the
+way that render did not generate fails with `render-conflict` before
+anything is written. The output layout and the `data.js` format are
+described in the design note on the static site, not part of this contract.
+
 ### Lint report
 
 ```json
@@ -745,6 +768,8 @@ Command errors:
 | `doc-conflict` | an import would overwrite a file in `docs/` that has different content |
 | `not-a-repository` | a write in a tracker that is not the top of a git work tree |
 | `inside-repository` | `init` in a directory inside another git work tree |
+| `inside-tracker` | `render` into a directory inside the tracker clone |
+| `render-conflict` | `render` would overwrite a file, or write through a symlink, that it did not generate |
 | `git` | a git command failed unexpectedly |
 | `io` | a file could not be read or written |
 
