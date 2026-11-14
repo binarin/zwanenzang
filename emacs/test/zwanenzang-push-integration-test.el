@@ -260,12 +260,12 @@
       (should (equal (alist-get 'parent shown) parent))
       (should (equal (zwanenzang-test--doc-text trk child "plan") "Plan text\n"))
       ;; The pull that ended the push landed numbers and sync state.
-      (should (equal (zwanenzang-test-property parent "ZWANENZANG_NUMBER") "ZZ-0001"))
+      (should (equal (zwanenzang-test-property parent "ZWANENZANG_NUMBER") "ZZ-1"))
       (should (zwanenzang-test-property child "ZWANENZANG_CURSOR"))
       (should (string-match-p (format "nest=%s\\'" parent)
                               (zwanenzang-test-property child "ZWANENZANG_SYNC")))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags child)))
-      (should (string-match-p "created ZZ-0001 Parent" (zwanenzang-test-report)))
+      (should (string-match-p "created ZZ-1 Parent" (zwanenzang-test-report)))
       ;; Published, so another clone sees them.
       (let ((other (zwanenzang-test-clone net "other-test-repo")))
         (should (equal (alist-get 'title (zwanenzang-test-show other child)) "Child")))
@@ -339,7 +339,7 @@
                  (should-error (zwanenzang-test-at-root #'zwanenzang-push) :type 'user-error)))
           (id (alist-get 'id (car (alist-get 'tickets (zwanenzang-test-cli trk "list"))))))
       (should (string-match-p "the tracker took the push.*Disk full" (cadr err)))
-      (should (string-match-p (format "created ZZ-0001 New (%s)" id) (cadr err))))))
+      (should (string-match-p (format "created ZZ-1 New (%s)" id) (cadr err))))))
 
 (ert-deftest zwanenzang-push-refused-apply-changes-nothing ()
   ;; A tag the CLI refuses refuses the batch: no identity is written.
@@ -372,7 +372,7 @@
         (should (equal (alist-get 'title shown) "Mine"))
         (should (equal (alist-get 'status shown) "doing"))
         (should (equal (alist-get 'tags shown) '("new"))))
-      (should (string-match-p "pushed ZZ-0001 Mine: status, title, tags"
+      (should (string-match-p "pushed ZZ-1 Mine: status, title, tags"
                               (zwanenzang-test-report)))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))
       (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
@@ -1187,13 +1187,13 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
            (dependent (zwanenzang-test-create trk "Dependent")))
       (zwanenzang-test-cli trk "depend" dependent a)
       (zwanenzang-test-pull)
-      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_DEPENDS_ON") "ZZ-0001"))
+      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_DEPENDS_ON") "ZZ-1"))
       ;; Change the whole set differently in Org and the tracker.
       (zwanenzang-test-goto dependent)
-      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0002")
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-2")
       (zwanenzang-test-cli trk "depend" dependent c)
       (zwanenzang-test-pull)
-      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_DEPENDS_ON") "ZZ-0002"))
+      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_DEPENDS_ON") "ZZ-2"))
       (should (member zwanenzang-conflict-tag (zwanenzang-test-tags dependent)))
       (should (string-match-p "dependencies" (zwanenzang-test-entry dependent)))
       (zwanenzang-test-at-root #'zwanenzang-push)
@@ -1220,17 +1220,70 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
       (org-entry-put nil "ZWANENZANG_SYNC"
                      (replace-regexp-in-string " depends=[^ ]+" ""
                                               (org-entry-get nil "ZWANENZANG_SYNC")))
-      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0001 ZZ-0001")
+      ;; Spellings of one number, padded as older versions wrote them.
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0001 zz-1")
       (zwanenzang-test-at-root #'zwanenzang-sync)
       (should (equal (alist-get 'depends_on (zwanenzang-test-show trk b)) (list a)))
-      (should (equal (zwanenzang-test-property b "ZWANENZANG_DEPENDS_ON") "ZZ-0001 ZZ-0001"))
+      ;; The pull after the push writes the set in the tracker's form.
+      (should (equal (zwanenzang-test-property b "ZWANENZANG_DEPENDS_ON") "ZZ-1"))
       (zwanenzang-test-cli trk "tombstone" a)
       (zwanenzang-test-at-root #'zwanenzang-sync)
-      (should (equal (zwanenzang-test-property b "ZWANENZANG_DEPENDS_ON") "ZZ-0001 ZZ-0001"))
+      (should (equal (zwanenzang-test-property b "ZWANENZANG_DEPENDS_ON") "ZZ-1"))
       (zwanenzang-test-goto b)
       (org-entry-delete nil "ZWANENZANG_DEPENDS_ON")
       (zwanenzang-test-at-root #'zwanenzang-push)
       (should-not (alist-get 'depends_on (zwanenzang-test-show trk b))))))
+
+;; State as clients before unpadded numbers left it: padded numbers in
+;; Org and a sync hash taken over the padded set.
+(defun zwanenzang-push-test--padded-state (id number depends)
+  "Give ticket ID padded NUMBER, DEPENDS_ON DEPENDS and a padded sync base."
+  (zwanenzang-test-goto id)
+  (org-entry-put nil "ZWANENZANG_NUMBER" number)
+  (org-entry-put nil "ZWANENZANG_DEPENDS_ON" depends)
+  (org-entry-put nil "ZWANENZANG_SYNC"
+                 (replace-regexp-in-string
+                  "depends=[^ ]+"
+                  (concat "depends=" (zwanenzang--tags-hash (split-string depends)))
+                  (org-entry-get nil "ZWANENZANG_SYNC"))))
+
+(ert-deftest zwanenzang-dependencies-padded-org-state-upgrades-without-conflict ()
+  (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
+    (let* ((a (zwanenzang-test-create trk "A"))
+           (b (zwanenzang-test-create trk "B"))
+           (c (zwanenzang-test-create trk "C"))
+           (dependent (zwanenzang-test-create trk "Dependent")))
+      (zwanenzang-test-cli trk "depend" dependent a)
+      (zwanenzang-test-pull)
+      ;; Unedited padded state: one pull rewrites it, with no conflict.
+      (zwanenzang-push-test--padded-state dependent "ZZ-0004" "ZZ-0001")
+      (zwanenzang-test-pull)
+      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_NUMBER") "ZZ-4"))
+      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_DEPENDS_ON") "ZZ-1"))
+      (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags dependent)))
+      (should (string-match-p (concat "depends=" (zwanenzang--tags-hash '("ZZ-1")))
+                              (zwanenzang-test-property dependent "ZWANENZANG_SYNC")))
+      ;; Unedited padded state and a tracker change: the tracker's set applies.
+      (zwanenzang-push-test--padded-state dependent "ZZ-0004" "ZZ-0001")
+      (zwanenzang-test-cli trk "depend" dependent b)
+      (zwanenzang-test-pull)
+      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_DEPENDS_ON") "ZZ-1 ZZ-2"))
+      (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags dependent)))
+      ;; Unedited padded state is nothing to push.
+      (zwanenzang-push-test--padded-state dependent "ZZ-0004" "ZZ-0001 ZZ-0002")
+      (let ((head (zwanenzang-test-head trk)))
+        (zwanenzang-test-at-root #'zwanenzang-push)
+        (should (equal head (zwanenzang-test-head trk))))
+      ;; A padded local edit on padded state pushes, then reads back unpadded.
+      (zwanenzang-push-test--padded-state dependent "ZZ-0004" "ZZ-0001 ZZ-0002")
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0003 zz-02 ZZ-0001")
+      (zwanenzang-test-at-root #'zwanenzang-sync)
+      (should (equal (sort (copy-sequence (alist-get 'depends_on (zwanenzang-test-show trk dependent)))
+                           #'string<)
+                     (sort (list a b c) #'string<)))
+      (should (equal (zwanenzang-test-property dependent "ZWANENZANG_DEPENDS_ON")
+                     "ZZ-1 ZZ-2 ZZ-3"))
+      (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags dependent))))))
 
 (ert-deftest zwanenzang-dependencies-refuse-invalid-and-cyclic-pushes-without-writing ()
   (zwanenzang-test-with-remote-scope (net trk buf zwanenzang-test--push-org)
@@ -1244,9 +1297,9 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
         (should (equal before (buffer-string)))
         (should (equal head (zwanenzang-test-head trk))))
       (zwanenzang-test-goto a)
-      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0002")
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-2")
       (zwanenzang-test-goto b)
-      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0001")
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-1")
       (let ((before (buffer-string)) (head (zwanenzang-test-head trk)))
         (should-error (zwanenzang-test-at-root #'zwanenzang-push) :type 'user-error)
         (should (equal before (buffer-string)))
@@ -1257,7 +1310,7 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
     (let ((a (zwanenzang-test-create trk "Published prerequisite")))
       (zwanenzang-test-pull)
       (zwanenzang-test-append
-       "** TODO New dependent\n:PROPERTIES:\n:ZWANENZANG_DEPENDS_ON: ZZ-0001\n:END:\n*** TODO New child\n")
+       "** TODO New dependent\n:PROPERTIES:\n:ZWANENZANG_DEPENDS_ON: ZZ-1\n:END:\n*** TODO New child\n")
       (zwanenzang-test-at-root #'zwanenzang-push)
       (let ((dependent (zwanenzang-test-id-of "New dependent"))
             (child (zwanenzang-test-id-of "New child")))
@@ -1272,7 +1325,7 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
       (zwanenzang-test-pull)
       ;; A is first in buffer order: its addition must follow B's removal.
       (zwanenzang-test-goto a)
-      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-0002")
+      (org-entry-put nil "ZWANENZANG_DEPENDS_ON" "ZZ-2")
       (zwanenzang-test-goto b)
       (org-entry-delete nil "ZWANENZANG_DEPENDS_ON")
       (zwanenzang-test-at-root #'zwanenzang-push)

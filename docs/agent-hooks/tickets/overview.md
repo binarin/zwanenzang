@@ -1,10 +1,10 @@
 # Tickets
 
-A ticket reference is a prefixed number such as `ZZ-0042` or `zz-42`, a full
-ULID, or a unique case-insensitive ULID prefix of at least 4 characters. Bare
-decimal input is not ticket-number syntax, but may match a ULID prefix. The
-prefix is the tracker's own; numbers are shown padded to four digits, and the
-padding is optional when typing them.
+A ticket reference is a prefixed number such as `ZZ-42`, a full ULID, or a
+unique case-insensitive ULID prefix of at least 4 characters. Bare decimal
+input is not ticket-number syntax, but may match a ULID prefix. The prefix is
+the tracker's own; numbers are shown without padding, and letter case and
+leading zeros do not matter when typing them, so `zz-0042` is `ZZ-42`.
 
 Read-only commands answer from the clone and do not fetch, so run `zz sync`
 first when current state matters. Every write commits and then syncs.

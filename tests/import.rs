@@ -272,7 +272,7 @@ fn imports_every_frontmatter_shape() {
     let numbered = report["sync"]["numbered"].as_array().unwrap();
     assert_eq!(numbered.len(), 8);
     assert_eq!(numbered[0]["id"], id("AIWF-0001"));
-    assert_eq!(numbered[7]["display"], "ZZ-0008");
+    assert_eq!(numbered[7]["display"], "ZZ-8");
     // The import is one commit holding the copied files, the numbers another.
     assert_eq!(
         git(p, &["log", "--format=%s"]),

@@ -181,7 +181,7 @@ fn init_with_a_selector_creates_independent_history_on_a_populated_remote() {
     // The tracker works: a ticket is created and published on the branch.
     let made = ok(&dest, &["create", "After init"]);
     assert_eq!(made["sync"]["pushed"], true, "{made}");
-    assert_eq!(made["ticket"]["display"], "ZZ-0001");
+    assert_eq!(made["ticket"]["display"], "ZZ-1");
 }
 
 #[test]
@@ -472,8 +472,8 @@ fn init_commits_the_bootstrap_as_agents_md() {
         agents.contains("zz agent-hooks show-document overview"),
         "{agents}"
     );
-    assert!(agents.contains("`ZZ-0042`"), "{agents}");
-    assert!(agents.contains("`zz-42`"), "{agents}");
+    assert!(agents.contains("`ZZ-42`"), "{agents}");
+    assert!(agents.contains("`zz-0042`"), "{agents}");
     assert!(agents.starts_with("# Agent instructions"), "{agents}");
     let files = git(&dest, &["ls-files"]);
     for name in [".gitattributes", "AGENTS.md", "zwanenzang.toml"] {

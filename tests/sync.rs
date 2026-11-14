@@ -132,10 +132,10 @@ fn clones_share_one_numbering() {
     let first = ok(&a, &["create", "From A"]);
     assert_eq!(first["sync"]["upstream"], "origin/main");
     assert_eq!(first["sync"]["pushed"], true);
-    assert_eq!(first["ticket"]["display"], "ZZ-0001");
+    assert_eq!(first["ticket"]["display"], "ZZ-1");
     let b = net.clone_as("b");
     let second = ok(&b, &["create", "From B"]);
-    assert_eq!(second["ticket"]["display"], "ZZ-0002");
+    assert_eq!(second["ticket"]["display"], "ZZ-2");
     assert_ne!(actor_of(&a), actor_of(&b), "an actor per clone");
     // A sees B's ticket after a sync; reads alone do not fetch.
     assert_eq!(tickets(&a).as_array().unwrap().len(), 1);
@@ -304,11 +304,11 @@ fn offline_writes_wait_for_their_numbers() {
 
     // Meanwhile B publishes, so A's ticket is numbered after B's.
     let on = ok(&b, &["create", "Written online"]);
-    assert_eq!(on["ticket"]["display"], "ZZ-0001");
+    assert_eq!(on["ticket"]["display"], "ZZ-1");
     net.offline(&a, false);
     let s = ok(&a, &["sync"]);
     assert_eq!(s["sync"]["numbered"][0]["id"], off_id.as_str());
-    assert_eq!(s["sync"]["numbered"][0]["display"], "ZZ-0002");
+    assert_eq!(s["sync"]["numbered"][0]["display"], "ZZ-2");
     ok(&b, &["sync"]);
     assert_eq!(tickets(&a), tickets(&b));
     // History is linear: A's commits were rebased onto B's.
@@ -335,7 +335,7 @@ fn a_failed_push_takes_its_numbers_back() {
     std::fs::remove_file(&hook).unwrap();
     let s = ok(&a, &["sync"]);
     assert_eq!(s["sync"]["pushed"], true);
-    assert_eq!(s["sync"]["numbered"][0]["display"], "ZZ-0001");
+    assert_eq!(s["sync"]["numbered"][0]["display"], "ZZ-1");
     assert_eq!(numbers(&a), [1]);
 }
 

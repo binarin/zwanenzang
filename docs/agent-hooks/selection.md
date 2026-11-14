@@ -6,7 +6,7 @@ is one-time setup, not committed:
 ```sh
 git config --local zwanenzang.trackerUrl https://forge.example/owner/tracker.git?ref=tickets
 zz sync
-zz show ZZ-0042
+zz show ZZ-42
 ```
 
 Or pass `--tracker-url URL` on each command, from anywhere. Both take a

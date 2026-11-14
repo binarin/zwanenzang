@@ -157,7 +157,7 @@
       (should (string-match-p "status=draft " (zwanenzang-test-property parent "ZWANENZANG_SYNC")))
       (should (string-prefix-p "**** NEXT Child" (zwanenzang-test-heading child)))
       (should (string-prefix-p "*** NEXT Lone" (zwanenzang-test-heading lone)))
-      (should (equal (zwanenzang-test-property parent "ZWANENZANG_NUMBER") "ZZ-0001"))
+      (should (equal (zwanenzang-test-property parent "ZWANENZANG_NUMBER") "ZZ-1"))
       (should (zwanenzang-test-property parent "ZWANENZANG_CURSOR"))
       (should (zwanenzang-test-property parent "ZWANENZANG_DESC_VERSION"))
       (save-excursion
@@ -275,7 +275,7 @@
       (zwanenzang-test-cli trk "parent" x y)
       (zwanenzang-test-clear-report)
       (should (string-match-p "1 with conflicts" (zwanenzang-test-pull)))
-      (should (string-match-p "ZZ-0001 Org \"X mine\", tracker \"X theirs\": conflict in title"
+      (should (string-match-p "ZZ-1 Org \"X mine\", tracker \"X theirs\": conflict in title"
                               (zwanenzang-test-report))))))
 
 (ert-deftest zwanenzang-pull-reports-what-changed-per-ticket ()
@@ -284,12 +284,12 @@
       (zwanenzang-test-create trk "B")
       (zwanenzang-test-clear-report)
       (zwanenzang-test-pull)
-      (should (string-match-p "new ZZ-0001 A\n  new ZZ-0002 B" (zwanenzang-test-report)))
+      (should (string-match-p "new ZZ-1 A\n  new ZZ-2 B" (zwanenzang-test-report)))
       (zwanenzang-test-cli trk "title" a "A2")
       (zwanenzang-test-clear-report)
       (should (string-match-p "1 pulled\\'" (zwanenzang-test-pull)))
-      (should (string-match-p "pulled ZZ-0001 A2" (zwanenzang-test-report)))
-      (should-not (string-match-p "ZZ-0002" (zwanenzang-test-report)))
+      (should (string-match-p "pulled ZZ-1 A2" (zwanenzang-test-report)))
+      (should-not (string-match-p "ZZ-2" (zwanenzang-test-report)))
       ;; A clean run: the echo stays one line and points nowhere.
       (should (string-match-p ": nothing changed\\'" (zwanenzang-test-pull))))))
 
@@ -515,7 +515,7 @@
       ;; Archived: stays, still updated, reported, no ARCHIVE tag.
       (should (equal (zwanenzang-test-parent-heading archived) "Inbox"))
       (should (equal (zwanenzang-test-heading archived) "*** TODO Archived, renamed"))
-      (should (string-match-p "ZZ-0001 Archived, renamed: archived in the tracker"
+      (should (string-match-p "ZZ-1 Archived, renamed: archived in the tracker"
                               (zwanenzang-test-report)))
       ;; Tombstoned: stays, flagged.
       (should (member zwanenzang-conflict-tag (zwanenzang-test-tags gone)))
@@ -664,8 +664,8 @@
         (zwanenzang-test-goto id)
         (search-forward "[[zwanenzang:")
         (org-open-at-point)
-        (should (get-buffer "*zwanenzang ZZ-0001 status*"))
-        (kill-buffer "*zwanenzang ZZ-0001 status*")))))
+        (should (get-buffer "*zwanenzang ZZ-1 status*"))
+        (kill-buffer "*zwanenzang ZZ-1 status*")))))
 
 (ert-deftest zwanenzang-pull-never-hides-the-description ()
   (zwanenzang-test-with-scope (trk buf (replace-regexp-in-string

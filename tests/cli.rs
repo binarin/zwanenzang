@@ -231,7 +231,7 @@ fn create_show_and_list() {
     assert_eq!(out["ticket"]["id"], out["event"]["entity"]);
     assert_eq!(out["ticket"]["status"], "draft");
     assert_eq!(out["ticket"]["number"], 1);
-    assert_eq!(out["ticket"]["display"], "ZZ-0001");
+    assert_eq!(out["ticket"]["display"], "ZZ-1");
     assert_eq!(out["ticket"]["tags"], json!(["alpha", "beta"]));
 
     let out2 = ok(
@@ -374,7 +374,7 @@ fn errors_are_json_and_write_nothing() {
     );
     err(p, &["create", "x", "--tag", "bad tag"], "invalid-tag");
     err(p, &["status", "ZZZZZZ", "doing"], "unknown-ticket");
-    err(p, &["status", "ZZ-0002", "doing"], "unknown-ticket");
+    err(p, &["status", "ZZ-2", "doing"], "unknown-ticket");
     err(p, &["doc", "get", &a, "description"], "unknown-document");
     assert_eq!(logs(p), before);
     // Usage errors stay clap's: stderr and exit status 2.
@@ -825,13 +825,13 @@ fn numbers_resolve_and_display() {
     let first = ok(p, &["create", "A"]);
     let a = id(&first);
     assert_eq!(first["ticket"]["number"], 1);
-    assert_eq!(first["ticket"]["display"], "ZZ-0001");
+    assert_eq!(first["ticket"]["display"], "ZZ-1");
     let n_event = first["sync"]["numbered"][0]["event"].clone();
     assert_eq!(
         first["sync"],
         json!({"upstream": null, "pushed": false, "error": null,
                "checkouts": {"target": git(p, &["rev-parse", "HEAD"]).trim(), "error": null, "results": []},
-               "numbered": [{"id": a, "number": 1, "display": "ZZ-0001", "event": n_event}]})
+               "numbered": [{"id": a, "number": 1, "display": "ZZ-1", "event": n_event}]})
     );
     assert_eq!(first["ticket"]["last_event"], n_event);
     // The number events are not the command's own.
@@ -843,9 +843,11 @@ fn numbers_resolve_and_display() {
             .all(|e| e["op"] != "number")
     );
     let b = id(&ok(p, &["create", "B"]));
+    // Padded input keeps resolving; output is unpadded.
     let shown = ok(p, &["show", "ZZ-0002"]);
     assert_eq!(shown["id"], b.as_str());
     assert_eq!(shown["number"], 2);
+    assert_eq!(shown["display"], "ZZ-2");
     assert_eq!(ok(p, &["show", "zz-1"])["id"], a.as_str());
     // A write that numbers nothing new says so.
     assert_eq!(
@@ -863,8 +865,8 @@ fn numbers_resolve_and_display() {
     assert_eq!(
         git(p, &["log", "--format=%s"]),
         format!(
-            "status ZZ-0001\npublish ZZ-0002\ncreate {}\n\
-             publish ZZ-0001\ncreate {} (+1 events)\ninit\n",
+            "status ZZ-1\npublish ZZ-2\ncreate {}\n\
+             publish ZZ-1\ncreate {} (+1 events)\ninit\n",
             short(&b),
             short(&a)
         )

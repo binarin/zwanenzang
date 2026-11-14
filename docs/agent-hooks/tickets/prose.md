@@ -13,7 +13,7 @@ Org lists start with `-`, which the argument parser rejects as a comment
 argument, so pass prose with `--file` or on stdin:
 
 ```sh
-zz comment ZZ-0042 --file note.org
+zz comment ZZ-42 --file note.org
 ```
 
 Writing a document names the version it is based on: `version` from `doc get`,
@@ -21,7 +21,7 @@ or `none` for a new document. The text comes from `--file` or stdin. Run
 `sync` before the `doc get`, since the base check only sees what the clone has.
 
 ```sh
-zz doc set ZZ-0042 plan --base <version> --file plan.org
+zz doc set ZZ-42 plan --base <version> --file plan.org
 ```
 
 When the base is not current, or another clone wrote a version at the same

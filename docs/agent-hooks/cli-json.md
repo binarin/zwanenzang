@@ -96,7 +96,8 @@ Wherever a command takes a ticket it accepts:
 
 - a full ULID,
 - any unique prefix of at least 4 characters, case-insensitive,
-- a number such as `ZZ-0042` or `zz-42`, once the ticket has one.
+- a number such as `ZZ-42`, once the ticket has one; letter case and
+  leading zeros do not matter, so `zz-0042` is the same ticket.
 
 An unknown reference fails with `unknown-ticket`, an ambiguous prefix with
 `ambiguous-ticket`. Tombstoned tickets still resolve, so `show` works on
@@ -242,7 +243,7 @@ may be empty. Each change has `op`, `data` (an object), and, except for
   {"op": "parent", "ticket": {"created": 1}, "data": {"to": {"created": 0}}},
   {"op": "doc", "ticket": {"created": 1},
    "data": {"name": "description", "text": "Example body", "base": null}},
-  {"op": "tag", "ticket": "ZZ-0042", "data": {"tag": "example"}}
+  {"op": "tag", "ticket": "ZZ-42", "data": {"tag": "example"}}
 ]}
 ```
 
@@ -332,7 +333,7 @@ clients inspect the next `read` and handle conflicts as on ordinary sync.
 `read` takes exactly one JSON object on stdin. Both fields may be omitted:
 
 ```json
-{"cursors": {"ZZ-0042": "<opaque ticket cursor>", "ZZ-0043": null},
+{"cursors": {"ZZ-42": "<opaque ticket cursor>", "ZZ-43": null},
  "since": "<opaque scope cursor>"}
 ```
 
@@ -424,7 +425,7 @@ are neither discovered nor configured.
 
 ```json
 {"upstream": "origin/main" | null, "pushed": true,
- "numbered": [{"id": "<ticket ULID>", "number": 42, "display": "ZZ-0042",
+ "numbered": [{"id": "<ticket ULID>", "number": 42, "display": "ZZ-42",
                "event": "<number event ULID>"}],
  "error": null | {"code": "fetch-failed", "message": "..."},
  "checkouts": {
@@ -616,7 +617,7 @@ Operation data:
 
 ```json
 {"id": "<ULID>", "short_id": "01JC3V5N0T", "number": 42 | null,
- "display": "ZZ-0042" | "<short_id>",
+ "display": "ZZ-42" | "<short_id>",
  "title": "...", "status": "doing", "kind": "bug" | null,
  "priority": 65 | null,
  "parent": "<ULID>" | null, "children": ["<ULID>", ...], "related": ["<ULID>", ...],

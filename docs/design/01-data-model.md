@@ -112,7 +112,12 @@ historical, such as adding a status to the vocabulary.
 ## Identity and numbers
 
 Entity identity is the ULID of its `create` event. Numbers are aliases:
-`<prefix>-<zero-padded>` where the prefix is tracker configuration. The
+`<prefix>-<n>`, such as `ZZ-42`, where the prefix is tracker
+configuration and the number is decimal without padding. Input ignores
+the prefix's letter case and leading zeros, so `zz-0042` resolves to the
+same ticket; a bare number is not number syntax. Earlier versions
+displayed four zero-padded digits (`ZZ-0042`); the log stores only the
+integer, so references written in that form keep resolving. The
 publish step assigns `max + 1` after a fetch and retries on push rejection,
 dropping its own unpublished `number` events before retrying. Unpublished
 tail of an actor's own log is the only thing ever rewritten, because nobody
@@ -300,7 +305,7 @@ none changes a decision above.
   prefix: an uppercase letter and up to nine uppercase letters or digits.
   Actor names: a single non-empty line of at most 128 bytes. Branch names
   and merge request URLs: a single non-empty line. Numbers display
-  zero-padded to four digits, `ZZ-0042`.
+  unpadded, `ZZ-42`; padded input such as `ZZ-0042` is accepted.
 - **Repository aliases** are declared in `zwanenzang.toml` as
   `[repos.<alias>]` tables with a `url` key, so further keys can be added.
 - **Relations** are undirected: `relate` adds the pair to both tickets.

@@ -2,10 +2,10 @@
 
 ```sh
 zz sync
-zz show ZZ-0042
+zz show ZZ-42
 zz list --status todo
 zz query --tag example --title parser
-zz doc get ZZ-0042 plan
+zz doc get ZZ-42 plan
 ```
 
 Read-only commands answer from the clone and do not fetch, so run `sync` first

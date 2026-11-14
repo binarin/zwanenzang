@@ -128,7 +128,7 @@ fn creations_references_and_results_survive_interleaved_noops() {
     );
     assert_eq!(
         git(p, &["log", "--format=%s", "-2"]),
-        "publish ZZ-0001, ZZ-0002\napply client batch\n"
+        "publish ZZ-1, ZZ-2\napply client batch\n"
     );
     assert_eq!(run_in(p, &["lint"], "").code, 0);
 }
