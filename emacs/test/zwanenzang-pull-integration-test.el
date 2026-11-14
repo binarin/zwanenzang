@@ -667,6 +667,127 @@
         (should (get-buffer "*zwanenzang ZZ-1 status*"))
         (kill-buffer "*zwanenzang ZZ-1 status*")))))
 
+(ert-deftest zwanenzang-pull-renders-relations-and-code-drawers ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let* ((pre (zwanenzang-test-create trk "Prerequisite" "--status" "done"))
+           (main (zwanenzang-test-create trk "Main"))
+           (other (zwanenzang-test-create trk "Other" "--status" "agnt"))
+           (plain (zwanenzang-test-create trk "Plain")))
+      (zwanenzang-test-cli trk "depend" main pre)
+      (zwanenzang-test-cli trk "relate" main other)
+      (zwanenzang-test-cli trk "branch" main "app" "zz-2-main")
+      (zwanenzang-test-cli trk "mr" main "app" "https://forge.example/o/app/pulls/5")
+      (zwanenzang-test-cli trk "comment" main "A note")
+      (zwanenzang-test-set-doc trk main "description" "Main text\n")
+      (zwanenzang-test-set-doc trk main "status" "Hidden\n")
+      (zwanenzang-test-pull)
+      (should (string-match-p
+               (concat "\nMain text\n"
+                       ":ZWANENZANG_COMMENTS:\n.*\nA note\n:END:\n"
+                       ":ZWANENZANG_HIDDEN:\n.*\n:END:\n"
+                       (regexp-quote
+                        (concat ":ZWANENZANG_RELATIONS:\n"
+                                "- Prerequisites\n"
+                                "  - [[zwanenzang:" pre "][ZZ-1 DONE Prerequisite]]\n"
+                                "- Related\n"
+                                "  - [[zwanenzang:" other "][ZZ-3 NEXT Other]]\n"
+                                ":END:\n"
+                                ":ZWANENZANG_CODE:\n"
+                                "- Branches\n"
+                                "  - app: zz-2-main\n"
+                                "- MRs\n"
+                                "  - [[https://forge.example/o/app/pulls/5][app #5]]\n"
+                                ":END:\n"))
+                       "\\'")
+               (zwanenzang-test-entry main)))
+      ;; The other ends: blocks and related, no code drawer.
+      (let ((entry (zwanenzang-test-entry pre)))
+        (should (string-match-p
+                 (regexp-quote (concat ":ZWANENZANG_RELATIONS:\n- Blocks\n"
+                                       "  - [[zwanenzang:" main "][ZZ-2 TODO Main]]\n:END:\n"))
+                 entry))
+        (should-not (string-match-p "ZWANENZANG_CODE" entry)))
+      (should (string-match-p (regexp-quote (concat "- Related\n  - [[zwanenzang:" main "]"))
+                              (zwanenzang-test-entry other)))
+      (should-not (string-match-p "ZWANENZANG_RELATIONS\\|ZWANENZANG_CODE"
+                                  (zwanenzang-test-entry plain)))
+      ;; Nothing is read back: the tracker keeps its description.
+      (should (equal (zwanenzang-test-property main "ZWANENZANG_DESC_HASH")
+                     (zwanenzang--hash "Main text\n")))
+      (let ((before (buffer-string)))
+        (should (string-match-p ": nothing changed\\'" (zwanenzang-test-pull)))
+        (should (equal (buffer-string) before)))
+      ;; Pushing sends nothing for the generated drawers.
+      (let ((head (zwanenzang-test-head trk)))
+        (zwanenzang-test-at-root #'zwanenzang-push)
+        (should (equal (zwanenzang-test-head trk) head))))))
+
+(ert-deftest zwanenzang-pull-rewrites-link-drawers-without-reporting-them ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let* ((pre (zwanenzang-test-create trk "Prerequisite"))
+           (main (zwanenzang-test-create trk "Main")))
+      (zwanenzang-test-cli trk "depend" main pre)
+      (zwanenzang-test-pull)
+      ;; Only the prerequisite changed; the dependent's drawer follows it.
+      (zwanenzang-test-cli trk "title" pre "Renamed")
+      (zwanenzang-test-cli trk "status" pre "done")
+      (zwanenzang-test-clear-report)
+      (should (string-match-p ": 1 pulled\\'" (zwanenzang-test-pull)))
+      (should (string-match-p "pulled ZZ-1 Renamed" (zwanenzang-test-report)))
+      (should-not (string-match-p "pulled ZZ-2" (zwanenzang-test-report)))
+      (should (string-match-p (regexp-quote (concat "[[zwanenzang:" pre "][ZZ-1 DONE Renamed]]"))
+                              (zwanenzang-test-entry main)))
+      (should (string-match-p (regexp-quote (concat "[[zwanenzang:" main "][ZZ-2 TODO Main]]"))
+                              (zwanenzang-test-entry pre)))
+      ;; A change confined to the drawers is rewritten, not reported.
+      (zwanenzang-test-cli trk "branch" main "app" "topic")
+      (zwanenzang-test-clear-report)
+      (should (string-match-p ": nothing changed\\'" (zwanenzang-test-pull)))
+      (should (string-match-p "- Branches\n  - app: topic\n" (zwanenzang-test-entry main))))))
+
+(ert-deftest zwanenzang-open-follows-ticket-links ()
+  (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+    (let* ((pre (zwanenzang-test-create trk "Prerequisite" "--kind" "bug"))
+           (main (zwanenzang-test-create trk "Main")))
+      (zwanenzang-test-cli trk "depend" main pre)
+      (zwanenzang-test-set-doc trk pre "description" "Why\n* not a heading\n")
+      (zwanenzang-test-cli trk "comment" pre "Looked at it")
+      (zwanenzang-test-pull)
+      ;; In scope: the link jumps to the heading.
+      (zwanenzang-test-goto main)
+      (search-forward (concat "[[zwanenzang:" pre))
+      (org-open-at-point)
+      (should (eq (current-buffer) buf))
+      (should (equal (org-entry-get nil "ZWANENZANG_ID") pre))
+      (should (looking-at-p "\\*+ TODO Prerequisite"))
+      ;; Out of scope: a read-only buffer from the tracker.
+      (zwanenzang-test-goto pre)
+      (org-cut-subtree)
+      (zwanenzang-test-goto main)
+      (search-forward (concat "[[zwanenzang:" pre))
+      (let ((shown (zwanenzang-open)))
+        (unwind-protect
+            (with-current-buffer shown
+              (should (equal (buffer-name) "*zwanenzang ZZ-1*"))
+              (should (derived-mode-p 'org-mode))
+              (should buffer-read-only)
+              (let ((text (buffer-string)))
+                (should (string-prefix-p "* ZZ-1 Prerequisite\n- Status :: todo\n- Kind :: bug\n"
+                                         text))
+                (should (string-match-p "\n\\*\\* Description\nWhy\n,\\* not a heading\n" text))
+                (should (string-match-p "\n\\*\\* Comments\n\\[.*\\] tester:\nLooked at it\n" text))
+                (should (string-match-p
+                         (regexp-quote (concat "** References\n- Blocks\n  - [[zwanenzang:"
+                                               main "][ZZ-2 TODO Main]]\n"))
+                         text)))
+              ;; Its links lead back into the scope it was opened from.
+              (goto-char (point-min))
+              (search-forward (concat "[[zwanenzang:" main))
+              (org-open-at-point)
+              (should (eq (current-buffer) buf))
+              (should (equal (org-entry-get nil "ZWANENZANG_ID") main)))
+          (kill-buffer shown))))))
+
 (ert-deftest zwanenzang-pull-never-hides-the-description ()
   (zwanenzang-test-with-scope (trk buf (replace-regexp-in-string
                                         ":ZWANENZANG_HIDE_DOCS: status"

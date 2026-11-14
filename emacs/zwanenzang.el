@@ -303,10 +303,16 @@ Nothing in such a line is markup, so any text is safe in a drawer."
 ;; next heading.  Planning lines come first, then drawers (the property
 ;; drawer among them) and text, which may be interleaved.  The
 ;; description is the text, without drawers or planning lines.  The
-;; client writes its comments and hidden drawers last, after the text.
+;; client writes its comments, hidden, relations and code drawers last,
+;; after the text.
 
-(defconst zwanenzang--tail-drawers '("ZWANENZANG_COMMENTS" "ZWANENZANG_HIDDEN")
+(defconst zwanenzang--tail-drawers
+  '("ZWANENZANG_COMMENTS" "ZWANENZANG_HIDDEN" "ZWANENZANG_RELATIONS" "ZWANENZANG_CODE")
   "Drawers kept at the end of a ticket's body, in this order.")
+
+(defconst zwanenzang--link-drawers '("ZWANENZANG_RELATIONS" "ZWANENZANG_CODE")
+  "Tail drawers of references only, rewritten from tracker state by every pull.
+A change confined to them does not count as pulling the ticket.")
 
 (defun zwanenzang--drawer-end (lines start)
   "The index in the vector LINES of what closes the drawer opened at START.
@@ -1342,6 +1348,89 @@ One link for each hidden document it has."
          "")))
    (zwanenzang--pull-hidden pull) ""))
 
+(defun zwanenzang--list-content (kinds)
+  "Org list text for KINDS, an alist of labels and lists of item lines.
+One top-level item per label, its lines as sub-items; a label without
+lines is left out, so nothing at all gives the empty string."
+  (mapconcat (lambda (kind)
+               (if (cdr kind)
+                   (concat "- " (car kind) "\n"
+                           (mapconcat (lambda (line) (concat "  - " line "\n")) (cdr kind) ""))
+                 ""))
+             kinds ""))
+
+(defun zwanenzang--one-line (text)
+  "TEXT on one line, for a link description or list item."
+  (string-trim (replace-regexp-in-string "[ \t]*[\n\r]+[ \t]*" " " text)))
+
+(defun zwanenzang--ticket-link (id known map)
+  "An Org link to ticket ID, labelled from its summary in KNOWN.
+The label is NUMBER KEYWORD Title, the keyword shown for its status
+through the keyword MAP, or the status itself when MAP has none.  An
+archived or tombstoned ticket says so; one KNOWN lacks is named by id."
+  (let ((summary (and known (gethash id known))))
+    (org-link-make-string
+     (concat "zwanenzang:" id)
+     (if (not summary)
+         (format "%s (unknown)" id)
+       (let ((status (alist-get 'status summary)))
+         (concat (string-join (delq nil (list (alist-get 'display summary)
+                                              (or (cdr (assoc status map)) status)
+                                              (zwanenzang--one-line
+                                               (or (alist-get 'title summary) ""))))
+                              " ")
+                 (cond ((eq (alist-get 'tombstoned summary) t) " (tombstoned)")
+                       ((eq (alist-get 'archived summary) t) " (archived)"))))))))
+
+(defun zwanenzang--ticket-links (ids known map)
+  "Links to the tickets IDS, as `zwanenzang--ticket-link' with KNOWN and MAP.
+Sorted by number; tickets KNOWN lacks come last."
+  (let ((display (lambda (id) (let ((s (and known (gethash id known))))
+                                (if s (alist-get 'display s) "")))))
+    (mapcar (lambda (id) (zwanenzang--ticket-link id known map))
+            (sort (copy-sequence ids)
+                  (lambda (a b)
+                    (let ((da (funcall display a)) (db (funcall display b)))
+                      (cond ((and (string-empty-p da) (string-empty-p db)) (string< a b))
+                            ((string-empty-p da) nil)
+                            ((string-empty-p db) t)
+                            (t (zwanenzang--ticket-ref< da db)))))))))
+
+(defun zwanenzang--relations-content (ticket known map)
+  "The :ZWANENZANG_RELATIONS: drawer content for TICKET.
+Its prerequisites, the tickets it blocks and its related tickets, as
+links labelled through KNOWN and the keyword MAP."
+  (zwanenzang--list-content
+   `(("Prerequisites" ,@(zwanenzang--ticket-links (alist-get 'depends_on ticket) known map))
+     ("Blocks" ,@(zwanenzang--ticket-links (alist-get 'blocks ticket) known map))
+     ("Related" ,@(zwanenzang--ticket-links (alist-get 'related ticket) known map)))))
+
+(defun zwanenzang--mr-label (repo url)
+  "How a merge request URL in repository alias REPO is labelled.
+ALIAS #N when the URL's last path segment is a number N, else ALIAS and
+that segment, else the alias alone."
+  (let* ((path (replace-regexp-in-string "[?#].*\\'" "" url))
+         (segment (car (last (split-string path "/" t)))))
+    (cond ((and segment (string-match-p "\\`[0-9]+\\'" segment))
+           (format "%s #%s" repo segment))
+          ((and segment (not (string-suffix-p ":" segment))) (format "%s %s" repo segment))
+          (t repo))))
+
+(defun zwanenzang--code-content (ticket)
+  "The :ZWANENZANG_CODE: drawer content for TICKET: its branches and MRs.
+A branch is plain text ALIAS: name; a merge request links its URL."
+  (zwanenzang--list-content
+   `(("Branches" ,@(mapcar (lambda (b)
+                             (zwanenzang--one-line
+                              (format "%s: %s" (alist-get 'repo b) (alist-get 'name b))))
+                           (alist-get 'branches ticket)))
+     ("MRs" ,@(mapcar (lambda (m)
+                        (org-link-make-string
+                         (alist-get 'url m)
+                         (zwanenzang--one-line
+                          (zwanenzang--mr-label (alist-get 'repo m) (alist-get 'url m)))))
+                      (alist-get 'mrs ticket))))))
+
 (defun zwanenzang--conflict-content (conflicts)
   "The :ZWANENZANG_CONFLICT: drawer content for CONFLICTS.
 Each conflict is (FIELD NOTE VALUE), VALUE the skipped remote value
@@ -1603,6 +1692,9 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
           (zwanenzang--body)
           `(("ZWANENZANG_COMMENTS" . ,(zwanenzang--comments-content pull ticket))
             ("ZWANENZANG_HIDDEN" . ,(zwanenzang--hidden-content pull ticket))
+            ("ZWANENZANG_RELATIONS"
+             . ,(zwanenzang--relations-content ticket (zwanenzang--pull-known pull) map))
+            ("ZWANENZANG_CODE" . ,(zwanenzang--code-content ticket))
             ("ZWANENZANG_CONFLICT" . ,(zwanenzang--conflict-content conflicts)))
           description))
         (when (integerp (alist-get 'number ticket))
@@ -1664,7 +1756,9 @@ Sync state and conflict notes are left out."
           (zwanenzang--dependency-refs)
           (zwanenzang--tracker-tags (plist-get heading :tags))
           (zwanenzang--segments-text segments)
-          (seq-filter (lambda (s) (member (nth 2 s) zwanenzang--tail-drawers)) segments)
+          (seq-filter (lambda (s) (and (member (nth 2 s) zwanenzang--tail-drawers)
+                                       (not (member (nth 2 s) zwanenzang--link-drawers))))
+                      segments)
           (mapcar (lambda (doc)
                     (save-excursion
                       (goto-char (cdr doc))
@@ -3153,7 +3247,7 @@ Human properties, Org IDs and body text are retained."
   (zwanenzang--drop-archive-properties)
   (when (member "zz_conflict" (org-get-tags nil t))
     (org-set-tags (remove "zz_conflict" (org-get-tags nil t))))
-  (let ((drawers '(("ZWANENZANG_CONFLICT") ("ZWANENZANG_COMMENTS") ("ZWANENZANG_HIDDEN"))))
+  (let ((drawers (mapcar #'list (cons "ZWANENZANG_CONFLICT" zwanenzang--tail-drawers))))
     (zwanenzang--write-body
      (if document
          (zwanenzang--compose-document drawers)
@@ -3431,18 +3525,131 @@ pulls the scope."
        (zwanenzang--pull-into outcome root)))
     (zwanenzang--report-outcome "unarchived in" root outcome)))
 
-;;;; Hidden documents
+;;;; Links
+
+;; A `zwanenzang:' link names a ticket by id, or one of its documents as
+;; `<id>/<name>'.  A ticket link jumps to the ticket's heading when the
+;; scope it was followed from has one, and otherwise shows the ticket in
+;; a read-only buffer.  The buffers these links open remember where they
+;; came from, so links in them work as well.
+
+(defvar-local zwanenzang--link-origin nil
+  "Where links in a buffer the client made lead: a plist.
+:dir is the tracker directory and :root a marker at the scope root
+the buffer was opened from, or nil.")
 
 (defun zwanenzang--link-follow (path _arg)
-  "Open PATH, `<ticket id>/<name>', the target of a zwanenzang: link."
+  "Open PATH, the target of a zwanenzang: link."
   (zwanenzang-open path))
 
 (org-link-set-parameters "zwanenzang" :follow #'zwanenzang--link-follow)
 
+(defun zwanenzang--current-link-origin ()
+  "The `zwanenzang--link-origin' for a link followed at point."
+  (or zwanenzang--link-origin
+      (let ((root (zwanenzang--root-at-point)))
+        (list :dir (zwanenzang--scope-directory root) :root root))))
+
+(defun zwanenzang--display-buffer (name text origin)
+  "Show TEXT in a read-only Org buffer NAME whose links follow ORIGIN.
+Return the buffer."
+  (let ((buffer (get-buffer-create name)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert text)
+        (goto-char (point-min))
+        (org-mode))
+      (setq zwanenzang--link-origin origin)
+      (setq buffer-read-only t))
+    (pop-to-buffer buffer)
+    buffer))
+
+(defun zwanenzang--find-ticket-heading (root id)
+  "A position of the heading of ticket ID in the scope at ROOT, or nil."
+  (with-current-buffer (marker-buffer root)
+    (org-with-wide-buffer
+     (let ((heading (seq-find (lambda (h) (equal (plist-get h :id) id))
+                              (car (zwanenzang--scan root)))))
+       (and heading (marker-position (plist-get heading :marker)))))))
+
+(defun zwanenzang--jump-to (buffer pos)
+  "Show POS in BUFFER as following an Org link would, widening if needed."
+  (when (eq buffer (current-buffer)) (org-mark-ring-push))
+  (pop-to-buffer-same-window buffer)
+  (when (or (< pos (point-min)) (> pos (point-max))) (widen))
+  (goto-char pos)
+  (org-fold-show-context 'link-search)
+  buffer)
+
+(defun zwanenzang--show-text (entry known map pull)
+  "The text of the read-only buffer showing ENTRY, one ticket of a read.
+Tickets it refers to are labelled through KNOWN and the keyword MAP;
+PULL carries the actor names and tracker directory for its comments."
+  (let* ((ticket (alist-get 'ticket entry))
+         (kind (zwanenzang--null (alist-get 'kind ticket)))
+         (parent (zwanenzang--null (alist-get 'parent ticket)))
+         (description (zwanenzang--normalize-text
+                       (or (alist-get 'description (alist-get 'documents entry)) "")))
+         (comments (zwanenzang--comments-content pull ticket))
+         (references (concat
+                      (zwanenzang--list-content
+                       `(("Parent" ,@(and parent (zwanenzang--ticket-links (list parent) known map)))
+                         ("Children" ,@(zwanenzang--ticket-links (alist-get 'children ticket)
+                                                                 known map))))
+                      (zwanenzang--relations-content ticket known map)
+                      (zwanenzang--code-content ticket))))
+    (concat "* " (alist-get 'display ticket) " "
+            (zwanenzang--one-line (alist-get 'title ticket)) "\n"
+            (format "- Status :: %s\n" (alist-get 'status ticket))
+            (if kind (format "- Kind :: %s\n" kind) "")
+            (let ((tags (alist-get 'tags ticket)))
+              (if tags (format "- Tags :: %s\n" (string-join tags " ")) ""))
+            (cond ((eq (alist-get 'tombstoned ticket) t) "- Tombstoned\n")
+                  ((eq (alist-get 'archived ticket) t) "- Archived\n")
+                  (t ""))
+            (if (string-empty-p description) ""
+              (concat "** Description\n" (zwanenzang--escape-text description)))
+            (if (string-empty-p comments) "" (concat "** Comments\n" comments))
+            (if (string-empty-p references) "" (concat "** References\n" references)))))
+
+(defun zwanenzang--show-ticket (id origin)
+  "Show ticket ID of ORIGIN's tracker in a read-only Org buffer; return it."
+  (let* ((dir (plist-get origin :dir))
+         (root (plist-get origin :root))
+         (live (and root (buffer-live-p (marker-buffer root))))
+         (since (or (and live (org-entry-get root "ZWANENZANG_CURSOR")) :null))
+         (result (funcall zwanenzang--call dir '("read")
+                          `((cursors . ((,(intern id) . :null))) (since . ,since))))
+         (tracker (alist-get 'tracker result))
+         (entry (seq-find (lambda (e) (equal (alist-get 'id (alist-get 'ticket e)) id))
+                          (alist-get 'tickets result)))
+         (known (zwanenzang--known-tickets dir))
+         (map (if live
+                  (with-current-buffer (marker-buffer root)
+                    (car (zwanenzang--keyword-map
+                          (org-entry-get root "ZWANENZANG_KEYWORDS")
+                          (alist-get 'statuses tracker) org-todo-keywords-1
+                          (alist-get 'retired_statuses tracker))))
+                nil)))
+    (unless entry
+      (user-error "zwanenzang: the tracker has no ticket %s" id))
+    (dolist (e (alist-get 'tickets result))
+      (puthash (alist-get 'id (alist-get 'ticket e)) (alist-get 'ticket e) known))
+    (zwanenzang--display-buffer
+     (format "*zwanenzang %s*" (alist-get 'display (alist-get 'ticket entry)))
+     (zwanenzang--show-text entry known map
+                            (zwanenzang--pull-create :actors (alist-get 'actors tracker)
+                                                     :tracker-dir dir))
+     origin)))
+
 (defun zwanenzang-open (&optional path)
-  "Show the document a zwanenzang: link names, read-only.
-PATH is `<ticket id>/<document name>'; interactively, the link at point.
-The tracker is the one of the scope containing point."
+  "Open what a zwanenzang: link names; interactively, the link at point.
+PATH is a ticket id or `<ticket id>/<document name>'.  A ticket with a
+heading in the scope the link is in is shown there; any other ticket,
+and a document, is shown read-only in a buffer of its own.  The tracker
+is the one of the scope containing point, or the one the buffer at
+point was opened from."
   (interactive)
   (unless path
     (let ((context (org-element-context)))
@@ -3450,22 +3657,23 @@ The tracker is the one of the scope containing point."
                    (equal (org-element-property :type context) "zwanenzang"))
         (user-error "zwanenzang: no zwanenzang: link at point"))
       (setq path (org-element-property :path context))))
-  (unless (string-match "\\`\\([^/]+\\)/\\(.+\\)\\'" path)
-    (user-error "zwanenzang: malformed link zwanenzang:%s" path))
-  (let* ((id (match-string 1 path))
-         (name (match-string 2 path))
-         (doc (funcall zwanenzang--call (zwanenzang--scope-directory (zwanenzang--scope-root))
-                       (list "doc" "get" id name)))
-         (buffer (get-buffer-create (format "*zwanenzang %s %s*" (alist-get 'display doc) name))))
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (alist-get 'text doc))
-        (goto-char (point-min))
-        (org-mode))
-      (setq buffer-read-only t))
-    (pop-to-buffer buffer)
-    buffer))
+  (let ((origin (zwanenzang--current-link-origin)))
+    (cond
+     ((string-match "\\`[^/]+\\'" path)
+      (let* ((root (plist-get origin :root))
+             (pos (and root (buffer-live-p (marker-buffer root))
+                       (zwanenzang--find-ticket-heading root path))))
+        (if pos
+            (zwanenzang--jump-to (marker-buffer root) pos)
+          (zwanenzang--show-ticket path origin))))
+     ((string-match "\\`\\([^/]+\\)/\\(.+\\)\\'" path)
+      (let* ((name (match-string 2 path))
+             (doc (funcall zwanenzang--call (plist-get origin :dir)
+                           (list "doc" "get" (match-string 1 path) name))))
+        (zwanenzang--display-buffer
+         (format "*zwanenzang %s %s*" (alist-get 'display doc) name)
+         (alist-get 'text doc) origin)))
+     (t (user-error "zwanenzang: malformed link zwanenzang:%s" path)))))
 
 (add-hook 'org-blocker-hook #'zwanenzang--block-dependencies)
 (add-hook 'org-archive-hook #'zwanenzang--archive-hook)
