@@ -490,6 +490,39 @@ continues through `org-add-log-setup`, untouched. `zwanenzang-comment` is
 also available directly. The optional CLI link field is not exposed;
 ordinary Org links can be included in the comment text.
 
+The compose buffer can also change the ticket's status and tags with the
+comment. These keys only record pending changes; nothing is written or
+edited until `C-c C-c`, and the header line lists what is pending (for
+example `Comment -> NEXT, +ready_for_agent, -needs_human: C-c C-c send`):
+
+- `C-c C-t` picks a TODO keyword as `org-todo` offers it in the source
+  buffer: its fast selection keys when it has them, otherwise completion.
+  The keyword stands for the status the scope's keyword map gives it,
+  as on push; a keyword only a retired status has cannot be picked. The
+  heading's current keyword clears a pending status.
+- `C-c C-q` toggles tags against the ticket's tags with the pending
+  changes applied. Candidates are the source buffer's Org tags and the
+  tags tickets carry in the tracker; `zz_conflict` and `ARCHIVE` are not
+  tracker tags and are refused.
+- `C-c C-a` hands the ticket to an agent: status `todo`,
+  `+ready_for_agent`, `-needs_human`. It answers an agent's question,
+  gives review feedback or hands a ticket over: on the heading, `C-c C-z`,
+  `C-c C-a`, then `C-c C-c`.
+
+`C-c C-c` sends the comment and the pending changes as one `apply` batch
+(one commit, one sync), the comment first, then the status, tags added and
+tags removed, and pulls as for a plain comment. The pull rewrites the
+keyword and tags without Org logging; the tracker history is the record.
+With nothing pending it sends the comment alone, as before; a plain
+comment changes no status or tag. When changes are pending and the
+heading's keyword or tags differ from the last sync, the send is refused
+and the draft kept: push the heading first. That holds even when the
+tracker already has the same value: until a push or pull records it, the
+pull after the send would compare the sent change with the old baseline
+and keep the local edit as a conflict, and a later push could undo the
+change. `zwanenzang-comment-send` returns the comment's event id, the first
+result of the batch.
+
 The compose buffer retains a refused draft and its compose window. Aborting
 or accepting a write restores the window configuration and source point from
 before composition, including the selected window (also when invoked from an

@@ -1890,15 +1890,35 @@ report appended to the `*zwanenzang*' buffer."
 (defvar-local zwanenzang--comment-return-to nil
   "Source point before composing, which window configurations do not save.")
 
+(defvar-local zwanenzang--comment-status nil
+  "The status this draft sets when sent, or nil to leave the status.")
+
+(defvar-local zwanenzang--comment-tags nil
+  "Tag changes this draft sends, as (TAG . add) or (TAG . remove), in order.")
+
+(defvar-local zwanenzang--comment-tracker nil
+  "The tracker's keyword map and tags, read once for this draft's pickers.")
+
 (defvar zwanenzang-comment-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'zwanenzang-comment-send)
     (define-key map (kbd "C-c C-k") #'zwanenzang-comment-abort)
+    (define-key map (kbd "C-c C-t") #'zwanenzang-comment-set-status)
+    (define-key map (kbd "C-c C-q") #'zwanenzang-comment-toggle-tags)
+    (define-key map (kbd "C-c C-a") #'zwanenzang-comment-hand-to-agent)
     map))
 
 (define-derived-mode zwanenzang-comment-mode org-mode "ZW-Comment"
   "Compose an append-only tracker comment.
-C-c C-c sends; C-c C-k aborts.  The buffer contains only comment text.")
+C-c C-c sends; C-c C-k aborts.  The buffer contains only comment text.
+C-c C-t, C-c C-q and C-c C-a record a status and tag changes, which
+the send writes together with the comment; until then nothing changes.")
+
+(defconst zwanenzang-comment-agent-status "todo"
+  "The status `zwanenzang-comment-hand-to-agent' sets.")
+
+(defconst zwanenzang-comment-agent-tags '(("ready_for_agent" . add) ("needs_human" . remove))
+  "The tag changes `zwanenzang-comment-hand-to-agent' sets.")
 
 (defun zwanenzang--comment-heading ()
   "The ticket heading for a note at point, or nil.
@@ -1941,7 +1961,191 @@ The optional CLI link field is not exposed by this command."
       (setq zwanenzang--comment-target (list heading root id dir)
             zwanenzang--comment-window-configuration windows
             zwanenzang--comment-return-to return-to)
-      (setq header-line-format "Comment: C-c C-c send, C-c C-k abort"))))
+      (zwanenzang--comment-update-header))))
+
+(defun zwanenzang--comment-pending-p ()
+  "Whether this draft would change the ticket's status or tags."
+  (or zwanenzang--comment-status zwanenzang--comment-tags))
+
+(defun zwanenzang--comment-update-header ()
+  "Show this draft's pending changes and keys in the header line."
+  (setq header-line-format
+        (if (zwanenzang--comment-pending-p)
+            (format "Comment -> %s: C-c C-c send, C-c C-k abort"
+                    (string-join
+                     (append
+                      (and zwanenzang--comment-status
+                           (list (or (cdr (assoc zwanenzang--comment-status
+                                                 (plist-get zwanenzang--comment-tracker :map)))
+                                     zwanenzang--comment-status)))
+                      (mapcar (lambda (change)
+                                (concat (if (eq (cdr change) 'add) "+" "-") (car change)))
+                              zwanenzang--comment-tags))
+                     ", "))
+          "Comment: C-c C-c send, C-c C-k abort, C-c C-t status, C-c C-q tags, C-c C-a hand to agent"))
+  (force-mode-line-update))
+
+(defun zwanenzang--comment-source ()
+  "The live heading marker of this draft, or a user error."
+  (unless zwanenzang--comment-target
+    (user-error "zwanenzang: not a comment compose buffer"))
+  (let ((heading (nth 0 zwanenzang--comment-target))
+        (root (nth 1 zwanenzang--comment-target)))
+    (unless (and (marker-buffer heading) (marker-buffer root))
+      (user-error "zwanenzang: comment source buffer was killed"))
+    heading))
+
+(defun zwanenzang--comment-ticket-state ()
+  "The source heading's keyword and tracker tags, as (KEYWORD . TAGS)."
+  (let ((heading (zwanenzang--comment-source)))
+    (with-current-buffer (marker-buffer heading)
+      (org-with-wide-buffer
+       (goto-char heading)
+       (let ((shown (zwanenzang--heading)))
+         (cons (plist-get shown :keyword)
+               (zwanenzang--tracker-tags (plist-get shown :tags))))))))
+
+(defun zwanenzang--comment-read-tracker ()
+  "Read the draft's tracker; return its keyword map, retired statuses and tags.
+The map is that of the source scope, so keywords mean what push sends."
+  (or zwanenzang--comment-tracker
+      (setq zwanenzang--comment-tracker
+            (pcase-let ((`(,heading ,root ,_id ,dir) zwanenzang--comment-target))
+              (zwanenzang--comment-source)
+              (with-current-buffer (marker-buffer heading)
+                (let* ((read (funcall zwanenzang--call dir '("read")
+                                      '((cursors . nil) (since . :null))))
+                       (refusal (zwanenzang--tracker-mismatch "comment" root dir read))
+                       (tracker (alist-get 'tracker read))
+                       (retired (alist-get 'retired_statuses tracker))
+                       tags)
+                  (when refusal (user-error "%s" refusal))
+                  (dolist (summary (alist-get 'tickets (funcall zwanenzang--call dir
+                                                                '("list" "--all"))))
+                    (dolist (tag (alist-get 'tags summary))
+                      (cl-pushnew tag tags :test #'equal)))
+                  (list :map (car (zwanenzang--keyword-map
+                                   (org-entry-get root "ZWANENZANG_KEYWORDS")
+                                   (alist-get 'statuses tracker)
+                                   org-todo-keywords-1 retired))
+                        :retired retired
+                        :tags tags)))))))
+
+(defun zwanenzang--comment-pick-status (status)
+  "Record STATUS as this draft's pending status.
+A status shown with the heading's current keyword is no change, so
+picking it clears a pending status, as push compares by keyword."
+  (let ((keyword (cdr (assoc status (plist-get (zwanenzang--comment-read-tracker) :map)))))
+    (unless keyword
+      (user-error "zwanenzang: status %s has no keyword in this scope" status))
+    (setq zwanenzang--comment-status
+          (unless (equal keyword (car (zwanenzang--comment-ticket-state))) status))))
+
+(defun zwanenzang--comment-pick-tag (tag change)
+  "Record CHANGE, `add' or `remove', of TAG as pending.
+A change the heading's current tags already reflect is dropped instead."
+  (let ((current (member tag (cdr (zwanenzang--comment-ticket-state)))))
+    (setq zwanenzang--comment-tags
+          (seq-remove (lambda (c) (equal (car c) tag)) zwanenzang--comment-tags))
+    (unless (eq (and current t) (eq change 'add))
+      (setq zwanenzang--comment-tags
+            (append zwanenzang--comment-tags (list (cons tag change)))))))
+
+(defun zwanenzang--comment-tag-present-p (tag)
+  "Whether TAG is on the ticket once this draft's pending changes apply."
+  (let ((pending (assoc tag zwanenzang--comment-tags)))
+    (if pending
+        (eq (cdr pending) 'add)
+      (and (member tag (cdr (zwanenzang--comment-ticket-state))) t))))
+
+(defun zwanenzang--comment-read-keyword (map)
+  "Ask for a keyword that MAP shows a current status with, as `org-todo' does.
+Use Org's fast selection with the source buffer's keys when it has them."
+  (let* ((heading (zwanenzang--comment-source))
+         (current (car (zwanenzang--comment-ticket-state)))
+         (keywords (delete-dups (mapcar #'cdr map))))
+    (with-current-buffer (marker-buffer heading)
+      (if (and org-use-fast-todo-selection org-todo-key-alist)
+          (org-fast-todo-selection current)
+        (completing-read "Status keyword: " keywords nil t nil nil current)))))
+
+(defun zwanenzang-comment-set-status ()
+  "Choose the status this comment sets when sent.
+The choice is a TODO keyword, offered as `org-todo' offers it in the
+source buffer.  Choosing the heading's current keyword clears the
+pending status.  Nothing is written before \\[zwanenzang-comment-send]."
+  (interactive)
+  (zwanenzang--comment-source)
+  (let* ((tracker (zwanenzang--comment-read-tracker))
+         ;; Retired statuses come last in the map, so a shared keyword
+         ;; reads as its current status; one only retired cannot be set.
+         (map (seq-remove (lambda (e) (member (car e) (plist-get tracker :retired)))
+                          (plist-get tracker :map)))
+         (keyword (zwanenzang--comment-read-keyword map)))
+    (when (and keyword (not (string-empty-p keyword)))
+      (let ((status (car (rassoc keyword map))))
+        (unless status
+          (user-error "zwanenzang: keyword %s is not mapped to a current tracker status"
+                      keyword))
+        (zwanenzang--comment-pick-status status))))
+  (zwanenzang--comment-update-header))
+
+(defun zwanenzang-comment-toggle-tags (tags)
+  "Toggle TAGS on the ticket when this comment is sent.
+A tag the ticket would carry is removed, any other added.  Candidates
+are the source buffer's Org tags and the tags tickets have in the
+tracker.  Nothing is written before \\[zwanenzang-comment-send]."
+  (interactive
+   (let* ((heading (zwanenzang--comment-source))
+          (candidates
+           (seq-remove
+            (lambda (tag) (member tag (list zwanenzang-conflict-tag org-archive-tag)))
+            (delete-dups
+             (append
+              (with-current-buffer (marker-buffer heading)
+                (append (seq-filter #'stringp (mapcar #'car-safe org-current-tag-alist))
+                        (mapcar #'car (org-get-buffer-tags))))
+              (plist-get (zwanenzang--comment-read-tracker) :tags))))))
+     (list (completing-read-multiple "Toggle tags: " (sort candidates #'string<)))))
+  (zwanenzang--comment-source)
+  (dolist (tag tags)
+    (unless (string-match-p (concat "\\`" org-tag-re "\\'") tag)
+      (user-error "zwanenzang: %S is not an Org tag" tag))
+    (when (member tag (list zwanenzang-conflict-tag org-archive-tag))
+      (user-error "zwanenzang: %s is not a tracker tag" tag)))
+  (dolist (tag tags)
+    (zwanenzang--comment-pick-tag
+     tag (if (zwanenzang--comment-tag-present-p tag) 'remove 'add)))
+  (zwanenzang--comment-update-header))
+
+(defun zwanenzang-comment-hand-to-agent ()
+  "Hand the ticket to an agent when this comment is sent.
+That is status todo, tag ready_for_agent and no needs_human: the
+answer to an agent's question, review feedback or a new hand-over.
+Nothing is written before \\[zwanenzang-comment-send]."
+  (interactive)
+  (zwanenzang--comment-source)
+  (zwanenzang--comment-pick-status zwanenzang-comment-agent-status)
+  (dolist (change zwanenzang-comment-agent-tags)
+    (zwanenzang--comment-pick-tag (car change) (cdr change)))
+  (zwanenzang--comment-update-header))
+
+(defun zwanenzang--comment-unpushed (map)
+  "Which of keyword and tags the heading at point changed since the last sync.
+MAP is the keyword map.  An edit counts even when it matches the tracker:
+until a push or pull records it, the pull after the send would compare
+the sent change with the old baseline and keep the edit as a conflict."
+  (let* ((shown (zwanenzang--heading))
+         (keyword (plist-get shown :keyword))
+         (tags (zwanenzang--tracker-tags (plist-get shown :tags)))
+         (sync (zwanenzang--parse-sync (org-entry-get nil "ZWANENZANG_SYNC")))
+         fields)
+    (unless (equal keyword (cdr (assoc (zwanenzang--sync-get sync 'status) map)))
+      (push "keyword" fields))
+    (when (zwanenzang--edited-p (zwanenzang--tags-hash tags)
+                                (zwanenzang--sync-get sync 'tags) (null tags))
+      (push "tags" fields))
+    (nreverse fields)))
 
 (defun zwanenzang--comment-close ()
   "Close the current draft and restore its pre-compose windows and point."
@@ -1964,13 +2168,18 @@ The optional CLI link field is not exposed by this command."
 
 (defun zwanenzang-comment-send ()
   "Send this comment once, then pull its source scope.
-A refused write retains the draft.  Once accepted locally, the draft is
-closed even if publication or the subsequent pull fails, to avoid resend."
+Pending status and tag changes go in the same batch, after the comment;
+with any pending, unpushed keyword or tag edits on the heading refuse
+the send.  A refused write retains the draft.  Once accepted locally,
+the draft is closed even if publication or the subsequent pull fails,
+to avoid resend.  Return the comment's event id."
   (interactive)
   (unless zwanenzang--comment-target
     (user-error "zwanenzang: not a comment compose buffer"))
   (pcase-let* ((`(,heading ,root ,id ,dir) zwanenzang--comment-target)
                (draft (current-buffer))
+               (status zwanenzang--comment-status)
+               (tag-changes zwanenzang--comment-tags)
                (text (buffer-substring-no-properties (point-min) (point-max))))
     (when (string-empty-p (string-trim text))
       (user-error "zwanenzang: comment is empty"))
@@ -1994,9 +2203,30 @@ closed even if publication or the subsequent pull fails, to avoid resend."
          (when refusal (user-error "%s" refusal))
          (unless (and target (not (assq target blocked)))
            (user-error "zwanenzang: foreign or duplicate comment target; draft retained"))
-         (let* ((result (funcall zwanenzang--call dir '("apply")
-                                 `((changes . [((op . "comment") (ticket . ,id)
-                                               (data . ((text . ,text))))]))))
+         (when (or status tag-changes)
+           (let* ((tracker (alist-get 'tracker read))
+                  (map (car (zwanenzang--keyword-map
+                             (org-entry-get root "ZWANENZANG_KEYWORDS")
+                             (alist-get 'statuses tracker) org-todo-keywords-1
+                             (alist-get 'retired_statuses tracker))))
+                  (unpushed (zwanenzang--comment-unpushed map)))
+             ;; Sending would make the next pull overwrite the edit, or
+             ;; the next push undo the change sent with the comment.
+             (when unpushed
+               (user-error "zwanenzang: push the heading first: its %s changed locally; draft retained"
+                           (string-join unpushed " and ")))))
+         ;; The comment comes first, so its event is the first result.
+         (let* ((changes
+                 (append
+                  `(((op . "comment") (ticket . ,id) (data . ((text . ,text)))))
+                  (and status `(((op . "status") (ticket . ,id) (data . ((to . ,status))))))
+                  (mapcar (lambda (c) `((op . "tag") (ticket . ,id) (data . ((tag . ,(car c))))))
+                          (seq-filter (lambda (c) (eq (cdr c) 'add)) tag-changes))
+                  (mapcar (lambda (c) `((op . "untag") (ticket . ,id) (data . ((tag . ,(car c))))))
+                          (seq-filter (lambda (c) (eq (cdr c) 'remove)) tag-changes))))
+                (result (funcall zwanenzang--call dir '("apply")
+                                 `((changes . ,(vconcat changes)))))
+                (event (alist-get 'event (car (alist-get 'results result))))
                 (outcome (zwanenzang--outcome-create)))
            ;; Acceptance is the boundary: never offer to resend after this.
            (with-current-buffer draft
@@ -2009,7 +2239,8 @@ closed even if publication or the subsequent pull fails, to avoid resend."
                             (error-message-string err))
                     (zwanenzang--outcome-problems outcome))
               (setf (zwanenzang--outcome-pull outcome) (zwanenzang--pull-create))))
-           (zwanenzang--report-outcome "comment saved in" root outcome)))))))
+           (zwanenzang--report-outcome "comment saved in" root outcome)
+           event))))))
 
 (defun zwanenzang--org-add-note (original &rest args)
   "Redirect ORIGINAL with ARGS on tickets and their named documents."
