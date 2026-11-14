@@ -151,11 +151,11 @@
       (should (equal (zwanenzang-test-parent-heading child) "Parent"))
       (should (equal (zwanenzang-test-parent-heading lone) "Inbox"))
       ;; A todo is shown as TODO and remembered as todo, not next.
-      (should (string-match-p "\\`\\*\\*\\* TODO Parent +:alpha:\\'"
+      (should (string-match-p "\\`\\*\\*\\* TODO \\[ZZ-1\\] Parent +:alpha:\\'"
                               (zwanenzang-test-heading parent)))
       (should (string-match-p "status=todo " (zwanenzang-test-property parent "ZWANENZANG_SYNC")))
-      (should (string-prefix-p "**** NEXT Child" (zwanenzang-test-heading child)))
-      (should (string-prefix-p "*** NEXT Lone" (zwanenzang-test-heading lone)))
+      (should (string-prefix-p "**** NEXT [ZZ-2] Child" (zwanenzang-test-heading child)))
+      (should (string-prefix-p "*** NEXT [ZZ-3] Lone" (zwanenzang-test-heading lone)))
       (should (equal (zwanenzang-test-property parent "ZWANENZANG_NUMBER") "ZZ-1"))
       (should (zwanenzang-test-property parent "ZWANENZANG_CURSOR"))
       (should (zwanenzang-test-property parent "ZWANENZANG_DESC_VERSION"))
@@ -202,7 +202,7 @@
       (zwanenzang-test-set-doc trk id "plan" "New plan\n")
       (zwanenzang-test-cli trk "comment" id "later")
       (zwanenzang-test-pull)
-      (should (string-match-p "\\`\\*\\*\\* DONE New +:b:\\'" (zwanenzang-test-heading id)))
+      (should (string-match-p "\\`\\*\\*\\* DONE \\[ZZ-1\\] New +:b:\\'" (zwanenzang-test-heading id)))
       (should (string-match-p "status=done " (zwanenzang-test-property id "ZWANENZANG_SYNC")))
       (should (string-match-p (concat "New text\n:ZWANENZANG_COMMENTS:\n.*\nlater\n:END:\n"
                                       ":ZWANENZANG_DOCUMENTS:\n- .*/plan\\]\\[plan\\]\\] .*\n:END:\n\\'")
@@ -309,7 +309,7 @@
       (zwanenzang-test-set-doc trk id "description" "Their text\n")
       (zwanenzang-test-clear-report)
       (zwanenzang-test-pull)
-      (should (string-match-p "\\`\\*\\*\\* NEXT Mine +:zz_conflict:\\'"
+      (should (string-match-p "\\`\\*\\*\\* NEXT \\[ZZ-1\\] Mine +:zz_conflict:\\'"
                               (zwanenzang-test-heading id)))
       (let ((entry (zwanenzang-test-entry id)))
         (should (string-match-p
@@ -448,7 +448,7 @@
                        "TODO=next NEXT=agnt,revw WAIT=wait DONE=done CNCL=cncl"))
       (zwanenzang-test-cli trk "status" id "next")
       (zwanenzang-test-pull)
-      (should (string-match-p "\\`\\*\\*\\* Draft +:zz_conflict:\\'" (zwanenzang-test-heading id)))
+      (should (string-match-p "\\`\\*\\*\\* \\[ZZ-1\\] Draft +:zz_conflict:\\'" (zwanenzang-test-heading id)))
       (should (string-match-p "- status: tracker has next (TODO); Org keyword kept"
                               (zwanenzang-test-entry id))))))
 
@@ -464,7 +464,7 @@
       (zwanenzang-test-pull)
       ;; Reordered tags were no change, so the new tag applies; ARCHIVE stays.
       (should (equal (zwanenzang-test-tags id) '("a" "b" "c" "ARCHIVE")))
-      (should (string-prefix-p "*** TODO New " (zwanenzang-test-heading id)))
+      (should (string-prefix-p "*** TODO [ZZ-1] New " (zwanenzang-test-heading id)))
       (should-not (string-match-p "ZWANENZANG_CONFLICT" (zwanenzang-test-entry id)))
       (should (equal (zwanenzang-test-property id "ZWANENZANG_SYNC")
                      (zwanenzang--format-sync
@@ -486,7 +486,7 @@
       (zwanenzang-test-pull)
       ;; Archived: stays, still updated, reported, no ARCHIVE tag.
       (should (equal (zwanenzang-test-parent-heading archived) "Inbox"))
-      (should (equal (zwanenzang-test-heading archived) "*** TODO Archived, renamed"))
+      (should (equal (zwanenzang-test-heading archived) "*** TODO [ZZ-1] Archived, renamed"))
       (should (string-match-p "ZZ-1 Archived, renamed: archived in the tracker"
                               (zwanenzang-test-report)))
       ;; Tombstoned: stays, flagged.
@@ -518,7 +518,7 @@
       (zwanenzang-test-clear-report)
       (zwanenzang-test-pull)
       (should (string-match-p "Fine renamed" (zwanenzang-test-heading fine)))
-      (let ((copies (org-map-entries (lambda () (org-get-heading t t t t))
+      (let ((copies (org-map-entries (lambda () (plist-get (zwanenzang--heading) :title))
                                      (format "ZWANENZANG_ID=\"%s\"" dup))))
         (should (equal copies '("Dup" "Dup"))))
       (should (equal (org-map-entries (lambda () (org-entry-get nil "ID"))
@@ -562,7 +562,7 @@
       (zwanenzang-test-pull)
       (should-not (zwanenzang-test-property known "ID"))
       (should (member zwanenzang-conflict-tag (zwanenzang-test-tags known)))
-      (should (string-prefix-p "*** TODO Known" (zwanenzang-test-heading known)))
+      (should (string-prefix-p "*** TODO [ZZ-1] Known" (zwanenzang-test-heading known)))
       (should (string-match-p "status: tracker status wait has no keyword"
                               (zwanenzang-test-entry known)))
       (save-excursion
@@ -571,9 +571,9 @@
         (org-entry-put nil "ZWANENZANG_KEYWORDS"
                        "TODO=next,todo NEXT=agnt,wait DONE=done,cncl,revw"))
       (zwanenzang-test-pull)
-      (should (string-prefix-p "*** NEXT Known" (zwanenzang-test-heading known)))
+      (should (string-prefix-p "*** NEXT [ZZ-1] Known" (zwanenzang-test-heading known)))
       (should (zwanenzang-test-property known "ID"))
-      (should (string-prefix-p "*** NEXT Waiting" (zwanenzang-test-heading waiting))))))
+      (should (string-prefix-p "*** NEXT [ZZ-2] Waiting" (zwanenzang-test-heading waiting))))))
 
 (ert-deftest zwanenzang-pull-refuses-another-tracker ()
   (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
@@ -611,7 +611,7 @@
         (org-overview)
         (undo-boundary)
         (zwanenzang-test-pull)
-        (should (equal (zwanenzang-test-heading a) "*** TODO A2"))
+        (should (equal (zwanenzang-test-heading a) "*** TODO [ZZ-1] A2"))
         (should (equal (zwanenzang-test-parent-heading b) "Inbox"))
         (undo-boundary)
         (let ((last-command nil)) (undo))
@@ -709,7 +709,7 @@
       (org-open-at-point)
       (should (eq (current-buffer) buf))
       (should (equal (org-entry-get nil "ZWANENZANG_ID") pre))
-      (should (looking-at-p "\\*+ TODO Prerequisite"))
+      (should (looking-at-p "\\*+ TODO \\[ZZ-1\\] Prerequisite"))
       ;; Out of scope: a read-only buffer from the tracker.
       (zwanenzang-test-goto pre)
       (org-cut-subtree)

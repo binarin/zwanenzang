@@ -60,7 +60,7 @@ Mapping between heading and ticket:
 | Org | Tracker |
 |-----|---------|
 | TODO keyword | status, via the scope's keyword map |
-| heading title | title |
+| heading title, after the number prefix | title |
 | nesting under another ticket heading | parent |
 | nesting under a non-ticket heading | nothing |
 | tags | tags (all of them; a per-tracker allowlist is not pursued, since local-only tags are not expected in tracker trees) |
@@ -69,6 +69,44 @@ Mapping between heading and ticket:
 | a read-only drawer or subtree | comments, newest first |
 | properties | number, dependencies (`ZWANENZANG_DEPENDS_ON`, editable) |
 | read-only generated drawers | prerequisites, dependents, relations, branches, MRs |
+
+### Number prefix
+
+Decided 2026-11-10 (ZZ-3): a numbered ticket's heading shows its number
+as real heading text, after the keyword, priority cookie and `COMMENT`
+marker: `* TODO [#A] [ZZ-42] Title`. It is visible wherever the heading
+is (buffer, agenda, search, org-ql, exports); a display-only overlay or
+font-lock would not be. The number uses the unpadded display form
+(ZZ-20).
+
+- The client owns it. Reading a heading strips it before the title is
+  compared, hashed or pushed, so the tracker title never contains it and
+  `title=` in `ZWANENZANG_SYNC` hashes the title without it. Every
+  heading write (pull, conflict notes) puts it back.
+- An unnumbered ticket, and any heading without `ZWANENZANG_NUMBER`, gets
+  none; its whole headline is title. The prefix appears with the pull
+  that brings the number.
+- What counts as a prefix: at the start of the title, a bracketed token
+  starting with the tracker prefix of the heading's own number and a
+  dash, containing no blank or bracket, followed by blanks or the end;
+  letter case ignored. So a stale `[ZZ-9]`, the old padded `[ZZ-0042]`
+  or a mistyped `[ZZ-]` is the client's and is replaced, while
+  `[AB-3] Title`, `[ZZ-3]Title`, a statistics cookie or a token later in
+  the title stay title text. Only one token is stripped.
+- An edited or removed prefix is not a conflict and not a title change:
+  the next pull silently rewrites it. A tracker title that itself begins
+  with a prefix-shaped token keeps it behind the real prefix
+  (`[ZZ-1] [ZZ-5] Literal`), and reads back unchanged.
+- `zwanenzang-heading-number-prefix` (default on) turns it off; pull then
+  removes the prefixes, except before a title that would read as one,
+  where the prefix stays so the title survives.
+- Detaching a duplicate copy and adopting a foreign ticket strip the old
+  prefix along with the client's properties, so it does not become title
+  text of a new ticket.
+- Upgrading: headings written before this get the prefix on their next
+  pull, without a conflict, since their synced title hash has none.
+  A pull that only adds or repairs prefixes edits the buffer but reports
+  nothing changed.
 
 ## Keyword map
 

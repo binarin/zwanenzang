@@ -611,27 +611,90 @@ The client sets and clears it; it is never a tracker tag.")
   (seq-remove (lambda (tag) (member tag (list zwanenzang-conflict-tag org-archive-tag)))
               tags))
 
+(defcustom zwanenzang-heading-number-prefix t
+  "Show the ticket number as a prefix of each synced ticket heading.
+Pull writes it after the keyword and priority cookie, as in
+\"* TODO [#A] [ZZ-42] Title\", once the ticket has a number.  It is
+real heading text, so agenda, search, org-ql and exports see it, but
+the client owns it: it is stripped before the title is compared, hashed
+or pushed, and an edited or removed prefix is restored by the next pull.
+With nil, pull removes the prefixes instead, except where the title
+itself starts with something that would read as one."
+  :type 'boolean)
+
+(defun zwanenzang--number-prefix-re (number)
+  "Regexp matching a heading prefix for NUMBER's tracker, or nil.
+NUMBER is a display form such as ZZ-42.  Any bracketed token starting
+with the same tracker prefix matches, stale and padded ones included,
+along with the blanks after it."
+  (when (and number (string-match "\\`\\(.+\\)-[0-9]+\\'" number))
+    (concat "\\`\\[" (regexp-quote (match-string 1 number))
+            "-[^][ \t]*\\]\\(?:[ \t]+\\|\\'\\)")))
+
+(defun zwanenzang--split-number-prefix (text number)
+  "TEXT, a heading title, as (PREFIX . TITLE) for the ticket NUMBER.
+PREFIX is the bracketed token at its start, without the blanks after
+it, or nil when there is none or NUMBER is nil."
+  (let ((re (zwanenzang--number-prefix-re number))
+        (case-fold-search t))
+    (if (and re (string-match re text))
+        (cons (string-trim-right (substring text 0 (match-end 0)))
+              (substring text (match-end 0)))
+      (cons nil text))))
+
+(defun zwanenzang--heading-number ()
+  "The ticket number of the heading at point, from ZWANENZANG_NUMBER."
+  (org-entry-get nil "ZWANENZANG_NUMBER"))
+
+(defun zwanenzang--shown-prefix ()
+  "The number prefix the heading at point shows, or nil."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((case-fold-search nil))
+      (car (zwanenzang--split-number-prefix
+            (string-trim (substring-no-properties (org-get-heading t t t t)))
+            (zwanenzang--heading-number))))))
+
+(defun zwanenzang--wanted-prefix (title)
+  "The number prefix the heading at point should show before TITLE, or nil.
+A ticket without a number gets none.  With the prefix turned off, one is
+still written when TITLE itself would be read as a prefix, so reading
+the heading back gives TITLE."
+  (let ((number (zwanenzang--heading-number)))
+    (and number
+         (or zwanenzang-heading-number-prefix
+             (car (zwanenzang--split-number-prefix title number)))
+         (concat "[" number "]"))))
+
 (defun zwanenzang--heading ()
-  "Keyword, title and local tags of the heading at point, as a plist."
+  "Keyword, title and local tags of the heading at point, as a plist.
+The title leaves out the number prefix, see
+`zwanenzang-heading-number-prefix'."
   (save-excursion
     (org-back-to-heading t)
     (let ((case-fold-search nil))
       (list :keyword (org-get-todo-state)
             :priority (nth 3 (org-heading-components))
-            :title (string-trim (substring-no-properties (org-get-heading t t t t)))
+            :title (string-trim
+                    (cdr (zwanenzang--split-number-prefix
+                          (string-trim (substring-no-properties (org-get-heading t t t t)))
+                          (zwanenzang--heading-number))))
             :tags (mapcar #'substring-no-properties (org-get-tags nil t))))))
 
 (defun zwanenzang--set-heading (keyword title tags &rest priority)
   "Give the heading at point KEYWORD, TITLE and TAGS.
 An optional PRIORITY value sets the native cookie; nil clears it.
-Without that argument the cookie stays.  Level and COMMENT marker stay."
+Without that argument the cookie stays.  Level and COMMENT marker stay.
+The number prefix follows `zwanenzang--wanted-prefix'."
   (save-excursion
     (org-back-to-heading t)
     (let ((case-fold-search nil)
-          (old (zwanenzang--heading)))
+          (old (zwanenzang--heading))
+          (prefix (zwanenzang--wanted-prefix title)))
       (unless (and (equal keyword (plist-get old :keyword))
                    (equal title (plist-get old :title))
                    (equal tags (plist-get old :tags))
+                   (equal prefix (zwanenzang--shown-prefix))
                    (or (null priority) (equal (car priority) (plist-get old :priority))))
         (let* ((parts (org-heading-components))
                (priority (if priority (car priority) (nth 3 parts)))
@@ -641,6 +704,7 @@ Without that argument the cookie stays.  Level and COMMENT marker stay."
                              (and priority (format " [#%s]" (org-priority-to-string priority)))
                              (and (string-prefix-p (concat org-comment-string " ") headline)
                                   (concat " " org-comment-string))
+                             (and prefix (concat " " prefix))
                              " " title
                              (and tags (concat " :" (string-join tags ":") ":")))))
           (skip-chars-forward "*")
@@ -1010,7 +1074,7 @@ duplicate, tombstoned and unmapped prerequisites are not satisfied."
              (label (if headings
                         (save-excursion
                           (goto-char (car headings))
-                          (format "%s %s" ref (org-get-heading t t t t)))
+                          (format "%s %s" ref (plist-get (zwanenzang--heading) :title)))
                       (if summary (zwanenzang--label summary) ref)))
              (reason
               (cond
@@ -3512,10 +3576,11 @@ Remove the keyword too, so push cannot create a replacement ticket."
                   (zwanenzang--compose-document '(("ZWANENZANG_CONFLICT")))
                 (zwanenzang--compose-body (zwanenzang--body) '(("ZWANENZANG_CONFLICT"))))))
     (zwanenzang--write-body body))
-  (dolist (property (org-entry-properties nil 'standard))
-    (when (string-prefix-p "ZWANENZANG" (car property))
-      (org-entry-delete nil (car property))))
+  ;; Read the title while the number is known, so its prefix goes too.
   (let ((heading (zwanenzang--heading)))
+    (dolist (property (org-entry-properties nil 'standard))
+      (when (string-prefix-p "ZWANENZANG" (car property))
+        (org-entry-delete nil (car property))))
     (zwanenzang--set-heading
      nil (plist-get heading :title)
      (remove "zz_conflict" (plist-get heading :tags)))))
@@ -3543,7 +3608,7 @@ are made; the entire edit is undoable."
                           (cons (save-excursion
                                   (goto-char marker)
                                   (format "Line %d: %s" (line-number-at-pos)
-                                          (org-get-heading t t t t)))
+                                          (plist-get (zwanenzang--heading) :title)))
                                 marker)))
                       copies))
             (unchanged (seq-filter
@@ -3590,14 +3655,16 @@ are made; the entire edit is undoable."
 (defun zwanenzang--clear-foreign-state (&optional document)
   "Remove tracker state on this entry, keeping DOCUMENT's name when non-nil.
 Human properties, Org IDs and body text are retained."
-  (dolist (property (org-entry-properties nil 'standard))
-    (when (and (string-prefix-p "ZWANENZANG" (car property))
-               (not (and document (member (car property)
-                                          '("ZWANENZANG_DOC" "ZWANENZANG_DOC_FORMAT")))))
-      (org-entry-delete nil (car property))))
+  ;; The other tracker's number prefix is not part of the title.
+  (let ((heading (zwanenzang--heading)))
+    (dolist (property (org-entry-properties nil 'standard))
+      (when (and (string-prefix-p "ZWANENZANG" (car property))
+                 (not (and document (member (car property)
+                                            '("ZWANENZANG_DOC" "ZWANENZANG_DOC_FORMAT")))))
+        (org-entry-delete nil (car property))))
+    (zwanenzang--set-heading (plist-get heading :keyword) (plist-get heading :title)
+                             (remove "zz_conflict" (plist-get heading :tags))))
   (zwanenzang--drop-archive-properties)
-  (when (member "zz_conflict" (org-get-tags nil t))
-    (org-set-tags (remove "zz_conflict" (org-get-tags nil t))))
   (let ((drawers (mapcar #'list (append '("ZWANENZANG_CONFLICT") zwanenzang--tail-drawers
                                        zwanenzang--legacy-drawers))))
     (zwanenzang--write-body

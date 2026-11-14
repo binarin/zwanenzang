@@ -98,7 +98,7 @@
         (should (string-match-p "Human description locally edited" (buffer-string)))
         (should (string-match-p "Human plan locally edited" (buffer-string)))
         (goto-char (point-min))
-        (search-forward "TODO Ticket")
+        (search-forward "TODO [ZZ-1] Ticket")
         (should (string-match-p "A comment from the plan" (zwanenzang--body)))))))
 
 (ert-deftest zwanenzang-comment-named-document-refuses-unsafe-owner ()
@@ -158,7 +158,7 @@
     (goto-char (point-min))
     (zwanenzang-push)
     (goto-char (point-min))
-    (re-search-forward "TODO Ticket")
+    (re-search-forward "TODO \\[ZZ-1\\] Ticket")
     (let* ((id (org-entry-get nil "ZWANENZANG_ID"))
            (head (zwanenzang-test-head tracker)))
       (org-add-note)
@@ -199,7 +199,7 @@
     (zwanenzang-push)
     (re-search-forward "Original description")
     (insert " with an unsynced human edit")
-    (re-search-backward "TODO Ticket")
+    (re-search-backward "TODO \\[ZZ-1\\] Ticket")
     (let ((id (org-entry-get nil "ZWANENZANG_ID"))
           (side (generate-new-buffer " *comment side*")))
       (unwind-protect
@@ -282,7 +282,7 @@
       (tracker source "* Scope\n:PROPERTIES:\n:ZWANENZANG: %s\n:END:\n** TODO Ticket\n")
     (goto-char (point-min))
     (zwanenzang-push)
-    (re-search-forward "TODO Ticket")
+    (re-search-forward "TODO \\[ZZ-1\\] Ticket")
     (let ((id (org-entry-get nil "ZWANENZANG_ID"))
           (head (zwanenzang-test-head tracker)))
       (set-window-configuration (current-window-configuration))
@@ -331,7 +331,7 @@
         (tracker source "* Scope\n:PROPERTIES:\n:ZWANENZANG: %s\n:END:\n** TODO Ticket\nDescription\n*** plan\n:PROPERTIES:\n:ZWANENZANG_DOC: plan\n:END:\nPlan text\n")
       (goto-char (point-min))
       (zwanenzang-push)
-      (re-search-forward "TODO Ticket")
+      (re-search-forward "TODO \\[ZZ-1\\] Ticket")
       (let ((id (org-entry-get nil "ZWANENZANG_ID")))
         (zwanenzang-test-cli tracker "comment" id "Oldest comment")
         (zwanenzang-test-cli tracker "comment" id "Middle comment")
@@ -442,7 +442,7 @@ STATUS with TAGS and pulled; ID and DRAFT are bound around BODY."
       ;; Recording changes writes nothing and edits nothing.
       (should (equal head (zwanenzang-test-head tracker)))
       (with-current-buffer source
-        (should (string-match-p "\\`\\*+ WAIT Ticket +:needs_human:\\'"
+        (should (string-match-p "\\`\\*+ WAIT \\[ZZ-1\\] Ticket +:needs_human:\\'"
                                 (zwanenzang-test-heading id)))))))
 
 (ert-deftest zwanenzang-comment-hand-to-agent-sends-one-batch ()
@@ -476,7 +476,7 @@ STATUS with TAGS and pulled; ID and DRAFT are bound around BODY."
             (should (equal '("ready_for_agent") (alist-get 'tags shown)))
             (should (equal event (alist-get 'id (car (alist-get 'comments shown)))))
             (with-current-buffer source
-              (should (string-match-p "\\`\\*+ TODO Ticket +:ready_for_agent:\\'"
+              (should (string-match-p "\\`\\*+ TODO \\[ZZ-1\\] Ticket +:ready_for_agent:\\'"
                                       (zwanenzang-test-heading id)))
               (should (string-match-p "Go ahead" (zwanenzang-test-entry id)))
               ;; Tracker history records the change, not the Org log.
@@ -564,7 +564,7 @@ STATUS with TAGS and pulled; ID and DRAFT are bound around BODY."
                          (sort (copy-sequence (alist-get 'tags shown)) #'string<))))
         (with-current-buffer source
           (let ((heading (zwanenzang-test-heading id)))
-            (should (string-match-p "\\`\\*+ TODO Ticket " heading))
+            (should (string-match-p "\\`\\*+ TODO \\[ZZ-1\\] Ticket " heading))
             (should-not (string-match-p "zz_conflict" heading)))
           (let ((before (buffer-string)))
             (should (string-match-p "nothing changed"
