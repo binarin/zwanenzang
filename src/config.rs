@@ -9,15 +9,7 @@ use crate::ulid::Ulid;
 
 pub const CONFIG_FILE: &str = "zwanenzang.toml";
 
-pub const DEFAULT_STATUSES: &[&str] = &[
-    "draft",
-    "todo",
-    "doing",
-    "blocked",
-    "review",
-    "done",
-    "cancelled",
-];
+pub const DEFAULT_STATUSES: &[&str] = &["todo", "next", "wait", "agnt", "revw", "done", "cncl"];
 pub const DEFAULT_KINDS: &[&str] = &["task", "bug", "feature"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -57,6 +49,10 @@ pub struct Config {
     pub name: String,
     pub prefix: String,
     pub statuses: Vec<String>,
+    /// Statuses kept so old events replay, but refused in new writes.
+    /// Each is also in `statuses`.
+    #[serde(default)]
+    pub retired_statuses: Vec<String>,
     #[serde(default)]
     pub kinds: Vec<String>,
     #[serde(default)]
@@ -72,6 +68,7 @@ impl Config {
             name: name.to_string(),
             prefix: prefix.to_string(),
             statuses: DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
+            retired_statuses: Vec::new(),
             kinds: DEFAULT_KINDS.iter().map(|s| s.to_string()).collect(),
             repos: BTreeMap::new(),
             priority: PriorityConfig::default(),
@@ -106,7 +103,11 @@ impl Config {
         if self.statuses.is_empty() {
             return Err("statuses must not be empty".into());
         }
-        for (what, list) in [("status", &self.statuses), ("kind", &self.kinds)] {
+        for (what, list) in [
+            ("status", &self.statuses),
+            ("retired status", &self.retired_statuses),
+            ("kind", &self.kinds),
+        ] {
             let mut seen = std::collections::BTreeSet::new();
             for s in list {
                 if !valid_name(s) {
@@ -117,6 +118,17 @@ impl Config {
                 }
             }
         }
+        for s in &self.retired_statuses {
+            if !self.statuses.contains(s) {
+                return Err(format!("retired status {s:?} is not in statuses"));
+            }
+        }
+        if self.is_retired(&self.statuses[0]) {
+            return Err(format!(
+                "the first status {:?} is the default for new tickets and cannot be retired",
+                self.statuses[0]
+            ));
+        }
         for (alias, repo) in &self.repos {
             if !valid_name(alias) {
                 return Err(format!("invalid repository alias {alias:?}"));
@@ -126,6 +138,11 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// Whether new writes must not use status `s`.
+    pub fn is_retired(&self, s: &str) -> bool {
+        self.retired_statuses.iter().any(|r| r == s)
     }
 
     /// Renders the configuration as written by `init`.
@@ -140,11 +157,17 @@ impl Config {
         out.push_str("# The tracker root entity. Never change it.\n");
         out.push_str(&format!("id = {}\n", q(&self.id.to_canonical())));
         out.push_str(&format!("name = {}\n", q(&self.name)));
-        out.push_str("# Ticket numbers display as <prefix>-NNNN.\n");
+        out.push_str("# Ticket numbers display as <prefix>-N.\n");
         out.push_str(&format!("prefix = {}\n\n", q(&self.prefix)));
         out.push_str("# Vocabularies may grow; removing a name breaks old events that use it.\n");
         out.push_str("# The first status is the default for new tickets.\n");
         out.push_str(&format!("statuses = {}\n", list(&self.statuses)));
+        out.push_str("# Statuses from the list above that old events keep using but new\n");
+        out.push_str("# writes refuse. Retire a name instead of removing it.\n");
+        out.push_str(&format!(
+            "retired_statuses = {}\n",
+            list(&self.retired_statuses)
+        ));
         out.push_str(&format!("kinds = {}\n\n", list(&self.kinds)));
         out.push_str("# Native Org priority values: 0..64 numeric, 65..90 letters A..Z.\n");
         out.push_str(&format!(
@@ -187,11 +210,48 @@ mod tests {
         c.statuses.clear();
         assert!(c.validate().is_err());
         let mut c = base.clone();
-        c.statuses.push("draft".into());
+        c.statuses.push("todo".into());
         assert!(c.validate().is_err());
         let mut c = base;
         c.kinds.push("has space".into());
         assert!(c.validate().is_err());
         assert!(Config::parse("name = \"x\"").is_err());
+    }
+
+    #[test]
+    fn default_vocabulary() {
+        let c = Config::new(Ulid::from_parts(1, 2), "t", "ZZ");
+        assert_eq!(
+            c.statuses,
+            ["todo", "next", "wait", "agnt", "revw", "done", "cncl"]
+        );
+        assert!(c.retired_statuses.is_empty());
+        assert!(c.to_toml().contains("\nretired_statuses = []\n"));
+    }
+
+    #[test]
+    fn retired_statuses() {
+        let mut c = Config::new(Ulid::from_parts(1, 2), "t", "ZZ");
+        c.statuses.push("doing".into());
+        c.retired_statuses.push("doing".into());
+        assert_eq!(c.validate(), Ok(()));
+        assert!(c.is_retired("doing"));
+        assert!(!c.is_retired("agnt"));
+        assert_eq!(Config::parse(&c.to_toml()).unwrap(), c);
+
+        let mut bad = c.clone();
+        bad.retired_statuses.push("parked".into());
+        assert!(bad.validate().unwrap_err().contains("not in statuses"));
+        let mut bad = c.clone();
+        bad.retired_statuses.push("doing".into());
+        assert!(bad.validate().unwrap_err().contains("duplicate"));
+        let mut bad = c;
+        bad.retired_statuses.push("todo".into());
+        assert!(bad.validate().unwrap_err().contains("cannot be retired"));
+
+        // An older configuration without the key retires nothing.
+        let old = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n\
+                   statuses = [\"draft\", \"doing\"]\n";
+        assert!(Config::parse(old).unwrap().retired_statuses.is_empty());
     }
 }

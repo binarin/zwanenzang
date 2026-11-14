@@ -31,7 +31,7 @@ fn scope_discovery_documents_and_incremental_history() {
     let before_head = git(p, &["rev-parse", "HEAD"]);
     let first = scope(p, json!({}));
     assert_eq!(entry(&first, &a)["documents"]["description"], "Human prose");
-    assert_eq!(first["tracker"]["statuses"][0], "draft");
+    assert_eq!(first["tracker"]["statuses"][0], "todo");
     assert_eq!(entry(&first, &a)["events"][0]["op"], "create");
     assert_eq!(logs(p), before_logs);
     assert_eq!(git(p, &["rev-parse", "HEAD"]), before_head);
@@ -41,7 +41,7 @@ fn scope_discovery_documents_and_incremental_history() {
     assert_eq!(entry(&unchanged, &a)["events"], json!([]));
     assert_eq!(entry(&unchanged, &a)["cursor"], cursor);
     assert_eq!(entry(&unchanged, &a)["reset"], false);
-    let status = ok(p, &["status", &a, "doing"]);
+    let status = ok(p, &["status", &a, "agnt"]);
     let b = id(&ok(p, &["create", "second"]));
     let changed = scope(p, request);
     assert_eq!(changed["tickets"].as_array().unwrap().len(), 2);

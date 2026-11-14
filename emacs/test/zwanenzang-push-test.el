@@ -11,7 +11,7 @@
 (require 'zwanenzang-pull-test)
 
 (defconst zwanenzang-test--map
-  '(("todo" . "TODO") ("draft" . "TODO") ("doing" . "NEXT") ("review" . "NEXT")
+  '(("next" . "TODO") ("todo" . "TODO") ("agnt" . "NEXT") ("revw" . "NEXT")
     ("done" . "DONE"))
   "A keyword map, as `zwanenzang--keyword-map' parses it.")
 
@@ -19,7 +19,7 @@
   (concat "#+TODO: TODO NEXT WAIT | DONE\n"
           "* Root\n:PROPERTIES:\n:ZWANENZANG: /t\n:END:\n"))
 
-(cl-defun zwanenzang-test--synced (id title &key (stars "**") (keyword "TODO") (status "draft")
+(cl-defun zwanenzang-test--synced (id title &key (stars "**") (keyword "TODO") (status "todo")
                                       tags parent nest (text "") (shown-title title) shown-tags)
   "A ticket heading ID synced as TITLE, STATUS, TAGS, PARENT, NEST and TEXT.
 It shows KEYWORD, SHOWN-TITLE and SHOWN-TAGS, and has an empty description."
@@ -33,7 +33,7 @@ It shows KEYWORD, SHOWN-TITLE and SHOWN-TAGS, and has an empty description."
           ":ZWANENZANG_DESC_HASH: " (zwanenzang--hash text) "\n"
           ":END:\n"))
 
-(cl-defun zwanenzang-test--entry (id title &key (status "draft") tags parent archived tombstoned
+(cl-defun zwanenzang-test--entry (id title &key (status "todo") tags parent archived tombstoned
                                      docs)
   "A read result for ticket ID.  DOCS is an alist of name, version and text."
   `((ticket (id . ,id) (display . ,id) (title . ,title) (status . ,status) (tags . ,tags)
@@ -74,7 +74,7 @@ A ticket without an entry is foreign to the tracker."
 (ert-deftest zwanenzang-plan-leaves-to-pull-what-only-the-tracker-changed ()
   (should-not (zwanenzang-test--changes
                (concat zwanenzang-test--root (zwanenzang-test--synced "A" "Title"))
-               (list (zwanenzang-test--entry "A" "Theirs" :status "doing" :tags '("x")
+               (list (zwanenzang-test--entry "A" "Theirs" :status "agnt" :tags '("x")
                                              :parent "P"
                                              :docs '(("description" "V1" "Their text\n")))))))
 
@@ -87,7 +87,7 @@ A ticket without an entry is foreign to the tracker."
                                                    :tags '("old" "kept")
                                                    :shown-tags '("kept" "new"
                                                                  "zz_conflict" "ARCHIVE")))
-                  (list (zwanenzang-test--entry "A" "Theirs" :status "doing"
+                  (list (zwanenzang-test--entry "A" "Theirs" :status "agnt"
                                                 :tags '("kept" "old" "agent"))))
                  '(((op . "status") (ticket . "A") (data (to . "done")))
                    ((op . "title") (ticket . "A") (data (to . "Mine")))
@@ -96,21 +96,21 @@ A ticket without an entry is foreign to the tracker."
                    ((op . "untag") (ticket . "A") (data (tag . "agent")))))))
 
 (ert-deftest zwanenzang-plan-sends-status-only-when-the-keyword-changed ()
-  ;; A draft shown as TODO stays draft.
+  ;; A todo shown as TODO stays todo, not next.
   (should-not (zwanenzang-test--changes
-               (concat zwanenzang-test--root (zwanenzang-test--synced "A" "T" :status "draft"))
-               (list (zwanenzang-test--entry "A" "T" :status "draft"))))
+               (concat zwanenzang-test--root (zwanenzang-test--synced "A" "T" :status "todo"))
+               (list (zwanenzang-test--entry "A" "T" :status "todo"))))
   ;; The first status of the keyword is written.
   (should (equal (zwanenzang-test--changes
                   (concat zwanenzang-test--root
-                          (zwanenzang-test--synced "A" "T" :status "draft" :keyword "NEXT"))
-                  (list (zwanenzang-test--entry "A" "T" :status "draft")))
-                 '(((op . "status") (ticket . "A") (data (to . "doing"))))))
+                          (zwanenzang-test--synced "A" "T" :status "todo" :keyword "NEXT"))
+                  (list (zwanenzang-test--entry "A" "T" :status "todo")))
+                 '(((op . "status") (ticket . "A") (data (to . "agnt"))))))
   ;; An agent already moved it to another status of that keyword: they agree.
   (should-not (zwanenzang-test--changes
                (concat zwanenzang-test--root
-                       (zwanenzang-test--synced "A" "T" :status "draft" :keyword "NEXT"))
-               (list (zwanenzang-test--entry "A" "T" :status "review")))))
+                       (zwanenzang-test--synced "A" "T" :status "todo" :keyword "NEXT"))
+               (list (zwanenzang-test--entry "A" "T" :status "revw")))))
 
 (ert-deftest zwanenzang-plan-bases-documents-on-the-current-version ()
   (let ((text (concat zwanenzang-test--root
@@ -145,7 +145,7 @@ A ticket without an entry is foreign to the tracker."
   (should-not (zwanenzang-test--changes
                (concat zwanenzang-test--root
                        "** TODO T\n:PROPERTIES:\n:ZWANENZANG_ID: A\n:END:\n")
-               (list (zwanenzang-test--entry "A" "T" :status "todo" :tags '("x") :parent "P"
+               (list (zwanenzang-test--entry "A" "T" :status "next" :tags '("x") :parent "P"
                                              :docs '(("description" "V" "Text\n")))))))
 
 (ert-deftest zwanenzang-plan-sends-new-documents-with-a-null-base ()
@@ -187,8 +187,8 @@ A ticket without an entry is foreign to the tracker."
                           "****** the plan\n:PROPERTIES:\n:ZWANENZANG_DOC: plan\n:END:\nPlan\n"
                           "** Plain heading\n")
                   (list (zwanenzang-test--entry "A" "Existing")))
-                 '(((op . "create") (data (title . "Parent") (status . "doing")))
-                   ((op . "create") (data (title . "Child") (status . "todo")))
+                 '(((op . "create") (data (title . "Parent") (status . "agnt")))
+                   ((op . "create") (data (title . "Child") (status . "next")))
                    ((op . "tag") (ticket (created . 0)) (data (tag . "tagged")))
                    ((op . "doc") (ticket (created . 0))
                     (data (name . "description") (text . "Body\n") (base . :null)))
@@ -234,7 +234,7 @@ A ticket without an entry is foreign to the tracker."
                 (list (zwanenzang-test--entry "T" "Tomb" :tombstoned t)
                       (zwanenzang-test--entry "U" "Unmapped")
                       (zwanenzang-test--entry "B" "Bare")
-                      (zwanenzang-test--entry "S" "S" :status "cancelled")))))
+                      (zwanenzang-test--entry "S" "S" :status "cncl")))))
     (should-not (zwanenzang--plan-changes plan)))
   ;; Both copies of a duplicate.
   (let ((dup (zwanenzang-test--synced "D" "D" :shown-title "D edit")))
@@ -266,7 +266,7 @@ A ticket without an entry is foreign to the tracker."
                     (concat zwanenzang-test--root restored)
                     (list (zwanenzang-test--entry "A" "T" :status "done" :archived t)))
                    '(((op . "unarchive") (ticket . "A") (data))
-                     ((op . "status") (ticket . "A") (data (to . "doing"))))))
+                     ((op . "status") (ticket . "A") (data (to . "agnt"))))))
     ;; Not archived in the tracker, or no ARCHIVE_TIME: nothing to revive.
     (should (equal (mapcar (lambda (c) (alist-get 'op c))
                            (zwanenzang-test--changes

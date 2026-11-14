@@ -838,12 +838,15 @@ See `zwanenzang--scan-all'."
 
 ;;;; Keyword map
 
-(defun zwanenzang--keyword-map (spec statuses keywords)
+(defun zwanenzang--keyword-map (spec statuses keywords &optional retired)
   "Parse the keyword map SPEC against the tracker STATUSES and Org KEYWORDS.
 SPEC is the ZWANENZANG_KEYWORDS value or nil.  Return (MAP . PROBLEMS):
 MAP is an alist from status to the keyword it is shown with, PROBLEMS
 a list of readable lines.  An entry naming a keyword Org does not know
-in this buffer, or a status outside the vocabulary, is left out."
+in this buffer, or a status outside the vocabulary, is left out.
+RETIRED statuses may have a keyword but need none: no new write uses
+them, and a ticket still in one is blocked on its own.  They come last
+in MAP, so a keyword shared with a current status maps back to that."
   (let (map problems)
     (if (null spec)
         (dolist (kw keywords)
@@ -867,9 +870,12 @@ in this buffer, or a status outside the vocabulary, is left out."
                         problems))
                  (t (push (cons status kw) map)))))))))
     (dolist (status statuses)
-      (unless (assoc status map)
+      (unless (or (assoc status map) (member status retired))
         (push (format "keyword map: status %s has no keyword" status) problems)))
-    (cons (nreverse map) (nreverse problems))))
+    (setq map (nreverse map))
+    (cons (append (seq-remove (lambda (e) (member (car e) retired)) map)
+                  (seq-filter (lambda (e) (member (car e) retired)) map))
+          (nreverse problems))))
 
 ;;;; Dependencies
 
@@ -1348,8 +1354,8 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                 nil)))
             'blocked)
         (zwanenzang--ensure-org-id)
-        ;; Status is compared as keywords: a draft shown as TODO stays
-        ;; draft until the keyword changes.
+        ;; Status is compared as keywords: an agnt shown as NEXT stays
+        ;; agnt until the keyword changes.
         (let* ((remote (cdr (assoc status map)))
                (base (zwanenzang--sync-get sync 'status))
                ;; A synced status the map no longer shows says nothing
@@ -1749,7 +1755,8 @@ and the buffer is not saved."
              (setf (zwanenzang--pull-refused pull) refused)
            (let ((km (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
                                               (alist-get 'statuses tracker)
-                                              org-todo-keywords-1))
+                                              org-todo-keywords-1
+                                              (alist-get 'retired_statuses tracker)))
                  (hide (zwanenzang--hide-docs root)))
              (setf (zwanenzang--pull-map pull) (car km)
                    (zwanenzang--pull-hidden pull) (remove "description" hide)
@@ -2277,7 +2284,7 @@ summaries for resolving dependency numbers, including absent prerequisites."
       (when (and (eq (alist-get 'archived ticket) t) (org-entry-get nil "ARCHIVE_TIME"))
         (zwanenzang--plan-add plan "unarchive" ref nil)
         (push (plist-get heading :marker) (zwanenzang--plan-revived plan)))
-      ;; Status goes by keyword: a draft shown as TODO stays draft until
+      ;; Status goes by keyword: an agnt shown as NEXT stays agnt until
       ;; the keyword changes, and two statuses of one keyword agree.
       (let ((base (cdr (assoc (zwanenzang--sync-get sync 'status) map)))
             (remote (cdr (assoc (alist-get 'status ticket) map))))
@@ -2525,7 +2532,9 @@ Refusing the scope, or failing, adds nothing to OUTCOME's lines."
                    headings blocked (alist-get 'tickets result)
                    (car (zwanenzang--keyword-map (org-entry-get root "ZWANENZANG_KEYWORDS")
                                                  (alist-get 'statuses (alist-get 'tracker result))
-                                                 org-todo-keywords-1))
+                                                 org-todo-keywords-1
+                                                 (alist-get 'retired_statuses
+                                                            (alist-get 'tracker result))))
                    (remove "description" (zwanenzang--hide-docs root)) known)))
         (zwanenzang--send-plan plan dir outcome)
         (setf (zwanenzang--outcome-problems outcome)
@@ -2801,7 +2810,8 @@ create-on-push, save the file as soon as the new identity lands."
              (map (car (zwanenzang--keyword-map
                         (org-entry-get root "ZWANENZANG_KEYWORDS")
                         (alist-get 'statuses (alist-get 'tracker result))
-                        org-todo-keywords-1))))
+                        org-todo-keywords-1
+                        (alist-get 'retired_statuses (alist-get 'tracker result))))))
          (atomic-change-group
            (zwanenzang--clear-foreign-state)
            (zwanenzang--write-body
@@ -2929,7 +2939,8 @@ Only status and archive operations are sent; Org text is never rewritten."
              (mapping (zwanenzang--keyword-map
                        (org-entry-get root "ZWANENZANG_KEYWORDS")
                        (alist-get 'statuses (alist-get 'tracker result))
-                       org-todo-keywords-1))
+                       org-todo-keywords-1
+                       (alist-get 'retired_statuses (alist-get 'tracker result))))
              (map (car mapping))
              (plan (zwanenzang--plan-create))
              (outcome (zwanenzang--outcome-create

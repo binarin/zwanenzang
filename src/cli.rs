@@ -450,6 +450,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     "name": t.config.name,
                     "prefix": t.config.prefix,
                     "statuses": t.config.statuses,
+                    "retired_statuses": t.config.retired_statuses,
                     "kinds": t.config.kinds,
                 },
                 "remote": {

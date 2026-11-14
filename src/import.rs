@@ -21,7 +21,7 @@ use crate::cli::INLINE_COMMENT_LIMIT;
 use crate::clock::Clock;
 use crate::error::{Error, Result};
 use crate::event::{
-    BranchData, CommentData, CreateData, DocData, MrData, Op, ParentData, RelateData,
+    BranchData, CommentData, CreateData, DocData, MrData, Op, ParentData, RelateData, TagData,
 };
 use crate::frontmatter::{self, Field};
 use crate::names::{valid_name, valid_title};
@@ -40,18 +40,21 @@ pub const MARKER: &str = "Imported from the ai-workflow tracker: ";
 /// The document the ticket body after its title becomes.
 pub const DESCRIPTION: &str = "description";
 
-/// Status mapping from the frozen tracker's vocabulary. Anything else is
-/// imported as `draft`, with a warning.
-pub const STATUS_MAP: &[(&str, &str)] = &[
-    ("draft", "draft"),
-    ("needs-triage", "todo"),
-    ("needs-plan", "todo"),
-    ("ready-for-implementation", "todo"),
-    ("ready-for-review", "review"),
-    ("needs-human-input", "blocked"),
-    ("done", "done"),
+/// Status mapping from the frozen tracker's vocabulary, with the tag a
+/// ticket also gets: a ticket waiting on the human or ready for their
+/// review carries `needs_human`. Anything else is imported as `todo`, with
+/// a warning.
+pub const STATUS_MAP: &[(&str, &str, Option<&str>)] = &[
+    ("draft", "todo", None),
+    ("needs-triage", "todo", None),
+    ("needs-plan", "todo", None),
+    ("ready-for-implementation", "todo", None),
+    ("ready-for-review", "revw", Some(NEEDS_HUMAN)),
+    ("needs-human-input", "wait", Some(NEEDS_HUMAN)),
+    ("done", "done", None),
 ];
-const UNKNOWN_STATUS: &str = "draft";
+const UNKNOWN_STATUS: &str = "todo";
+const NEEDS_HUMAN: &str = "needs_human";
 
 /// Fields with no zwanenzang counterpart that are expected, so kept
 /// verbatim in the provenance comment without a warning. Other unmapped
@@ -99,6 +102,8 @@ pub struct SourceTicket {
     pub title_from_heading: bool,
     pub source_status: Option<String>,
     pub status: String,
+    /// A tag the mapped status implies.
+    pub tag: Option<String>,
     pub description: String,
     pub related: Vec<String>,
     pub original: Option<String>,
@@ -169,12 +174,12 @@ fn mr_repo(url: &str) -> Option<&str> {
     }
 }
 
-fn map_status(s: Option<&str>) -> Option<&'static str> {
+fn map_status(s: Option<&str>) -> Option<(&'static str, Option<&'static str>)> {
     let s = s?;
     STATUS_MAP
         .iter()
-        .find(|(from, _)| *from == s)
-        .map(|(_, to)| *to)
+        .find(|(from, ..)| *from == s)
+        .map(|&(_, to, tag)| (to, tag))
 }
 
 /// The first `# ` heading outside fenced code: its line index and text.
@@ -432,8 +437,8 @@ fn read_ticket(
         }
     }
 
-    let status = match map_status(source_status.as_deref()) {
-        Some(s) => s.to_string(),
+    let (status, tag) = match map_status(source_status.as_deref()) {
+        Some((s, tag)) => (s.to_string(), tag.map(str::to_string)),
         None => {
             let what = match &source_status {
                 Some(s) => format!("status {s:?} is not in the ai-workflow vocabulary"),
@@ -444,7 +449,7 @@ fn read_ticket(
                 "unknown-status",
                 format!("{file}: {what}; imported as {UNKNOWN_STATUS}"),
             ));
-            UNKNOWN_STATUS.to_string()
+            (UNKNOWN_STATUS.to_string(), None)
         }
     };
 
@@ -492,6 +497,7 @@ fn read_ticket(
         title_from_heading,
         source_status,
         status,
+        tag,
         description,
         related,
         original,
@@ -686,9 +692,19 @@ fn provenance(t: &SourceTicket, revision: Option<&str>) -> String {
     if let Some(r) = revision {
         s.push_str(&format!("Source revision: {r}\n"));
     }
+    let tagged = t
+        .tag
+        .as_ref()
+        .map_or(String::new(), |tag| format!(", tagged {tag}"));
     match &t.source_status {
-        Some(st) => s.push_str(&format!("Status there: {st} (imported as {})\n", t.status)),
-        None => s.push_str(&format!("Status there: none (imported as {})\n", t.status)),
+        Some(st) => s.push_str(&format!(
+            "Status there: {st} (imported as {}{tagged})\n",
+            t.status
+        )),
+        None => s.push_str(&format!(
+            "Status there: none (imported as {}{tagged})\n",
+            t.status
+        )),
     }
     if let Some(o) = &t.original {
         s.push_str(&format!("Original ticket: {o}\n"));
@@ -964,6 +980,9 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
                         kind: None,
                     }),
                 ));
+                if let Some(tag) = &t.tag {
+                    plan.ops.push((me, Op::Tag(TagData { tag: tag.clone() })));
+                }
                 if !t.description.is_empty() {
                     plan.ops.push((
                         me,
@@ -1154,6 +1173,7 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
                 "id": id,
                 "title": t.title,
                 "status": t.status,
+                "tags": t.tag.iter().collect::<Vec<_>>(),
                 "source_status": t.source_status,
                 "kept_fields": t.kept.iter().map(|(k, _)| k).collect::<Vec<_>>(),
             })

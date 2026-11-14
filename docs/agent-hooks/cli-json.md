@@ -347,7 +347,8 @@ No actor is allocated; no git repository is needed.
 
 ```json
 {"tracker": {"id": "<tracker ULID>", "name": "...", "prefix": "ZZ",
-             "statuses": ["draft", "..."], "kinds": ["task", "..."],
+             "statuses": ["todo", "..."], "retired_statuses": ["draft", "..."],
+             "kinds": ["task", "..."],
              "priority": {"highest": 65, "lowest": 67, "default": 66},
              "actors": {"<actor ULID>": "<display name>"}},
  "cursor": "<opaque scope cursor>" | null,
@@ -366,7 +367,9 @@ No actor is allocated; no git repository is needed.
 - Full state and current document text are returned even when no events
   are newer. `documents` maps names to UTF-8 text, with version ids and
   blob names in `ticket.documents`. Missing document blobs fail the call.
-  Vocabularies include accepted `config` events. `tracker.actors` maps
+  Vocabularies include accepted `config` events. `retired_statuses` are
+  the configuration's retired names: still in `statuses`, so tickets may
+  carry them, but refused in new writes with `retired-status`. `tracker.actors` maps
   every actor with an accepted declaration to its display name, so a
   client can name comment authors; undeclared actors are left out.
 - Events are in id order, exclusive of the input cursor. They include
@@ -410,7 +413,8 @@ The tracker starts independent history on a new branch:
 
 ```json
 {"tracker": {"root": "/path", "id": "<root ULID>", "name": "...", "prefix": "ZZ",
-             "statuses": ["draft", "..."], "kinds": ["task", "..."]},
+             "statuses": ["todo", "..."], "retired_statuses": [],
+             "kinds": ["task", "..."]},
  "remote": {"url": "https://forge.example/owner/repo.git", "branch": "tickets"},
  "actor": "<this clone's actor ULID>",
  "sync": {<sync object>}}
@@ -545,7 +549,8 @@ be serialized with sync.
  "actor": "<the import actor's ULID>" | null,
  "events": 183,
  "imported": [{"source": "AIWF-0003", "file": "tickets/AIWF-0003-x.md", "id": "<ULID>" | null,
-               "title": "...", "status": "todo", "source_status": "needs-plan" | null,
+               "title": "...", "status": "todo", "tags": ["needs_human"],
+               "source_status": "needs-plan" | null,
                "kept_fields": ["handoff"]}],
  "already_imported": [{"source": "AIWF-0001", "id": "<ULID>"}],
  "excluded": [{"source": "AIWF-0005", "file": "tickets/AIWF-0005-y.md"}],
@@ -559,6 +564,9 @@ be serialized with sync.
 
 - `revision` is the source's commit when `SOURCE`'s root is a git
   checkout, read with read-only git commands; otherwise `null`.
+- `imported[].tags` are the tags the mapped status implies: `needs_human`
+  for `revw` (from `ready-for-review`) and `wait` (from
+  `needs-human-input`), otherwise empty.
 - `actor` and each `imported[].id` are `null` on a dry run and when
   nothing was written. `events` counts the lines written, or that would
   be written on a dry run.
@@ -574,7 +582,7 @@ be serialized with sync.
   with the first pattern that matched. The link text in the description
   stays as written; no file and no link comment is written for them.
 - Warning codes: `unknown-status` (missing or not in the ai-workflow
-  vocabulary; imported as `draft`), `no-title` (no `# ` heading; title
+  vocabulary; imported as `todo`), `no-title` (no `# ` heading; title
   from the file name), `no-frontmatter`, `unknown-field` (kept as text),
   `missing-doc-file` (a link into `docs/` that does not resolve to a
   file there), `skipped-file` (not a `PREFIX-NNNN-slug.md` file),
@@ -588,7 +596,7 @@ Each event is one envelope:
 
 ```json
 {"id": "...", "actor": "...", "parent": "..." | null, "ts": "2026-11-07T12:34:56Z",
- "entity": "...", "op": "status", "data": {"to": "doing"}}
+ "entity": "...", "op": "status", "data": {"to": "agnt"}}
 ```
 
 Operation data:
@@ -618,7 +626,7 @@ Operation data:
 ```json
 {"id": "<ULID>", "short_id": "01JC3V5N0T", "number": 42 | null,
  "display": "ZZ-42" | "<short_id>",
- "title": "...", "status": "doing", "kind": "bug" | null,
+ "title": "...", "status": "agnt", "kind": "bug" | null,
  "priority": 65 | null,
  "parent": "<ULID>" | null, "children": ["<ULID>", ...], "related": ["<ULID>", ...],
  "tags": ["..."], "branches": [{"repo": "app", "name": "..."}],
@@ -758,6 +766,7 @@ Rejections: returned as the error code when a write is refused, and as
 | `tombstoned` | the ticket is tombstoned |
 | `invalid-title`, `invalid-tag`, `invalid-name`, `invalid-comment` | a value has the wrong format |
 | `status-not-in-vocabulary`, `kind-not-in-vocabulary` | not in the tracker's vocabulary |
+| `retired-status` | `create`, `status` or an `apply` change names a status in `retired_statuses`, even the ticket's current one (write only; replay accepts it) |
 | `invalid-priority` | outside the configured live range or not a native Org priority value |
 | `unknown-target`, `target-tombstoned` | a parent, relation or dependency target is missing or tombstoned |
 | `parent-cycle`, `self-relation` | the parent chain would loop, or a ticket relates to itself |

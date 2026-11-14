@@ -2,15 +2,16 @@
 
 ```sh
 zz create "A title" --status todo --tag example
-zz status ZZ-42 doing
+zz status ZZ-42 agnt
 zz priority ZZ-42 65   # Native Org A
 zz priority ZZ-42 --clear
 zz mr ZZ-42 app https://forge.example/app/pulls/7
 zz depend ZZ-43 ZZ-42
 ```
 
-An unknown status or kind is refused; an unknown repository alias is written
-anyway and only `lint` reports it.
+An unknown status or kind is refused, and so is a status the tracker retired
+(`retired-status`: old tickets may still show it, but pick a current one); an
+unknown repository alias is written anyway and only `lint` reports it.
 
 Priority is separate from tags and title. Native Org values are numeric 0–64 or
 letter codes 65–90 (A–Z). Batch `priority` takes a required nullable `to`.

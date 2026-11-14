@@ -44,6 +44,9 @@ pub enum RejectCode {
     Tombstoned,
     InvalidTitle,
     StatusNotInVocabulary,
+    /// A status the configuration retired. Only ever a live-write error:
+    /// replay accepts it, so old events keep their meaning.
+    RetiredStatus,
     KindNotInVocabulary,
     InvalidPriority,
     InvalidTag,
@@ -80,6 +83,7 @@ impl RejectCode {
             RejectCode::Tombstoned => "tombstoned",
             RejectCode::InvalidTitle => "invalid-title",
             RejectCode::StatusNotInVocabulary => "status-not-in-vocabulary",
+            RejectCode::RetiredStatus => "retired-status",
             RejectCode::KindNotInVocabulary => "kind-not-in-vocabulary",
             RejectCode::InvalidPriority => "invalid-priority",
             RejectCode::InvalidTag => "invalid-tag",

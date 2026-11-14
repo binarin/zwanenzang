@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::clock::{Clock, format_ts, leaps_too_far, next_id};
 use crate::error::{Error, Result};
-use crate::event::{ActorData, Event, Op};
+use crate::event::{ActorData, CreateData, Event, Op, TextTo};
 use crate::git::Repo;
 use crate::names::valid_actor_name;
 use crate::replay::{Replay, replay};
@@ -269,6 +269,24 @@ impl Tracker {
                     message: format!(
                         "id {id} is more than 1000 years after {anchor}, the newest id seen; \
                          is the clock set right?"
+                    ),
+                }));
+            }
+            if let Op::Status(TextTo { to: status }) | Op::Create(CreateData { status, .. }) =
+                &ev.op
+                && self.config.is_retired(status)
+            {
+                return Err(Error::Rejected(Rejection {
+                    code: RejectCode::RetiredStatus,
+                    message: format!(
+                        "status {status:?} is retired; choose one of {}",
+                        state
+                            .statuses
+                            .iter()
+                            .filter(|s| !self.config.is_retired(s))
+                            .map(String::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ),
                 }));
             }

@@ -27,7 +27,7 @@ deleted once published. One id is one byte sequence; union merge depends on it.
  "ts":"2026-11-07T12:34:56Z",
  "entity":"01JC3V5N0TICKETULIDXXXXXXX",
  "op":"status",
- "data":{"to":"doing"}}
+ "data":{"to":"agnt"}}
 ```
 
 - **id**: ULID, also a hybrid logical clock. A new id must sort after the
@@ -145,7 +145,8 @@ collected.
 
 Applied on live writes (error) and on replay (skip and report):
 
-- Status in vocabulary. Kind in vocabulary. Tag format.
+- Status in vocabulary. Kind in vocabulary. Tag format. A retired status
+  (below) is refused on live writes only; replay accepts it.
 - Parent and relation targets exist and are not tombstoned. No parent cycles.
 - `doc.base` is the current version. On replay a stale base is not skipped:
   the version is kept in history as lost and does not become current.
@@ -200,6 +201,27 @@ they store UTF-8 text and never parse or convert it.
   mapping.
   **Chosen for milestone 2:** `draft, todo, doing, blocked, review, done,
   cancelled`, written into `zwanenzang.toml` by `init` and editable there.
+  **Superseded (ZZ-38):** zwanenzang is the human's personal tracker, so
+  the default is the human's Org keywords, lowercased:
+  `todo, next, wait, agnt, revw, done, cncl`, with `todo` first and so the
+  default for `create`. With the same names in Org, no keyword map is
+  needed (see [03-org-client](03-org-client.md)). Meanings: `todo` not
+  started; `next` the human is on it or can start now (including drafting
+  the ticket's prose); `wait` waiting on something; `agnt` an agent is
+  working on it; `revw` ready for the human's review; `done`; `cncl`
+  cancelled. The earlier names are retired, not removed (see "Retired
+  statuses" below).
+  Status never says who may work on a ticket; two tags do:
+  - `ready_for_agent`: standing permission, added and removed only by the
+    human. An agent may move a tagged ticket to `agnt`; the tag stays
+    through `agnt`, `wait` and `revw`. An agent never works on an untagged
+    ticket, whatever its status.
+  - `needs_human`: an agent waits on the human. `wait` with it is an
+    agent's question, `wait` without it waits on something else. `revw`
+    always also carries `needs_human`, so the attention queue and its
+    waiting age need nothing status-specific.
+  These are conventions for the human and the agents; zwanenzang does not
+  enforce them.
   `create` records the initial status in its own data (`{title, status,
   kind?}`, status defaulting to the first vocabulary entry), so derived state
   never depends on the configuration file's current defaults. The default
@@ -250,6 +272,19 @@ none changes a decision above.
   replay validation, which lint reports. A `config` event that adds nothing
   this build knows (for instance one carrying only fields a newer build
   added) is accepted as a no-op, not skipped.
+- **Retired statuses.** Because old events keep using a name, a status
+  leaves use by retirement: `retired_statuses` in `zwanenzang.toml` lists
+  names that stay in `statuses`. Replay accepts them, so derived state and
+  lint are unchanged, but `create`, `status` and `apply` refuse them with
+  `retired-status` and write nothing, even when the ticket already has
+  that status. Each retired name must be in `statuses`, and the first
+  status, the default for new tickets, cannot be retired. A new tracker
+  retires nothing. This tracker retires its milestone 2 names `draft,
+  doing, blocked, review, cancelled`; its open tickets move to the new
+  names by ordinary status and tag events (`doing` to `agnt`, `draft` to
+  `todo`, `blocked` to `wait`, `review` to `revw` plus `needs_human`), so
+  no history is rewritten. The list is configuration, not an event, like
+  the rest of the vocabulary file.
 - **Tag format.** Org-compatible: one or more of `A-Z a-z 0-9 _ @ # %`, at
   most 64 characters.
 - **Titles.** Non-empty after trimming, a single line, at most 512 bytes.
@@ -404,12 +439,13 @@ none changes a decision above.
   code; without one it is the file name's slug, with a warning. The body
   without that line, trimmed of blank lines at both ends and with `\n`
   line endings, becomes the first version of the `description` document;
-  an empty body writes none. Status maps `draft` to `draft`;
-  `needs-triage`, `needs-plan` and `ready-for-implementation` to `todo`;
-  `ready-for-review` to `review`; `needs-human-input` to `blocked`; `done`
-  to `done`. A missing status or one outside that vocabulary is imported as
-  `draft`, with a warning. No kind, tag or archive is written; a done
-  ticket stays in the active set until the human archives it.
+  an empty body writes none. Status maps `draft`, `needs-triage`,
+  `needs-plan` and `ready-for-implementation` to `todo`;
+  `ready-for-review` to `revw` and `needs-human-input` to `wait`, both
+  with the tag `needs_human`; `done` to `done`. A missing status or one
+  outside that vocabulary is imported as `todo`, with a warning. No kind,
+  other tag or archive is written; a done ticket stays in the active set
+  until the human archives it.
 - **Provenance comment.** Each imported ticket gets one comment whose first
   line is `Imported from the ai-workflow tracker: <id>`, followed by the
   source file, the source revision, the original status, the

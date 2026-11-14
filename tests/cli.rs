@@ -64,7 +64,8 @@ fn init_writes_tracker_files() {
     let d = net.dir.path().join("tracker-test-repo");
     assert_eq!(out["tracker"]["prefix"], "ZZ");
     assert_eq!(out["tracker"]["name"], "Test");
-    assert_eq!(out["tracker"]["statuses"][0], "draft");
+    assert_eq!(out["tracker"]["statuses"][0], "todo");
+    assert_eq!(out["tracker"]["retired_statuses"], json!([]));
     assert_eq!(read(&d, ".gitattributes"), "events/*.jsonl merge=union\n");
     assert!(!d.join(".gitignore").exists());
     assert_eq!(actor_of(&d), out["actor"]);
@@ -217,7 +218,7 @@ fn create_show_and_list() {
     assert_eq!(out["event"]["op"], "create");
     assert_eq!(
         out["event"]["data"],
-        json!({"title": "First ticket", "status": "draft", "kind": "bug"})
+        json!({"title": "First ticket", "status": "todo", "kind": "bug"})
     );
     let ops: Vec<&str> = out["events"]
         .as_array()
@@ -229,21 +230,14 @@ fn create_show_and_list() {
     assert_eq!(out["events"][0]["data"]["name"], "tester");
     let t1 = id(&out);
     assert_eq!(out["ticket"]["id"], out["event"]["entity"]);
-    assert_eq!(out["ticket"]["status"], "draft");
+    assert_eq!(out["ticket"]["status"], "todo");
     assert_eq!(out["ticket"]["number"], 1);
     assert_eq!(out["ticket"]["display"], "ZZ-1");
     assert_eq!(out["ticket"]["tags"], json!(["alpha", "beta"]));
 
     let out2 = ok(
         p,
-        &[
-            "create",
-            "Child",
-            "--status",
-            "doing",
-            "--parent",
-            &t1[..12],
-        ],
+        &["create", "Child", "--status", "agnt", "--parent", &t1[..12]],
     );
     let t2 = id(&out2);
     assert_eq!(out2["ticket"]["parent"], t1.as_str());
@@ -290,7 +284,7 @@ fn create_show_and_list() {
     let list = ok(p, &["list"]);
     assert_eq!(list["tickets"].as_array().unwrap().len(), 2);
     assert_eq!(
-        ok(p, &["list", "--status", "doing"])["tickets"][0]["id"],
+        ok(p, &["list", "--status", "agnt"])["tickets"][0]["id"],
         t2.as_str()
     );
     assert_eq!(
@@ -306,7 +300,7 @@ fn create_show_and_list() {
         t1.as_str()
     );
     assert_eq!(
-        ok(p, &["list", "--status", "draft", "--status", "doing"])["tickets"]
+        ok(p, &["list", "--status", "todo", "--status", "agnt"])["tickets"]
             .as_array()
             .unwrap()
             .len(),
@@ -320,7 +314,7 @@ fn field_commands_and_removal_forms() {
     let p = d.path();
     let a = id(&ok(p, &["create", "A"]));
     let b = id(&ok(p, &["create", "B"]));
-    assert_eq!(ok(p, &["status", &a, "doing"])["ticket"]["status"], "doing");
+    assert_eq!(ok(p, &["status", &a, "agnt"])["ticket"]["status"], "agnt");
     assert_eq!(
         ok(p, &["title", &a, "A renamed"])["ticket"]["title"],
         "A renamed"
@@ -373,8 +367,8 @@ fn errors_are_json_and_write_nothing() {
         "status-not-in-vocabulary",
     );
     err(p, &["create", "x", "--tag", "bad tag"], "invalid-tag");
-    err(p, &["status", "ZZZZZZ", "doing"], "unknown-ticket");
-    err(p, &["status", "ZZ-2", "doing"], "unknown-ticket");
+    err(p, &["status", "ZZZZZZ", "agnt"], "unknown-ticket");
+    err(p, &["status", "ZZ-2", "agnt"], "unknown-ticket");
     err(p, &["doc", "get", &a, "description"], "unknown-document");
     assert_eq!(logs(p), before);
     // Usage errors stay clap's: stderr and exit status 2.
@@ -390,7 +384,7 @@ fn no_op_writes_report_not_written() {
     let a = id(&ok(p, &["create", "A", "--tag", "x"]));
     let before = logs(p);
     for args in [
-        vec!["status", &a, "draft"],
+        vec!["status", &a, "todo"],
         vec!["title", &a, "A"],
         vec!["tag", &a, "x"],
         vec!["tag", &a, "y", "--remove"],
@@ -529,7 +523,7 @@ fn query_filters_derived_state() {
         p,
         &["create", "Leaf BUG here", "--parent", &mid, "--tag", "x"],
     ));
-    let other = id(&ok(p, &["create", "Other", "--status", "doing"]));
+    let other = id(&ok(p, &["create", "Other", "--status", "agnt"]));
     ok(p, &["branch", &leaf, "app", "feature/leaf"]);
     ok(
         p,
@@ -564,7 +558,7 @@ fn query_filters_derived_state() {
         vec![root.clone(), other.clone()]
     );
     assert_eq!(
-        ids(&[&other, &root, "--status", "doing"]),
+        ids(&[&other, &root, "--status", "agnt"]),
         vec![other.clone()]
     );
     // Full objects by default, summaries on request.
@@ -661,7 +655,7 @@ fn lint_clean_then_reporting_issues() {
     let d = tracker();
     let p = d.path();
     let a = id(&ok(p, &["create", "A"]));
-    let first = ok(p, &["status", &a, "doing"]);
+    let first = ok(p, &["status", &a, "agnt"]);
     let lint = run_in(p, &["lint"], "");
     assert_eq!(lint.code, 0, "{}", lint.json);
     assert_eq!(lint.json["ok"], true);
@@ -680,14 +674,7 @@ fn lint_clean_then_reporting_issues() {
         p,
         other,
         &[
-            line(
-                later,
-                other,
-                create_id,
-                &a,
-                "status",
-                json!({"to": "blocked"}),
-            ),
+            line(later, other, create_id, &a, "status", json!({"to": "wait"})),
             line(
                 later2,
                 other,
@@ -718,7 +705,7 @@ fn lint_clean_then_reporting_issues() {
             .unwrap()
             .contains("estimate")
     );
-    assert_eq!(ok(p, &["show", &a])["status"], "blocked");
+    assert_eq!(ok(p, &["show", &a])["status"], "wait");
 
     // Our next event sorts after everything this clone has seen.
     let next = ok(p, &["status", &a, "done"]);
@@ -851,7 +838,7 @@ fn numbers_resolve_and_display() {
     assert_eq!(ok(p, &["show", "zz-1"])["id"], a.as_str());
     // A write that numbers nothing new says so.
     assert_eq!(
-        ok(p, &["status", &a, "doing"])["sync"]["numbered"],
+        ok(p, &["status", &a, "agnt"])["sync"]["numbered"],
         json!([])
     );
     // Each command is one commit, numbering another.
@@ -894,4 +881,89 @@ fn helper_refuses_an_unmarked_configured_checkout() {
     );
     // The guard must stop this before the CLI opens a configured checkout.
     run_in(source.path(), &["sync"], "");
+}
+
+#[test]
+fn retired_statuses_replay_but_refuse_new_writes() {
+    let d = tracker();
+    let p = d.path();
+    let set_config = |retired: &str| {
+        assert_disposable(p);
+        let toml = read(p, "zwanenzang.toml");
+        let statuses = toml.lines().find(|l| l.starts_with("statuses = ")).unwrap();
+        let old_retired = toml
+            .lines()
+            .find(|l| l.starts_with("retired_statuses = "))
+            .unwrap();
+        let toml = toml
+            .replace(
+                statuses,
+                "statuses = [\"todo\", \"next\", \"wait\", \"agnt\", \"revw\", \"done\", \
+                 \"cncl\", \"draft\", \"doing\"]",
+            )
+            .replace(old_retired, &format!("retired_statuses = {retired}"));
+        std::fs::write(p.join("zwanenzang.toml"), toml).unwrap();
+    };
+    // Before retirement, old names are ordinary vocabulary.
+    set_config("[]");
+    let a = id(&ok(p, &["create", "Old", "--status", "draft"]));
+    ok(p, &["status", &a, "doing"]);
+    let before = ok(p, &["show", &a]);
+
+    set_config("[\"draft\", \"doing\"]");
+    // Replay keeps the old events and their meaning, with no new issues.
+    assert_eq!(ok(p, &["show", &a]), before);
+    assert_eq!(before["status"], "doing");
+    assert_eq!(ok(p, &["lint"])["ok"], true);
+    let read = ok_stdin(p, &["read"], "{}");
+    assert_eq!(
+        read["tracker"]["retired_statuses"],
+        json!(["draft", "doing"])
+    );
+
+    let logs_before = logs(p);
+    let e = err(p, &["status", &a, "draft"], "retired-status");
+    assert!(e["error"]["message"].as_str().unwrap().contains("todo"));
+    // Even naming the current status again is refused.
+    err(p, &["status", &a, "doing"], "retired-status");
+    err(p, &["create", "New", "--status", "doing"], "retired-status");
+    let o = run_in(
+        p,
+        &["apply"],
+        &json!({"changes": [
+            {"op": "status", "ticket": a, "data": {"to": "next"}},
+            {"op": "create", "data": {"title": "New", "status": "draft"}},
+        ]})
+        .to_string(),
+    );
+    assert_eq!(o.json["error"]["code"], "retired-status", "{}", o.json);
+    assert_eq!(logs(p), logs_before);
+
+    // Every status of the default vocabulary is accepted.
+    let b = id(&ok(p, &["create", "Fresh"]));
+    assert_eq!(ok(p, &["show", &b])["status"], "todo");
+    for s in ["next", "wait", "agnt", "revw", "done", "cncl", "todo"] {
+        assert_eq!(ok(p, &["status", &b, s])["ticket"]["status"], s);
+    }
+    let created = ok_stdin(
+        p,
+        &["apply"],
+        &json!({"changes": [{"op": "create", "data": {"title": "Batch", "status": "agnt"}}]})
+            .to_string(),
+    );
+    assert_eq!(created["tickets"][0]["status"], "agnt");
+}
+
+#[test]
+fn a_new_tracker_has_the_default_vocabulary() {
+    let d = tracker();
+    let p = d.path();
+    let scope = ok_stdin(p, &["read"], "{}");
+    assert_eq!(
+        scope["tracker"]["statuses"],
+        json!(["todo", "next", "wait", "agnt", "revw", "done", "cncl"])
+    );
+    assert_eq!(scope["tracker"]["retired_statuses"], json!([]));
+    let toml = read(p, "zwanenzang.toml");
+    assert!(toml.contains("\nretired_statuses = []\n"), "{toml}");
 }
