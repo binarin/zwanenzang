@@ -329,6 +329,24 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+/// Runs git like `git` but never panics on its failure, returning the exit
+/// status and both streams: for describing a repository that may be broken.
+pub fn git_report(dir: &Path, args: &[&str]) -> String {
+    match git_command(dir).args(args).output() {
+        Ok(out) => format!(
+            "{}{}{}",
+            if out.status.success() {
+                String::new()
+            } else {
+                format!("[{}] ", out.status)
+            },
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+        Err(e) => format!("cannot run git: {e}\n"),
+    }
+}
+
 fn git_command(dir: &Path) -> Command {
     assert_disposable(dir);
     let mut command = Command::new("git");

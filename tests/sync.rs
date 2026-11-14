@@ -343,37 +343,193 @@ fn a_failed_push_takes_its_numbers_back() {
 fn racing_clones_never_share_a_number() {
     let net = Net::new();
     let clones = [net.path("a"), net.clone_as("b"), net.clone_as("c")];
+    let traces = GitTraces::new(&net, &clones);
     let per_clone = 4;
-    std::thread::scope(|s| {
-        for (k, c) in clones.iter().enumerate() {
-            s.spawn(move || {
-                for i in 0..per_clone {
-                    let out = ok(c, &["create", &format!("clone {k} ticket {i}")]);
-                    // Bounded retry may yield under sustained contention;
-                    // the final uncontended sync below publishes that tail.
-                    assert!(
-                        out["sync"]["error"].is_null()
-                            || out["sync"]["error"]["code"] == "push-rejected",
-                        "{out}"
-                    );
-                }
+    let race = || {
+        std::thread::scope(|s| {
+            for k in 0..clones.len() {
+                let traces = &traces;
+                s.spawn(move || {
+                    for i in 0..per_clone {
+                        let out = traces.ok(k, &["create", &format!("clone {k} ticket {i}")]);
+                        // Bounded retry may yield under sustained contention;
+                        // the final uncontended syncs below publish that tail.
+                        assert!(
+                            out["sync"]["error"].is_null()
+                                || out["sync"]["error"]["code"] == "push-rejected",
+                            "{out}"
+                        );
+                    }
+                });
+            }
+        });
+        // One pass publishes every clone's tail, but a clone synced early in
+        // it does not see tails published after it; the second pass does.
+        for _ in 0..2 {
+            for k in 0..clones.len() {
+                traces.ok(k, &["sync"]);
+            }
+        }
+        let total = (clones.len() * per_clone) as u64;
+        // Unique and without gaps; tickets are numbered in publish order,
+        // which across clones is not id order.
+        let mut got = numbers(&clones[0]);
+        got.sort();
+        assert_eq!(got, (1..=total).collect::<Vec<_>>());
+        for c in &clones[1..] {
+            assert_eq!(tickets(c), tickets(&clones[0]));
+        }
+        let lint = run_in(&clones[0], &["lint"], "");
+        assert_eq!(lint.code, 0, "{}", lint.json);
+    };
+    // CI has seen `git commit` in a clone fail with "could not parse HEAD"
+    // (ZZ-44), which has not been reproduced elsewhere. CI runs this inside
+    // the nix build sandbox, whose temporary directory is lost, so a failure
+    // prints what git did in each clone.
+    if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(race)) {
+        eprintln!("{}", traces.report(&net));
+        std::panic::resume_unwind(panic);
+    }
+}
+
+/// Git tracing of the CLI's runs in each clone, written next to the clones
+/// in the disposable directory and reported only when the test fails.
+struct GitTraces {
+    clones: Vec<(PathBuf, PathBuf, PathBuf)>,
+}
+
+impl GitTraces {
+    const EVENTS: usize = 200;
+    const REF_UPDATES: usize = 60;
+
+    fn new(net: &Net, clones: &[PathBuf]) -> GitTraces {
+        let clones = clones
+            .iter()
+            .map(|c| {
+                let name = c.file_name().unwrap().to_string_lossy().into_owned();
+                let events = net.dir.path().join(format!("{name}.trace2-event"));
+                let refs = net.dir.path().join(format!("{name}.trace-refs"));
+                (c.clone(), events, refs)
+            })
+            .collect();
+        GitTraces { clones }
+    }
+
+    /// Runs the CLI in clone `k` with tracing and expects success.
+    fn ok(&self, k: usize, args: &[&str]) -> Value {
+        let (clone, events, refs) = &self.clones[k];
+        let env = [
+            ("GIT_TRACE2_EVENT", events.to_str().unwrap()),
+            ("GIT_TRACE_REFS", refs.to_str().unwrap()),
+        ];
+        let o = run_in_env(clone, args, "", &env);
+        assert_eq!(o.code, 0, "{args:?} failed: {} {}", o.json, o.stderr);
+        o.json
+    }
+
+    /// The state of every clone and the remote, and the tail of what git
+    /// did in each clone, including the remote's side of its pushes.
+    fn report(&self, net: &Net) -> String {
+        let mut r = String::new();
+        let remote = net.remote();
+        r += "=== git diagnostics: remote ===\n";
+        r += &section(
+            &remote,
+            "log --oneline -5 main",
+            &["log", "--oneline", "-5", "main"],
+        );
+        r += &section(&remote, "fsck --no-dangling", &["fsck", "--no-dangling"]);
+        for (clone, events, refs) in &self.clones {
+            r += &format!("=== git diagnostics: {} ===\n", clone.display());
+            let head = std::fs::read_to_string(clone.join(".git/HEAD"));
+            r += &format!("-- .git/HEAD: {head:?}\n");
+            for (title, args) in [
+                ("rev-parse HEAD", &["rev-parse", "HEAD"][..]),
+                ("cat-file -t HEAD", &["cat-file", "-t", "HEAD"]),
+                ("log --oneline -5", &["log", "--oneline", "-5"]),
+                ("fsck --no-dangling", &["fsck", "--no-dangling"]),
+                ("count-objects -v", &["count-objects", "-v"]),
+                ("status --short", &["status", "--short"]),
+            ] {
+                r += &section(clone, title, args);
+            }
+            let entries = std::fs::read_dir(clone.join(".git")).map(|d| {
+                let mut v: Vec<_> = d
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect();
+                v.sort();
+                v.join(" ")
+            });
+            r += &format!("-- .git entries: {entries:?}\n");
+            // Read directly: `git reflog` gives up on a HEAD it cannot parse.
+            r += "-- last 15 entries of .git/logs/HEAD\n";
+            r += &tail(&clone.join(".git/logs/HEAD"), 15, |l| Some(l.to_string()));
+            r += &format!("-- last {} git process events (UTC)\n", Self::EVENTS);
+            r += &tail(events, Self::EVENTS, compact_event);
+            r += &format!(
+                "-- last {} ref updates, the remote's during pushes included (local time)\n",
+                Self::REF_UPDATES
+            );
+            r += &tail(refs, Self::REF_UPDATES, |l| {
+                let update = l.contains(" -> ")
+                    && !l.contains("reflog_ent")
+                    && !l.contains(": AUTO_MERGE 0000000000000000000000000000000000000000 ->");
+                let failed = (l.contains("transaction_prepare:") || l.contains("finish:"))
+                    && !l.contains(": 0");
+                (update || failed).then(|| l.to_string())
             });
         }
-    });
-    for c in &clones {
-        ok(c, &["sync"]);
+        r.replace(net.dir.path().to_str().unwrap(), "$NET")
     }
-    let total = (clones.len() * per_clone) as u64;
-    // Unique and without gaps; tickets are numbered in publish order, which
-    // across clones is not id order.
-    let mut got = numbers(&clones[0]);
-    got.sort();
-    assert_eq!(got, (1..=total).collect::<Vec<_>>());
-    for c in &clones[1..] {
-        assert_eq!(tickets(c), tickets(&clones[0]));
-    }
-    let lint = run_in(&clones[0], &["lint"], "");
-    assert_eq!(lint.code, 0, "{}", lint.json);
+}
+
+fn section(dir: &Path, title: &str, args: &[&str]) -> String {
+    let out = git_report(dir, args);
+    let lines: Vec<&str> = out.lines().take(30).collect();
+    format!("-- {title}\n{}\n", lines.join("\n"))
+}
+
+/// The last `n` lines of `file` that `keep` turns into report lines.
+fn tail(file: &Path, n: usize, keep: impl Fn(&str) -> Option<String>) -> String {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return "(no trace)\n".to_string();
+    };
+    let kept: Vec<String> = text.lines().filter_map(keep).collect();
+    let mut out = kept[kept.len().saturating_sub(n)..].join("\n");
+    out.push('\n');
+    out
+}
+
+/// One trace2 event as `time pid depth event detail`, for the events that
+/// say which git process ran, what it started and how it ended.
+fn compact_event(line: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(line).ok()?;
+    let event = v["event"].as_str()?;
+    let detail = match event {
+        "start" | "child_start" => v["argv"]
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        "exit" => format!("code {}", v["code"]),
+        "child_exit" => format!("pid {} code {}", v["pid"], v["code"]),
+        "error" | "signal" => v["msg"].as_str().unwrap_or("").to_string(),
+        "region_enter" if v["category"] == "maintenance" || v["category"] == "gc" => {
+            format!("{}/{}", v["category"].as_str()?, v["label"].as_str()?)
+        }
+        _ => return None,
+    };
+    let sid = v["sid"].as_str()?;
+    let depth = sid.matches('/').count();
+    let pid = sid
+        .rsplit_once("-P")
+        .and_then(|(_, p)| u32::from_str_radix(p, 16).ok())
+        .map_or("?".to_string(), |p| p.to_string());
+    let time = v["time"].as_str()?;
+    let time = time.split_once('T').map_or(time, |(_, t)| t);
+    Some(format!("{time} P{pid} d{depth} {event} {detail}"))
 }
 
 #[test]
