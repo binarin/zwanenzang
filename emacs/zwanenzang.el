@@ -1052,6 +1052,166 @@ Pull rewrites headings directly and therefore never runs this hook."
                                "no tracker snapshot")))
                nil))))))))
 
+;;;; Editing dependencies
+
+;; The commands below only edit the heading's ZWANENZANG_DEPENDS_ON; the
+;; next push sends it, like a hand edit.  Candidates come from a fresh
+;; `list --all' and read "NUMBER Title", so ordinary completion styles
+;; match either; status, kind and tags are an annotation, which
+;; completion UIs such as marginalia show for any category.
+
+(defun zwanenzang--dependency-annotation (summary)
+  "The completion annotation for ticket SUMMARY: status, kind and tags."
+  (let ((kind (zwanenzang--null (alist-get 'kind summary)))
+        (tags (alist-get 'tags summary)))
+    (concat "  "
+            (propertize
+             (string-join
+              (delq nil (list (alist-get 'status summary)
+                              (and (stringp kind) kind)
+                              (and tags (concat ":" (string-join tags ":") ":"))))
+              " ")
+             'face 'completions-annotations))))
+
+(defun zwanenzang--dependency-read (prompt candidates)
+  "Read one of CANDIDATES with PROMPT; return its value.
+CANDIDATES is a list of (TEXT . SUMMARY), in the order to offer them;
+SUMMARY may be nil for a reference the tracker does not know."
+  (let* ((table (lambda (string pred action)
+                  (if (eq action 'metadata)
+                      `(metadata
+                        (category . zwanenzang-ticket)
+                        (display-sort-function . identity)
+                        (annotation-function
+                         . ,(lambda (text)
+                              (let ((summary (cdr (assoc text candidates))))
+                                (if summary (zwanenzang--dependency-annotation summary) "")))))
+                    (complete-with-action action candidates string pred))))
+         (choice (completing-read prompt table nil t)))
+    (or (assoc choice candidates)
+        (user-error "zwanenzang: no ticket chosen"))))
+
+(defun zwanenzang--dependency-context ()
+  "The ticket heading at point for a dependency command, with its tracker.
+Return (HEADING ID SUMMARIES): a marker at the heading, its ticket id,
+and a fresh hash table of every ticket the scope's tracker knows."
+  (let* ((root (zwanenzang--root-at-point))
+         (heading (org-with-wide-buffer (zwanenzang--ticket-heading-at-point root)))
+         (id (org-with-wide-buffer (org-entry-get heading "ZWANENZANG_ID")))
+         (known (zwanenzang--known-tickets (zwanenzang--scope-directory root))))
+    (unless (gethash id known)
+      (user-error "zwanenzang: the tracker has no ticket %s" id))
+    (list heading id known)))
+
+(defun zwanenzang--dependents-of (id known)
+  "Ids of the tickets in KNOWN that depend on ID, directly or not, and ID.
+Adding any of them as a prerequisite of ID would make a cycle."
+  (let ((reverse (make-hash-table :test #'equal))
+        (seen (make-hash-table :test #'equal))
+        (queue (list id)))
+    (maphash (lambda (from summary)
+               (dolist (to (alist-get 'depends_on summary))
+                 (push from (gethash to reverse))))
+             known)
+    (while queue
+      (let ((next (pop queue)))
+        (unless (gethash next seen)
+          (puthash next t seen)
+          (setq queue (append (gethash next reverse) queue)))))
+    seen))
+
+(defun zwanenzang--dependency-candidates (id refs known)
+  "Tickets in KNOWN that ticket ID may newly depend on, as (TEXT . SUMMARY).
+REFS are its current prerequisites.  Left out are ID itself, REFS,
+unnumbered, archived and tombstoned tickets, and those that depend on ID,
+which would make a cycle.  Done tickets stay.  Sorted by number."
+  (let ((cycle (zwanenzang--dependents-of id known))
+        (current (mapcar #'zwanenzang--ticket-ref-normalize refs))
+        candidates)
+    (maphash
+     (lambda (other summary)
+       (when (and (not (gethash other cycle))
+                  (integerp (alist-get 'number summary))
+                  (not (eq (alist-get 'archived summary) t))
+                  (not (eq (alist-get 'tombstoned summary) t))
+                  (not (member (zwanenzang--ticket-ref-normalize (alist-get 'display summary))
+                               current)))
+         (push (cons (zwanenzang--label summary) summary) candidates)))
+     known)
+    (sort candidates (lambda (a b) (zwanenzang--ticket-ref< (alist-get 'display (cdr a))
+                                                            (alist-get 'display (cdr b)))))))
+
+(defun zwanenzang--dependency-tokens (heading)
+  "The words of HEADING's ZWANENZANG_DEPENDS_ON, as written."
+  (org-with-wide-buffer
+   (split-string (or (org-entry-get heading "ZWANENZANG_DEPENDS_ON") ""))))
+
+(defun zwanenzang--dependency-write (heading tokens)
+  "Set HEADING's ZWANENZANG_DEPENDS_ON to TOKENS, or remove it when empty.
+TOKENS are sorted by number; one already there keeps its spelling."
+  (let ((tokens (sort (copy-sequence tokens) #'zwanenzang--ticket-ref<)))
+    (org-with-wide-buffer
+     (goto-char heading)
+     (if tokens
+         (org-entry-put nil "ZWANENZANG_DEPENDS_ON" (string-join tokens " "))
+       (org-entry-delete nil "ZWANENZANG_DEPENDS_ON")))))
+
+;;;###autoload
+(defun zwanenzang-add-dependency ()
+  "Make the ticket at point depend on another ticket of its tracker.
+The nearest ticket heading at or above point gets the chosen ticket's
+number in ZWANENZANG_DEPENDS_ON; nothing else changes, and the next
+push sends it.  Candidates are the tracker's numbered, active tickets
+that are not already prerequisites and would not make a cycle; done
+tickets are offered too."
+  (interactive)
+  (pcase-let* ((`(,heading ,id ,known) (zwanenzang--dependency-context))
+               (tokens (zwanenzang--dependency-tokens heading))
+               (candidates (zwanenzang--dependency-candidates id tokens known)))
+    (unless candidates
+      (user-error "zwanenzang: no ticket to add as a prerequisite"))
+    (let* ((choice (zwanenzang--dependency-read "Add prerequisite: " candidates))
+           (ref (zwanenzang--ticket-ref-normalize (alist-get 'display (cdr choice)))))
+      (zwanenzang--dependency-write heading (append tokens (list ref)))
+      (message "zwanenzang: %s now depends on %s; push to send it"
+               (alist-get 'display (gethash id known)) (car choice)))))
+
+;;;###autoload
+(defun zwanenzang-remove-dependency ()
+  "Remove one prerequisite from the ticket at point.
+Offers the numbers in the nearest ticket heading's ZWANENZANG_DEPENDS_ON,
+with titles the tracker knows.  Every spelling of the chosen number is
+removed; when none is left, so is the property.  The next push sends it."
+  (interactive)
+  (pcase-let* ((`(,heading ,id ,known) (zwanenzang--dependency-context))
+               (tokens (zwanenzang--dependency-tokens heading))
+               (by-number (make-hash-table :test #'equal))
+               (candidates nil))
+    (unless tokens
+      (user-error "zwanenzang: %s has no prerequisites"
+                  (alist-get 'display (gethash id known))))
+    (maphash (lambda (_ summary)
+               (puthash (zwanenzang--ticket-ref-normalize (alist-get 'display summary))
+                        summary by-number))
+             known)
+    (dolist (ref (sort (delete-dups (mapcar #'zwanenzang--ticket-ref-normalize tokens))
+                       #'zwanenzang--ticket-ref<))
+      (let ((summary (gethash ref by-number)))
+        (push (cons (if summary (format "%s %s" ref (alist-get 'title summary)) ref)
+                    (cons ref summary))
+              candidates)))
+    (setq candidates (nreverse candidates))
+    (let* ((choice (zwanenzang--dependency-read
+                    "Remove prerequisite: "
+                    (mapcar (lambda (c) (cons (car c) (cddr c))) candidates)))
+           (ref (cadr (assoc (car choice) candidates))))
+      (zwanenzang--dependency-write
+       heading (seq-remove (lambda (token)
+                             (equal (zwanenzang--ticket-ref-normalize token) ref))
+                           tokens))
+      (message "zwanenzang: %s no longer depends on %s; push to send it"
+               (alist-get 'display (gethash id known)) (car choice)))))
+
 ;;;; Sync state
 
 ;; ZWANENZANG_SYNC holds the fields as last synced: the tracker status,
