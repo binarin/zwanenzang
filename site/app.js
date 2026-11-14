@@ -14,6 +14,7 @@
   var tickets = data.tickets;
   var byId = {};
   var byDisplay = {};
+  var byNumber = {};
   tickets.forEach(function (t, i) {
     t.order = i;
     t.haystack = (t.display + " " + t.title).toLowerCase();
@@ -24,6 +25,7 @@
     t.fulltextLower = t.fulltext.toLowerCase();
     byId[t.id] = t;
     byDisplay[t.display.toUpperCase()] = t;
+    if (t.number !== null) byNumber[t.number] = t;
   });
 
   var ui = {
@@ -97,8 +99,18 @@
 
   function currentId() {
     var h = decodeURIComponent(location.hash.replace(/^#/, ""));
-    var t = byDisplay[h.toUpperCase()] || byId[h.toUpperCase()];
+    var t = byDisplay[h.toUpperCase()] || byId[h.toUpperCase()] || byPaddedNumber(h);
     return t ? t.id : null;
+  }
+
+  // A number with leading zeros, such as ZZ-0042, names ZZ-42 as on input
+  // to the CLI.
+  function byPaddedNumber(h) {
+    var i = h.lastIndexOf("-");
+    if (i < 0 || h.slice(0, i).toUpperCase() !== tracker.prefix.toUpperCase()) return null;
+    var digits = h.slice(i + 1);
+    if (!/^[0-9]+$/.test(digits)) return null;
+    return byNumber[parseInt(digits, 10)] || null;
   }
 
   function row(t, context, snippet) {

@@ -158,10 +158,13 @@ fn writes_the_site_with_tickets_documents_and_comments() {
 
     let d = data(out.path());
     assert_eq!(d["tracker"]["name"], "Test");
-    assert_eq!(d["tracker"]["statuses"][0], "draft");
+    assert_eq!(
+        d["tracker"]["statuses"],
+        serde_json::json!(["todo", "next", "wait", "agnt", "revw", "done", "cncl"])
+    );
     assert_eq!(
         d["tracker"]["hidden_statuses"],
-        serde_json::json!(["done", "cancelled"])
+        serde_json::json!(["done", "cncl"])
     );
     assert_eq!(d["tracker"]["tags"], serde_json::json!(["ui"]));
     let ids: Vec<&str> = d["tickets"]
@@ -174,7 +177,7 @@ fn writes_the_site_with_tickets_documents_and_comments() {
     assert!(!ids.contains(&f.gone.as_str()));
 
     let parent = ticket(&d, &f.parent);
-    assert_eq!(parent["display"], "ZZ-0001");
+    assert_eq!(parent["display"], "ZZ-1");
     assert_eq!(parent["title"], "Parent <ticket>");
     assert_eq!(parent["kind"], "feature");
     assert_eq!(parent["children"], serde_json::json!([f.child]));
@@ -182,11 +185,12 @@ fn writes_the_site_with_tickets_documents_and_comments() {
     let docs = parent["documents"].as_array().unwrap();
     assert_eq!(docs[0]["name"], "description");
     assert_eq!(docs[0]["actor"], "tester");
-    // Ticket numbers link in any padding; a tombstoned ticket's does not.
+    // Ticket numbers link in any padding to the unpadded display; a
+    // tombstoned ticket's does not.
     assert_eq!(
         docs[0]["html"],
-        "<h3>Goal</h3>\n<p>See <a class=\"ticket-ref\" href=\"#ZZ-0002\">ZZ-0002</a>, \
-         <a class=\"ticket-ref\" href=\"#ZZ-0003\">ZZ-3</a>, ZZ-0004 \
+        "<h3>Goal</h3>\n<p>See <a class=\"ticket-ref\" href=\"#ZZ-2\">ZZ-0002</a>, \
+         <a class=\"ticket-ref\" href=\"#ZZ-3\">ZZ-3</a>, ZZ-0004 \
          and <strong>this</strong>.</p>\n"
     );
     assert_eq!(docs[1]["name"], "plan");
@@ -313,4 +317,52 @@ fn assets_come_from_the_given_directory() {
         "",
     );
     assert_eq!(o.json["error"]["code"], "io", "{}", o.json);
+}
+
+#[test]
+fn retired_statuses_get_chips_only_while_tickets_have_them() {
+    let d = tracker();
+    let p = d.path();
+    let set_retired = |retired: &str| {
+        assert_disposable(p);
+        let toml = read(p, "zwanenzang.toml");
+        let statuses = toml.lines().find(|l| l.starts_with("statuses = ")).unwrap();
+        let old = toml
+            .lines()
+            .find(|l| l.starts_with("retired_statuses = "))
+            .unwrap();
+        let toml = toml
+            .replace(
+                statuses,
+                "statuses = [\"todo\", \"next\", \"wait\", \"agnt\", \"revw\", \"done\", \
+                 \"cncl\", \"draft\", \"doing\", \"cancelled\"]",
+            )
+            .replace(old, &format!("retired_statuses = {retired}"));
+        std::fs::write(p.join("zwanenzang.toml"), toml).unwrap();
+    };
+    set_retired("[]");
+    ok(p, &["create", "Old draft", "--status", "draft"]);
+    ok(p, &["create", "Old cancel", "--status", "cancelled"]);
+    set_retired("[\"draft\", \"doing\", \"cancelled\"]");
+    let out = disposable_dir();
+    render(p, out.path(), &[]);
+    let d = data(out.path());
+    assert_eq!(
+        d["tracker"]["statuses"],
+        serde_json::json!([
+            "todo",
+            "next",
+            "wait",
+            "agnt",
+            "revw",
+            "done",
+            "cncl",
+            "draft",
+            "cancelled"
+        ])
+    );
+    assert_eq!(
+        d["tracker"]["hidden_statuses"],
+        serde_json::json!(["done", "cncl", "cancelled"])
+    );
 }

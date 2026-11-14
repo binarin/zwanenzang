@@ -498,9 +498,20 @@ impl Site {
                 "comments": comment_values,
             }));
         }
-        // One chip per configured status, then any status still used by
-        // tickets that the vocabulary no longer lists.
-        let mut statuses: Vec<&str> = state.statuses.iter().map(String::as_str).collect();
+        // One chip per current status, then the retired and unlisted ones
+        // that tickets still have; a retired name nobody has gets no chip.
+        let config = &tracker.config;
+        let mut statuses: Vec<&str> = state
+            .statuses
+            .iter()
+            .map(String::as_str)
+            .filter(|s| !config.is_retired(s))
+            .collect();
+        for s in state.statuses.iter().map(String::as_str) {
+            if config.is_retired(s) && used_statuses.contains(s) {
+                statuses.push(s);
+            }
+        }
         for s in used_statuses {
             if !statuses.contains(&s) {
                 statuses.push(s);
