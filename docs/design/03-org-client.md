@@ -500,8 +500,23 @@ both cases call, to stop at ticket headings instead:
   subheadings show by the same rule. Subtrees with no scope in or above
   them keep Org's behaviour. Bodies are never shown, as in Org.
 
-The advice is installed on load, like the note redirect, and never calls
-the CLI. Setting `zwanenzang-show-branches-to-tickets` to nil disables it.
+With a prefix argument, `C-u C-c C-k` in a scope renormalizes the whole
+scope: it does what plain `C-c C-k` does on the nearest scope root at or
+above point, scopes nested in it included, so the human can get back to
+the ticket-level view from anywhere. Org itself ignores that prefix.
+
+- Point stays where it is. If its text is now hidden, it moves to the
+  nearest visible heading at or above it.
+- A narrowed buffer is never widened. If the scope root is outside the
+  restriction, each outermost heading in it is treated as by plain
+  `C-c C-k`, and the restriction stays.
+- Outside any scope or before the first heading the prefix changes
+  nothing, and in a note buffer `C-c C-k` still aborts the note.
+- The same is available as `M-x zwanenzang-show-scope-branches`.
+
+Both pieces of advice are installed on load, like the note redirect, and
+never call the CLI or modify the buffer. Setting
+`zwanenzang-show-branches-to-tickets` to nil disables them.
 
 ### Prose, comments and conflicts
 

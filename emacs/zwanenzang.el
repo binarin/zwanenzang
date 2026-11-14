@@ -2020,7 +2020,11 @@ closed even if publication or the subsequent pull fails, to avoid resend."
 That is what \\[org-kill-note-or-show-branches] uses.  It then shows the
 human's structure and the ticket headings in it, child tickets included,
 but not the rest of what a ticket nests: named documents and the human's
-own subheadings stay folded.  Outside scopes Org behaves normally."
+own subheadings stay folded.  Outside scopes Org behaves normally.
+
+With a prefix argument in a scope, \\[org-kill-note-or-show-branches] does
+the same for the whole scope, as `zwanenzang-show-scope-branches'.
+Setting this to nil turns that off too."
   :type 'boolean)
 
 (defun zwanenzang--branch-ticket-p (in-scope)
@@ -2082,6 +2086,88 @@ See `zwanenzang-show-branches-to-tickets'."
     (apply original args)))
 
 (advice-add 'org-fold-show-branches :around #'zwanenzang--org-show-branches)
+
+(defun zwanenzang--show-branches-here ()
+  "Do what plain \\[org-kill-note-or-show-branches] does on this heading."
+  (org-back-to-heading t)
+  (let ((beg (point))
+        (end (save-excursion (org-end-of-subtree t t) (point))))
+    (org-fold-hide-subtree)
+    (org-fold-show-branches)
+    (org-fold-hide-archived-subtrees beg end)))
+
+(defun zwanenzang--accessible-scope-root ()
+  "Position of the scope root at or above point, if it is accessible.
+Unlike `zwanenzang--scope-root', this never widens: a root outside the
+restriction gives nil."
+  (save-excursion
+    (org-back-to-heading t)
+    (let (root)
+      (while (and (not (setq root (and (org-entry-get nil "ZWANENZANG")
+                                       (point))))
+                  (org-up-heading-safe)))
+      root)))
+
+(defun zwanenzang--point-hidden-p ()
+  "Whether the text at point is hidden by folding.
+At the end of a line the character before point decides, so that point
+at the end of a visible heading counts as visible."
+  (invisible-p (if (and (eolp) (not (bolp))) (1- (point)) (point))))
+
+(defun zwanenzang--show-scope-branches ()
+  "Show branches down to tickets for the whole scope containing point.
+Return nil, doing nothing, outside scopes or before the first heading.
+When the scope root is outside the restriction, each outermost heading
+in it is treated instead and the restriction stays.  Point stays where
+it is unless that is now hidden; then it moves to the nearest visible
+heading at or above it."
+  (when (and (derived-mode-p 'org-mode)
+             (not (org-before-first-heading-p))
+             (org-entry-get nil "ZWANENZANG" t))
+    (let ((root (zwanenzang--accessible-scope-root)))
+      (save-excursion
+        (if root
+            (progn (goto-char root) (zwanenzang--show-branches-here))
+          (goto-char (point-min))
+          (unless (org-at-heading-p) (outline-next-heading))
+          (while (and (< (point) (point-max)) (org-at-heading-p))
+            (let ((next (save-excursion (org-end-of-subtree t t) (point))))
+              (zwanenzang--show-branches-here)
+              (goto-char next))))))
+    (when (zwanenzang--point-hidden-p)
+      (org-back-to-heading t)
+      (while (and (invisible-p (point)) (org-up-heading-safe))))
+    t))
+
+;;;###autoload
+(defun zwanenzang-show-scope-branches ()
+  "Fold the scope at point and show its headings down to tickets.
+That is \\[org-kill-note-or-show-branches] on the nearest scope root,
+without moving point unless it ends up hidden.  Outside scopes, the same
+as \\[org-kill-note-or-show-branches] at point.  Prefixed, that key does
+this too; see `zwanenzang-show-branches-to-tickets'."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "zwanenzang: not an Org buffer"))
+  (or (zwanenzang--show-scope-branches)
+      (if (org-before-first-heading-p)
+          (progn (org-fold-show-branches-buffer)
+                 (org-fold-hide-archived-subtrees (point-min) (point-max)))
+        (zwanenzang--show-branches-here))))
+
+(defun zwanenzang--org-kill-note-or-show-branches (original &optional arg)
+  "Call ORIGINAL, or with prefix ARG in a scope show the scope's branches.
+In a note buffer the note is still aborted.  See
+`zwanenzang-show-branches-to-tickets'."
+  (interactive "P")
+  (unless (and arg
+               zwanenzang-show-branches-to-tickets
+               (not org-finish-function)
+               (zwanenzang--show-scope-branches))
+    (funcall original)))
+
+(advice-add 'org-kill-note-or-show-branches :around
+            #'zwanenzang--org-kill-note-or-show-branches)
 
 ;;;; Push
 
