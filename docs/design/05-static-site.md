@@ -59,9 +59,10 @@ The JSON is escaped so that it never contains `<`, U+2028 or U+2029. A
 `<script src>` works from `file://` where loading JSON would not.
 
 - `tracker`: `name`, `prefix`; `statuses`, the configured vocabulary
-  followed by any other status a ticket still has; `hidden_statuses`, the
-  ones whose chips start switched off (`done`, `cancelled` and `cncl`, when
-  the vocabulary has them); `tags`, every tag in use.
+  without its retired names, then the retired names some ticket still has,
+  then any other status a ticket still has; `hidden_statuses`, the ones
+  whose chips start switched off (`done`, `cncl`, and the milestone 2
+  `cancelled`, when listed); `tags`, every tag in use.
 - `tickets`: every ticket that is not tombstoned, published ones by number
   and then unpublished ones by id. Each has `id`, `display`, `number`,
   `title`, `status`, `kind`, `priority` (the Org cookie text, such as `A`),
@@ -87,7 +88,8 @@ description lists with checkboxes, `*bold*`, `/italic/`, `_underline_`,
 example and quote blocks, fixed-width lines, rules and simple tables.
 Other blocks, drawers and keyword lines are shown preformatted, so nothing
 disappears; comment lines are dropped, as Org export drops them. Ticket
-numbers in text, such as `ZZ-12` or `ZZ-0012`, link to that ticket. Links reach only
+numbers in text, such as `ZZ-12` or `ZZ-0012`, link to that ticket's
+unpadded display. Links reach only
 http, https and mailto targets, tickets, and the copied attachments; any
 other target stays text. All text is escaped.
 
@@ -95,7 +97,9 @@ other target stays text. All text is escaped.
 
 Hand-written HTML, CSS and JavaScript with no build step, library, network
 access or external resource. The selected ticket is in the URL fragment as
-its display number, so links and the back button work.
+its display number (`#ZZ-42`), so links and the back button work; a padded
+fragment such as `#ZZ-0042` selects the same ticket, as padded input does
+in the CLI.
 
 - A tree of tickets by parent, filtered by a fuzzy match on number and title
   (each word a subsequence). Tickets that do not match but have matching
