@@ -76,11 +76,15 @@ fn fixture() -> Fixture {
         &["doc", "set", &parent, "description", "--base", "none"],
         "* Goal\nSee ZZ-0002, ZZ-3, ZZ-0004 and *this*.\n",
     );
-    ok_stdin(
+    // Written as another identity through the same clone's writer.
+    let plan = run_as(
         p,
+        Some("agent"),
         &["doc", "set", &parent, "plan", "--base", "none"],
         "- step one\n- step two\n",
+        &[],
     );
+    assert_eq!(plan.code, 0, "{}", plan.json);
     write_file(p, "docs/notes.org", "* Supporting notes\n");
     git(p, &["add", "docs/notes.org"]);
     git(p, &["commit", "-q", "-m", "notes"]);
@@ -94,8 +98,9 @@ fn fixture() -> Fixture {
             "docs/notes.org",
         ],
     );
-    ok(
+    let upstream = run_as(
         p,
+        Some("agent"),
         &[
             "comment",
             &parent,
@@ -103,7 +108,10 @@ fn fixture() -> Fixture {
             "--link",
             "https://example.invalid/x",
         ],
+        "",
+        &[],
     );
+    assert_eq!(upstream.code, 0, "{}", upstream.json);
     ok(p, &["comment", &gone, "Linked from a tombstoned ticket"]);
     ok(p, &["depend", &child, &parent]);
     ok(p, &["status", &archived, "done"]);
@@ -194,12 +202,15 @@ fn writes_the_site_with_tickets_documents_and_comments() {
          and <strong>this</strong>.</p>\n"
     );
     assert_eq!(docs[1]["name"], "plan");
+    // The identity of the write, not the writer's declared name.
+    assert_eq!(docs[1]["actor"], "agent");
     let comments = parent["comments"].as_array().unwrap();
     assert_eq!(comments[0]["actor"], "tester");
     assert_eq!(comments[0]["text"], "Notes attached");
     assert_eq!(comments[0]["link"]["label"], "docs/notes.org");
     assert_eq!(comments[0]["link"]["href"], "files/notes.org");
     assert_eq!(comments[1]["link"]["href"], "https://example.invalid/x");
+    assert_eq!(comments[1]["actor"], "agent");
 
     let child = ticket(&d, &f.child);
     assert_eq!(child["parent"], f.parent.as_str());

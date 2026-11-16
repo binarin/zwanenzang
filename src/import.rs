@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 
 use crate::cli::INLINE_COMMENT_LIMIT;
 use crate::clock::Clock;
+use crate::config::IMPORT_IDENTITY;
 use crate::error::{Error, Result};
 use crate::event::{
     BranchData, CommentData, CreateData, DocData, MrData, Op, ParentData, RelateData, TagData,
@@ -29,9 +30,6 @@ use crate::replay::Replay;
 use crate::store::{Tracker, blob_name};
 use crate::ulid::Ulid;
 use crate::write::{Plan, Target, WriteOptions};
-
-/// The display name of the actor each import run writes as.
-pub const ACTOR_NAME: &str = "ai-workflow import";
 
 /// First line of the provenance comment on every imported ticket, followed
 /// by the original id. Re-runs find already imported tickets by it.
@@ -72,9 +70,6 @@ pub struct Options {
     /// Repository alias renames, source alias to tracker alias.
     pub repo_aliases: BTreeMap<String, String>,
     pub dry_run: bool,
-    /// Display name for this clone's actor, should the sync after the
-    /// import number tickets.
-    pub publisher_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -840,10 +835,12 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
         last: 0,
     };
     let write_opts = WriteOptions {
-        actor_name: Some(ACTOR_NAME),
+        // Every run writes as a fresh writer with the reserved identity,
+        // which also numbers the imported tickets; the tracker's `actors`
+        // list need not name it.
+        actor_name: Some(IMPORT_IDENTITY),
         new_actor: true,
         dry_run: opts.dry_run,
-        publisher_name: opts.publisher_name.as_deref(),
         message: Some("import from the ai-workflow tracker"),
     };
     let written = tracker.write_with(
@@ -1212,6 +1209,7 @@ pub fn import(tracker: &Tracker, clock: &mut dyn Clock, opts: &Options) -> Resul
             "revision": source.revision,
         },
         "actor": actor,
+        "identity": actor.map(|_| IMPORT_IDENTITY),
         "events": written.events.len(),
         "imported": imported,
         "already_imported": already,

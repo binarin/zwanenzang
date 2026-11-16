@@ -15,8 +15,11 @@ use crate::names::valid_blob_name;
 use crate::ulid::Ulid;
 
 pub const GITATTRIBUTES_LINE: &str = "events/*.jsonl merge=union";
-/// The git configuration key holding this clone's actor id.
+/// The git configuration key holding this clone's actor id: its writer.
 pub const ACTOR_KEY: &str = "zwanenzang.actor";
+/// The git configuration key naming the identity a write without
+/// `--actor-name` is made as.
+pub const DEFAULT_ACTOR_KEY: &str = "zwanenzang.defaultActor";
 /// The lock file, in the clone's git directory.
 pub const LOCK_FILE: &str = "zwanenzang.lock";
 
@@ -203,7 +206,7 @@ impl Tracker {
         if config_path.exists() {
             return Err(Error::AlreadyInitialized(root));
         }
-        let config = Config::new(next_id(clock, None), name, prefix);
+        let config = Config::new_with_actor(next_id(clock, None), name, prefix, actor_name);
         config.validate().map_err(|message| Error::Config {
             path: config_path.clone(),
             message,

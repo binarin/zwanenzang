@@ -136,7 +136,7 @@ fn clones_share_one_numbering() {
     let b = net.clone_as("b");
     let second = ok(&b, &["create", "From B"]);
     assert_eq!(second["ticket"]["display"], "ZZ-2");
-    assert_ne!(actor_of(&a), actor_of(&b), "an actor per clone");
+    assert_ne!(actor_of(&a), actor_of(&b), "a writer per clone");
     // A sees B's ticket after a sync; reads alone do not fetch.
     assert_eq!(tickets(&a).as_array().unwrap().len(), 1);
     let s = ok(&a, &["sync"]);
@@ -144,6 +144,47 @@ fn clones_share_one_numbering() {
     assert_eq!(s["sync"]["numbered"], json!([]));
     assert_eq!(tickets(&a), tickets(&b));
     assert_eq!(git(&a, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn clones_writing_as_one_identity_are_still_reported_concurrent() {
+    let net = Net::new();
+    let a = net.path("a");
+    let b = net.clone_as("b");
+    // One identity on two machines: by flag on A, by clone default on B.
+    git(
+        &b,
+        &["config", "--local", "zwanenzang.defaultActor", "agent"],
+    );
+    let t = id(&run_ok(&a, Some("agent"), &["create", "Shared"]));
+    // B's first write declares its writer and fetches the shared ticket.
+    run_ok(&b, None, &["create", "B's own"]);
+    let on_a = run_ok(&a, Some("agent"), &["status", &t, "next"]);
+    // B has not fetched A's change when it builds its own.
+    let on_b = run_ok(&b, None, &["status", &t, "wait"]);
+    assert_eq!(on_b["event"]["as"], "agent");
+    assert_eq!(on_b["sync"]["pushed"], true);
+    assert_ne!(on_a["event"]["actor"], on_b["event"]["actor"]);
+    ok(&a, &["sync"]);
+    for clone in [&a, &b] {
+        let lint = run_in(clone, &["lint"], "");
+        assert_eq!(lint.code, 1, "{}", lint.json);
+        let concurrent = lint.json["concurrent"].as_array().unwrap();
+        assert_eq!(concurrent.len(), 1, "{}", lint.json);
+        assert_eq!(concurrent[0]["field"], "status");
+        assert_eq!(concurrent[0]["earlier"], on_a["event"]["id"]);
+        assert_eq!(concurrent[0]["later"], on_b["event"]["id"]);
+        let shown = ok(clone, &["show", &t]);
+        assert_eq!(shown["activity"]["identity"], "agent");
+        assert_eq!(shown["activity"]["actor"], on_b["event"]["actor"]);
+    }
+}
+
+/// Runs as `actor` (no flag for `None`) and expects success.
+fn run_ok(dir: &Path, actor: Option<&str>, args: &[&str]) -> Value {
+    let o = run_as(dir, actor, args, "", &[]);
+    assert_eq!(o.code, 0, "{args:?} failed: {} {}", o.json, o.stderr);
+    o.json
 }
 
 #[test]

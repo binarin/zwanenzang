@@ -156,6 +156,13 @@ it lists."
   (let ((process-environment (zwanenzang-test--git-env)))
     (zwanenzang-call dir (append '("--actor-name" "tester") args) input)))
 
+(defun zwanenzang-test-call-configured (dir args &optional input)
+  "`zwanenzang-call' in the disposable DIR with no added actor name.
+`zwanenzang-actor-name' and the clone's default decide the identity."
+  (zwanenzang-test-assert-opens-disposable dir)
+  (let ((process-environment (zwanenzang-test--git-env)))
+    (zwanenzang-call dir args input)))
+
 (defmacro zwanenzang-test-with-tracker (var &rest body)
   "Bind VAR to a fresh disposable tracker with prefix ZZ around BODY.
 The tracker is initialized against a bare remote that lives as long as

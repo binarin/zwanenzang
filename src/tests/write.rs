@@ -5,7 +5,7 @@ use crate::error::Error;
 use crate::event::{
     ActorData, CommentData, DocData, Empty, Op, ParentData, RelateData, TagData, TextTo,
 };
-use crate::store::{Tracker, blob_name};
+use crate::store::{DEFAULT_ACTOR_KEY, Tracker, blob_name};
 use crate::ulid::Ulid;
 use crate::write::{Plan, Target, WriteOptions, Written};
 
@@ -328,7 +328,7 @@ fn new_actor_gets_its_own_declared_log() {
     write_one(&t, &mut c, u(T1), status("next")).unwrap();
     let mine = me(&t);
     let opts = WriteOptions {
-        actor_name: Some("importer"),
+        actor_name: Some("import"),
         new_actor: true,
         ..WriteOptions::default()
     };
@@ -341,12 +341,12 @@ fn new_actor_gets_its_own_declared_log() {
     assert_eq!(
         w.events[0].op,
         Op::Actor(ActorData {
-            name: "importer".into()
+            name: "import".into()
         })
     );
     assert!(t.log_path(actor).is_file());
     let rp = load(&t);
-    assert_eq!(rp.state.actors[&actor].name.as_deref(), Some("importer"));
+    assert_eq!(rp.state.actors[&actor].name.as_deref(), Some("import"));
     assert_eq!(me(&t), mine, "the clone keeps its own actor");
     let unnamed = WriteOptions {
         new_actor: true,
@@ -645,4 +645,159 @@ fn document_compare_and_set() {
         t.get_blob(&d.current_version().unwrap().blob).unwrap(),
         "second"
     );
+}
+
+fn write_as(
+    t: &Tracker,
+    clock: &mut FixedClock,
+    actor_name: Option<&str>,
+    dry_run: bool,
+    op: Op,
+) -> crate::error::Result<Written> {
+    assert_disposable(&t.root);
+    let opts = WriteOptions {
+        actor_name,
+        dry_run,
+        ..WriteOptions::default()
+    };
+    t.write_with(clock, opts, |_| Ok(one_op(u(T1), op)), |_| Ok(Vec::new()))
+}
+
+fn one_op(entity: Ulid, op: Op) -> Plan {
+    Plan {
+        ops: vec![(Target::Entity(entity), op)],
+        blobs: vec![],
+        refs: vec![],
+    }
+}
+
+fn set_default_actor(t: &Tracker, name: &str) {
+    assert_disposable(&t.root);
+    t.repo()
+        .unwrap()
+        .config_set(DEFAULT_ACTOR_KEY, name)
+        .unwrap();
+}
+
+#[test]
+fn identity_comes_from_the_flag_then_the_clone_default_else_the_write_is_refused() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let mut c = FixedClock::new(1_000_000);
+    // Neither: refused, and nothing is written, not even the declaration.
+    let before = log_snapshot(&t);
+    let r = write_as(&t, &mut c, None, false, status("next"));
+    assert!(matches!(r, Err(Error::ActorRequired)), "{r:?}");
+    assert_eq!(r.unwrap_err().code(), "actor-required");
+    assert_eq!(log_snapshot(&t), before);
+
+    // The flag: every event, the declaration and the numbers its sync
+    // publishes included, carries it.
+    let w = write_as(&t, &mut c, Some("tester"), false, status("next")).unwrap();
+    assert!(!w.events.is_empty());
+    assert!(
+        w.events
+            .iter()
+            .all(|e| e.identity.as_deref() == Some("tester"))
+    );
+    let numbers: Vec<_> = load(&t)
+        .events
+        .into_iter()
+        .filter(|e| matches!(e.op, Op::Number(_)) && e.actor == me(&t))
+        .collect();
+    assert!(!numbers.is_empty());
+    assert!(
+        numbers
+            .iter()
+            .all(|e| e.identity.as_deref() == Some("tester"))
+    );
+
+    // The clone default serves when the flag is absent; the flag wins.
+    set_default_actor(&t, "agent");
+    let w = write_as(&t, &mut c, None, false, status("wait")).unwrap();
+    assert_eq!(w.events.len(), 1);
+    assert_eq!(w.events[0].identity.as_deref(), Some("agent"));
+    let w = write_as(&t, &mut c, Some("tester"), false, status("done")).unwrap();
+    assert_eq!(w.events[0].identity.as_deref(), Some("tester"));
+    // Both identities wrote through this clone's one writer.
+    let rp = load(&t);
+    assert!(rp.skipped.is_empty());
+    let log = std::fs::read_to_string(t.log_path(me(&t))).unwrap();
+    assert!(log.contains(r#""as":"agent""#) && log.contains(r#""as":"tester""#));
+    // The writer's display name is the identity of its first write.
+    assert_eq!(rp.state.actors[&me(&t)].name.as_deref(), Some("tester"));
+}
+
+#[test]
+fn unknown_identity_is_refused_and_nothing_written() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let mut c = FixedClock::new(1_000_000);
+    let before = log_snapshot(&t);
+    let r = write_as(&t, &mut c, Some("stranger"), false, status("next"));
+    let e = r.unwrap_err();
+    assert_eq!(e.code(), "unknown-actor");
+    assert!(e.to_string().contains("tester, agent"), "{e}");
+    // A dry run refuses it too: it names an identity, so it is checked.
+    let r = write_as(&t, &mut c, Some("stranger"), true, status("next"));
+    assert_eq!(r.unwrap_err().code(), "unknown-actor");
+    set_default_actor(&t, "stranger");
+    let e = write_as(&t, &mut c, None, false, status("next")).unwrap_err();
+    assert_eq!(e.code(), "unknown-actor");
+    assert!(e.to_string().contains(DEFAULT_ACTOR_KEY), "{e}");
+    assert_eq!(log_snapshot(&t), before);
+    // The importer's identity needs no listing.
+    write_as(&t, &mut c, Some("import"), false, status("next")).unwrap();
+}
+
+#[test]
+fn dry_run_needs_no_identity() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let before = log_snapshot(&t);
+    let w = write_as(
+        &t,
+        &mut FixedClock::new(1_000_000),
+        None,
+        true,
+        status("next"),
+    )
+    .unwrap();
+    assert_eq!(w.planned.len(), 1);
+    assert_eq!(w.identity, None);
+    assert!(w.events.iter().all(|e| e.identity.is_none()));
+    assert_eq!(log_snapshot(&t), before);
+}
+
+#[test]
+fn without_an_actors_list_only_the_importer_may_write() {
+    let dir = disposable_dir();
+    let mut t = based(&dir);
+    t.config.actors = None;
+    let mut c = FixedClock::new(1_000_000);
+    let before = log_snapshot(&t);
+    let e = write_as(&t, &mut c, Some("someone"), false, status("next")).unwrap_err();
+    assert_eq!(e.code(), "actors-not-configured");
+    assert!(
+        e.to_string().contains(r#"`actors = ["someone", "agent"]`"#),
+        "{e}"
+    );
+    let e = write_as(&t, &mut c, Some("agent"), false, status("next")).unwrap_err();
+    assert!(e.to_string().contains(r#"`actors = ["agent"]`"#), "{e}");
+    // A dry run naming an identity is refused too, and so is the default.
+    let r = write_as(&t, &mut c, Some("someone"), true, status("next"));
+    assert_eq!(r.unwrap_err().code(), "actors-not-configured");
+    set_default_actor(&t, "agent");
+    let r = write_as(&t, &mut c, None, false, status("next"));
+    assert_eq!(r.unwrap_err().code(), "actors-not-configured");
+    assert_eq!(log_snapshot(&t), before);
+
+    // The importer's identity is exempt; its sync numbers every ticket.
+    write_as(&t, &mut c, Some("import"), false, status("next")).unwrap();
+    // A sync with nothing to number writes nothing, so it needs no
+    // accepted identity, from the flag or the clone default.
+    let after = log_snapshot(&t);
+    assert!(t.sync(&mut c, None).unwrap().numbered.is_empty());
+    assert!(t.sync(&mut c, Some("agent")).unwrap().numbered.is_empty());
+    assert_eq!(log_snapshot(&t), after);
 }

@@ -24,12 +24,23 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
             }));
         }
     }
+    // Writers with events that resolve to no identity: no `as`, and no
+    // declared name to fall back on.
     let unnamed: Vec<Value> = rp
         .state
         .actors
         .iter()
-        .filter(|(_, a)| a.name.is_none())
-        .map(|(id, a)| json!({"actor": id, "events": a.events}))
+        .filter(|(_, a)| a.name.is_none() && a.without_identity > 0)
+        .map(|(id, a)| json!({"actor": id, "events": a.without_identity}))
+        .collect();
+    let unknown_identities: Vec<Value> = rp
+        .events
+        .iter()
+        .filter_map(|ev| {
+            let name = ev.identity.as_deref()?;
+            (!config.accepts_identity(name))
+                .then(|| json!({"event": ev.id, "actor": ev.actor, "as": name, "op": ev.op.name()}))
+        })
         .collect();
     let dependency_cycles = rp.state.dependency_cycles();
     let issues = !dependency_cycles.is_empty()
@@ -37,7 +48,8 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         || !rp.state.concurrent.is_empty()
         || !rp.state.lost_docs.is_empty()
         || !dangling.is_empty()
-        || !unnamed.is_empty();
+        || !unnamed.is_empty()
+        || !unknown_identities.is_empty();
     let report = json!({
         "ok": !issues,
         "events": rp.events.len(),
@@ -47,6 +59,7 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         "dependency_cycles": dependency_cycles,
         "dangling_repos": dangling,
         "unnamed_actors": unnamed,
+        "unknown_identities": unknown_identities,
     });
     (report, issues)
 }

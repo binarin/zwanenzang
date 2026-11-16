@@ -40,7 +40,7 @@ owners. Process lives elsewhere.
 
 - Development process: stages, reviews, approvals, merge authority. The
   tool enforces none. The bundled agent documents do state rules of use:
-  that agent writes carry an actor name, where prose belongs, what `depend`
+  that agents write as the `agent` identity, where prose belongs, what `depend`
   and `relate` mean, and what the default statuses and the two workflow
   tags mean. These are the same in every tracker that keeps the defaults;
   anything beyond them is the project's.
@@ -54,10 +54,16 @@ owners. Process lives elsewhere.
 
 - **Tracker**: one git repository holding one event log, its blobs, its
   configuration and optional supporting files. One compartment.
-- **Actor**: a writer identity within one tracker. The human on one machine,
-  an agent, a CI job. Each actor owns one log file.
-- **Event**: one immutable line in an actor's log. Has an id, a causal parent,
-  an entity and an operation.
+- **Actor**: a named identity within one tracker, such as the human
+  (`binarin`) or `agent`. The tracker's `actors` list names them; every
+  write names one, from any clone.
+- **Writer**: the per-clone id that writes events, a ULID kept in the
+  clone's git configuration. Each writer owns one log file. One identity
+  writes through many writers (one per clone), and one writer can write
+  as several identities.
+- **Event**: one immutable line in a writer's log. Has an id, its writer,
+  the identity it was written as, a causal parent, an entity and an
+  operation.
 - **Entity**: a ticket or the tracker itself. Identity is a ULID.
 - **Number**: the human-facing alias of a ticket, such as `ZZ-42`. Assigned
   at publish, never reused.

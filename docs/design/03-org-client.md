@@ -31,7 +31,8 @@ That heading is the scope root. Everything beneath it syncs with that tracker.
   The property stays a path, not an origin URL, and existing locations remain
   valid. Adopting or moving a clone requires updating this property; it never
   silently creates a replacement clone. Multiple clients sharing the clone
-  share its actor and mutation lock, not the Org heading's sync state.
+  share its writer and mutation lock, not the Org heading's sync state;
+  each write names its own identity.
 - Headings above the scope root and non-ticket headings inside it are the
   human's own structure. The tracker never sees them.
 
@@ -384,7 +385,8 @@ affected by events since `since`; null discovers all live tickets. Each
 result holds the full ticket, current document text, accepted events after
 its cursor, and the next cursor. A scope read also returns tracker identity,
 the replayed vocabularies, so a client can validate its keyword map, and
-the declared actor names, so it can name comment authors.
+the writers' declared names; comments and document versions carry their
+resolved `identity` themselves, so the client can name their authors.
 The exact JSON is in [cli-json](../agent-hooks/cli-json.md).
 
 Per-ticket history includes events that affect its visible state from the
@@ -467,6 +469,13 @@ Decided 2026-11-07 for the first Emacs implementation.
 - `zwanenzang-program` names the CLI. The Nix build substitutes the store
   path of this flake's CLI as its default; outside Nix the default is
   `zwanenzang` on `PATH`.
+- `zwanenzang-actor-name` is the identity the client writes as. When set,
+  every CLI call passes `--actor-name` with it, the same in every scope;
+  the default nil passes nothing, so each clone's
+  `zwanenzang.defaultActor` decides, and a clone without one refuses the
+  client's writes with `actor-required`. Reads pass it too; they ignore it.
+  A call whose own arguments already name `--actor-name` keeps that one
+  and is not given the setting, since the CLI refuses the flag twice.
 
 ### Activation and calls
 
@@ -595,7 +604,7 @@ forgets it. Reading a comment does not clear it.
 - Comments sent from this Emacs session are never new, remembered by their
   accepted event id as soon as `apply` accepts them, so also when the pull
   after the send fails. Comments from agents and from `zz` in a terminal,
-  even as the same actor, are new.
+  even as the same identity, are new.
 - A command that brings new comments to a scope replaces that scope's set;
   one bringing none keeps it. Every pull of one command counts together:
   a sync whose push pulls again keeps what its first pull brought. Other
@@ -718,8 +727,9 @@ never call the CLI or modify the buffer. Setting
   (parent, children, the relations and code lists). Buffers the client
   opens this way remember the scope and tracker they came from, so their
   links work too, leading back into that scope when it has the heading.
-- A comment's actor is its display name from `read`'s `tracker.actors`,
-  or the first ten characters of its id when it declared none.
+- A comment's or document version's author is its `identity`, else its
+  writer's display name from `read`'s `tracker.actors`, else the first ten
+  characters of the writer id.
 
 ### Pull
 

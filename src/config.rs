@@ -11,6 +11,11 @@ pub const CONFIG_FILE: &str = "zwanenzang.toml";
 
 pub const DEFAULT_STATUSES: &[&str] = &["todo", "next", "wait", "agnt", "revw", "done", "cncl"];
 pub const DEFAULT_KINDS: &[&str] = &["task", "bug", "feature"];
+/// The identity agents write as, in every list `init` writes.
+pub const AGENT_IDENTITY: &str = "agent";
+/// The identity an import writes as. Reserved: accepted whatever `actors`
+/// says, so an import needs no configuration.
+pub const IMPORT_IDENTITY: &str = "import";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RepoConfig {
@@ -55,6 +60,10 @@ pub struct Config {
     pub retired_statuses: Vec<String>,
     #[serde(default)]
     pub kinds: Vec<String>,
+    /// The identities writes may name with `--actor-name`. Without the key
+    /// none is, apart from [`IMPORT_IDENTITY`]; old events still replay.
+    #[serde(default)]
+    pub actors: Option<Vec<String>>,
     #[serde(default)]
     pub repos: BTreeMap<String, RepoConfig>,
     #[serde(default)]
@@ -70,9 +79,22 @@ impl Config {
             statuses: DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
             retired_statuses: Vec::new(),
             kinds: DEFAULT_KINDS.iter().map(|s| s.to_string()).collect(),
+            actors: Some(vec![AGENT_IDENTITY.to_string()]),
             repos: BTreeMap::new(),
             priority: PriorityConfig::default(),
         }
+    }
+
+    /// [`Config::new`] whose `actors` list starts with `actor`, the name
+    /// `init` was given, when there is one.
+    pub fn new_with_actor(id: Ulid, name: &str, prefix: &str, actor: Option<&str>) -> Config {
+        let mut c = Config::new(id, name, prefix);
+        if let (Some(a), Some(list)) = (actor, c.actors.as_mut())
+            && !list.iter().any(|x| x == a)
+        {
+            list.insert(0, a.to_string());
+        }
+        c
     }
 
     /// The human-facing form of a ticket number: prefix, hyphen and the
@@ -103,10 +125,12 @@ impl Config {
         if self.statuses.is_empty() {
             return Err("statuses must not be empty".into());
         }
+        let no_actors = Vec::new();
         for (what, list) in [
             ("status", &self.statuses),
             ("retired status", &self.retired_statuses),
             ("kind", &self.kinds),
+            ("actor", self.actors.as_ref().unwrap_or(&no_actors)),
         ] {
             let mut seen = std::collections::BTreeSet::new();
             for s in list {
@@ -140,6 +164,17 @@ impl Config {
         Ok(())
     }
 
+    /// Whether a write may name identity `name`: one of `actors`, and
+    /// always [`IMPORT_IDENTITY`]. Without the key only the importer's
+    /// identity is accepted.
+    pub fn accepts_identity(&self, name: &str) -> bool {
+        name == IMPORT_IDENTITY
+            || self
+                .actors
+                .as_ref()
+                .is_some_and(|list| list.iter().any(|a| a == name))
+    }
+
     /// Whether new writes must not use status `s`.
     pub fn is_retired(&self, s: &str) -> bool {
         self.retired_statuses.iter().any(|r| r == s)
@@ -169,6 +204,11 @@ impl Config {
             list(&self.retired_statuses)
         ));
         out.push_str(&format!("kinds = {}\n\n", list(&self.kinds)));
+        if let Some(actors) = &self.actors {
+            out.push_str("# Identities a write may name with --actor-name. Agents write as\n");
+            out.push_str(&format!("# {AGENT_IDENTITY:?}; imports write as {IMPORT_IDENTITY:?}, which need not be listed.\n"));
+            out.push_str(&format!("actors = {}\n\n", list(actors)));
+        }
         out.push_str("# Native Org priority values: 0..64 numeric, 65..90 letters A..Z.\n");
         out.push_str(&format!(
             "[priority]\nhighest = {}\nlowest = {}\ndefault = {}\n\n",
@@ -227,6 +267,36 @@ mod tests {
         );
         assert!(c.retired_statuses.is_empty());
         assert!(c.to_toml().contains("\nretired_statuses = []\n"));
+    }
+
+    #[test]
+    fn actors() {
+        let mut c = Config::new(Ulid::from_parts(1, 2), "t", "ZZ");
+        assert_eq!(c.actors, Some(vec!["agent".to_string()]));
+        assert!(c.to_toml().contains("\nactors = [\"agent\"]\n"));
+        c.actors = Some(vec!["binarin".into(), "agent".into()]);
+        assert_eq!(Config::parse(&c.to_toml()).unwrap(), c);
+        assert!(c.accepts_identity("binarin"));
+        assert!(c.accepts_identity("import"));
+        assert!(!c.accepts_identity("tester"));
+
+        let mut bad = c.clone();
+        bad.actors = Some(vec!["agent".into(), "agent".into()]);
+        assert!(bad.validate().unwrap_err().contains("duplicate actor"));
+        let mut bad = c;
+        bad.actors = Some(vec!["has space".into()]);
+        assert!(bad.validate().unwrap_err().contains("invalid actor"));
+
+        // An older configuration without the key still parses, but accepts
+        // no identity apart from the importer's.
+        let old = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n\
+                   statuses = [\"todo\"]\n";
+        let old = Config::parse(old).unwrap();
+        assert_eq!(old.actors, None);
+        assert!(!old.accepts_identity("tester"));
+        assert!(!old.accepts_identity("agent"));
+        assert!(old.accepts_identity("import"));
+        assert!(!old.to_toml().contains("actors ="));
     }
 
     #[test]

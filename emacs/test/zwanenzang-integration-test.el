@@ -38,6 +38,42 @@
         (should (equal (alist-get 'title ticket) "First ticket"))
         (should (stringp (alist-get 'cursor (car tickets)))))))))
 
+(ert-deftest zwanenzang-integration-writes-as-the-configured-identity ()
+  (zwanenzang-test-with-tracker dir
+    (let ((id (zwanenzang-test-create dir "Shared")))
+      ;; No name and no clone default: the write is refused.
+      (let ((err (should-error (zwanenzang-test-call-configured
+                                dir (list "comment" id "nobody"))
+                               :type 'user-error)))
+        (should (string-prefix-p "zwanenzang: actor-required: " (cadr err))))
+      (let ((zwanenzang-actor-name "agent"))
+        (should (equal (alist-get 'as (alist-get 'event (zwanenzang-test-call-configured
+                                                          dir (list "comment" id "as agent"))))
+                       "agent")))
+      ;; nil leaves the choice to the clone's default.
+      (zwanenzang-test-git dir "config" "--local" "zwanenzang.defaultActor" "tester")
+      (zwanenzang-test-call-configured dir (list "comment" id "as the default"))
+      (let* ((read (zwanenzang-test-call dir '("read") '((since . :null))))
+             (ticket (alist-get 'ticket (car (alist-get 'tickets read))))
+             (pull (zwanenzang--pull-create
+                    :actors (alist-get 'actors (alist-get 'tracker read))
+                    :tracker-dir dir)))
+        (should (equal (mapcar (lambda (c) (zwanenzang--author pull c))
+                               (alist-get 'comments ticket))
+                       '("agent" "tester")))))))
+
+(ert-deftest zwanenzang-integration-explicit-identity-wins-over-the-setting ()
+  (zwanenzang-test-with-tracker dir
+    (let ((id (zwanenzang-test-create dir "Shared"))
+          (zwanenzang-actor-name "agent"))
+      ;; `zwanenzang-test-call' passes --actor-name tester itself.
+      (should (equal (alist-get 'as (alist-get 'event (zwanenzang-test-call
+                                                        dir (list "comment" id "explicit"))))
+                     "tester"))
+      (should (equal (alist-get 'as (alist-get 'event (zwanenzang-test-call-configured
+                                                        dir (list "comment" id "setting"))))
+                     "agent")))))
+
 (ert-deftest zwanenzang-integration-command-error-is-user-error ()
   (zwanenzang-test-with-dir dir
     (let ((err (should-error (zwanenzang-test-call dir '("read") '((cursors)))

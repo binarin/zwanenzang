@@ -46,6 +46,15 @@ pub enum Error {
     InsideTracker(PathBuf),
     #[error("{0} {1}; render replaces only files it generated")]
     RenderConflict(PathBuf, String),
+    #[error(
+        "this write names no actor: pass --actor-name NAME, or set a default with \
+         `git config zwanenzang.defaultActor NAME` in the tracker clone"
+    )]
+    ActorRequired,
+    #[error("{0}")]
+    UnknownActor(String),
+    #[error("{0}")]
+    ActorsNotConfigured(String),
     #[error("{0}")]
     Git(String),
     #[error("{message}")]
@@ -73,6 +82,9 @@ impl Error {
             Error::InsideRepository(..) => "inside-repository",
             Error::InsideTracker(_) => "inside-tracker",
             Error::RenderConflict(..) => "render-conflict",
+            Error::ActorRequired => "actor-required",
+            Error::UnknownActor(_) => "unknown-actor",
+            Error::ActorsNotConfigured(_) => "actors-not-configured",
             Error::Git(_) => "git",
             Error::Sync { code, .. } => code,
         }

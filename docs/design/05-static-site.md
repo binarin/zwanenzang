@@ -76,7 +76,9 @@ The JSON is escaped so that it never contains `<`, U+2028 or U+2029. A
 - `comments`: `{actor, ts, html, text, link}`; `link` is `{label, href}`,
   with `href` null when it is neither an attachment nor an http(s) URL.
 
-`actor` is the actor's declared name, or the first ten characters of its id.
+`actor` is the identity the version or comment was written as (for an
+event without `as`, its writer's declared name), or the first ten
+characters of the writer id when it resolves to none.
 `text` is the Org source, used for search; `html` is the same text rendered.
 
 ## Org to HTML

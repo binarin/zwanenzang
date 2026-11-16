@@ -133,6 +133,9 @@ fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Rejectio
 pub struct EventRef {
     pub id: Ulid,
     pub actor: Ulid,
+    /// The event's `as`; views show [`State::identity_of`] instead.
+    #[serde(skip)]
+    pub identity: Option<String>,
     pub ts: String,
 }
 
@@ -141,6 +144,7 @@ impl EventRef {
         EventRef {
             id: ev.id,
             actor: ev.actor,
+            identity: ev.identity.clone(),
             ts: ev.ts.clone(),
         }
     }
@@ -150,6 +154,9 @@ impl EventRef {
 pub struct Comment {
     pub id: Ulid,
     pub actor: Ulid,
+    /// The event's `as`; views show [`State::identity_of`] instead.
+    #[serde(skip)]
+    pub identity: Option<String>,
     pub ts: String,
     pub text: Option<String>,
     pub blob: Option<String>,
@@ -160,6 +167,9 @@ pub struct Comment {
 pub struct DocVersion {
     pub id: Ulid,
     pub actor: Ulid,
+    /// The event's `as`; views show [`State::identity_of`] instead.
+    #[serde(skip)]
+    pub identity: Option<String>,
     pub ts: String,
     pub blob: String,
     pub base: Option<Ulid>,
@@ -213,6 +223,8 @@ pub struct ActorInfo {
     /// Declared by the actor's latest accepted `actor` event.
     pub name: Option<String>,
     pub events: usize,
+    /// Accepted events without `as`, whose identity is this name.
+    pub without_identity: usize,
 }
 
 /// The scalar fields whose concurrent changes lint reports.
@@ -258,9 +270,9 @@ impl Causal {
 }
 
 /// For `a` before `b` in ULID order: `b` is concurrent with `a` when they
-/// come from different actors and `b`'s writer had not seen `a`, that is
-/// `b.parent < a.id` (or `b` has no parent). Events of one actor are never
-/// concurrent with each other.
+/// come from different writers and `b`'s writer had not seen `a`, that is
+/// `b.parent < a.id` (or `b` has no parent). Events of one writer are never
+/// concurrent with each other; writers sharing an identity can be.
 pub fn is_concurrent(a: &Causal, b: &Causal) -> bool {
     debug_assert!(a.id < b.id);
     a.actor != b.actor && b.parent.is_none_or(|p| p < a.id)
@@ -339,6 +351,15 @@ impl State {
 
     pub fn ticket(&self, id: Ulid) -> Option<&Ticket> {
         self.tickets.get(&id)
+    }
+
+    /// The identity of an event by writer `actor` with `as` value
+    /// `identity`: that value, or for an event written before identities
+    /// the writer's declared name.
+    pub fn identity_of(&self, actor: Ulid, identity: Option<&str>) -> Option<String> {
+        identity
+            .map(str::to_string)
+            .or_else(|| self.actors.get(&actor).and_then(|a| a.name.clone()))
     }
 
     fn check_status(&self, s: &str) -> Result<(), Rejection> {
@@ -553,7 +574,11 @@ pub fn apply(state: &mut State, ev: &Event) -> Result<Applied, Rejection> {
         }
         changed
     };
-    state.actors.entry(ev.actor).or_default().events += 1;
+    let info = state.actors.entry(ev.actor).or_default();
+    info.events += 1;
+    if ev.identity.is_none() {
+        info.without_identity += 1;
+    }
     Ok(Applied { changed, lost })
 }
 
@@ -822,6 +847,7 @@ fn apply_ticket_op(state: &mut State, ev: &Event) -> Result<(bool, Option<LostDo
             state.tickets.get_mut(&id).unwrap().comments.push(Comment {
                 id: ev.id,
                 actor: ev.actor,
+                identity: ev.identity.clone(),
                 ts: ev.ts.clone(),
                 text: d.text.clone(),
                 blob: d.blob.clone(),
@@ -850,6 +876,7 @@ fn apply_ticket_op(state: &mut State, ev: &Event) -> Result<(bool, Option<LostDo
             doc.versions.push(DocVersion {
                 id: ev.id,
                 actor: ev.actor,
+                identity: ev.identity.clone(),
                 ts: ev.ts.clone(),
                 blob: d.blob.clone(),
                 base: d.base,

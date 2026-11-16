@@ -3,9 +3,9 @@
 ## Repository layout
 
 ```
-zwanenzang.toml          tracker configuration (prefix, name, vocabularies, repos)
+zwanenzang.toml          tracker configuration (prefix, name, vocabularies, actors, repos)
 .gitattributes           events/*.jsonl merge=union
-events/<actor>.jsonl     one append-only log per actor
+events/<actor>.jsonl     one append-only log per writer (the envelope's `actor`)
 blobs/<sha256>           content-addressed text of document versions
 docs/                    optional bulky supporting files, linked from tickets
 ```
@@ -23,6 +23,7 @@ deleted once published. One id is one byte sequence; union merge depends on it.
 ```json
 {"id":"01JC3V7K9QZ8M4R2T6W0XNPB5A",
  "actor":"01JC3TZZ0R5F6G7H8J9KMNPQRS",
+ "as":"agent",
  "parent":"01JC3V6H2ABCDEFGHJKMNPQRST",
  "ts":"2026-11-07T12:34:56Z",
  "entity":"01JC3V5N0TICKETULIDXXXXXXX",
@@ -33,13 +34,67 @@ deleted once published. One id is one byte sequence; union merge depends on it.
 - **id**: ULID, also a hybrid logical clock. A new id must sort after the
   highest id this writer has seen; if the wall clock lags, the clock part is
   bumped. Wall-clock time is a display value, never an ordering input.
-- **actor**: the writer. Matches the log file name. Carries nothing else.
+- **actor**: the writer, the per-clone id. Matches the log file name.
+- **as**: optional, the identity the event was written as, such as
+  `binarin` or `agent`; see Writers and identities. Events written before
+  identities have none.
 - **parent**: the last event this writer had seen when it wrote. Used to
   detect concurrency, not to order.
 - **ts**: wall clock, informational.
 - **entity**: the ticket, or the tracker root entity.
 - **op** and **data**: the operation. The format grows by adding operations
   and optional fields, never by changing the meaning of existing ones.
+
+## Writers and identities
+
+Two things used to be one. The **writer** is the per-clone ULID in the
+envelope's `actor`: it names the log, so each log has one writer and
+concurrent appends never meet in one file, and everything causal is per
+writer: the `actor-mismatch` check, the concurrency rule, commit identity
+and numbering. The **identity** in `as` is who the write is for, chosen on
+every write (`--actor-name`), the same from every clone: the human's name
+or `agent`. The tracker's `actors` list in `zwanenzang.toml` names the
+identities a write may use, validated like the other vocabularies; a write
+naming another is refused (`unknown-actor`), and one naming none is refused
+too (`actor-required`). Two clones writing as one identity are two writers,
+so their concurrent changes are still reported.
+
+An event's identity is its `as`; an event without `as`, written before
+identities, resolves to its writer's declared display name (the `actor`
+operation below), and to none when the writer never declared one. The
+tool never rewrites old events. Builds that predate `as` ignore it as an
+unknown envelope field, so they still replay every event; they show each
+writer's display name instead of the identity.
+
+A tracker whose `zwanenzang.toml` has no `actors` key, one created before
+identities, still replays every event, but accepts no identity for new
+writes: they are refused with `actors-not-configured`, whose message says
+to add the list. Upgrading the build therefore stops writes to such a
+tracker until its owner adds the key; the identity `import` is reserved
+for the importer and accepted whatever the list says.
+
+`scripts/assign-identities.py` is a one-off for a tracker's owner: it adds
+the `actors` list when there is none, and `as` to every old event
+(comments as `agent`, the rest as the human). It changes files in the
+work tree only, so publishing it is an ordinary commit and push, and
+other clones fetch and rebase onto it as usual. It holds the clone's lock
+while it reads and rewrites, so the CLI cannot append to that clone
+meanwhile, but nothing stops other clones. An event another clone appends
+to a log the migration rewrote, and pushes only after the migration, still
+rebases without a conflict, yet union merge then keeps both the old and
+the rewritten form of that log's lines, and replay drops both as duplicate
+ids. So:
+
+1. Pause every writer, human and agent, until the migration is pushed,
+   and sync every clone so that none holds unpushed events.
+2. Bring the clone that runs the migration up to date with `sync`.
+3. Run the script there, and review `git diff`.
+4. Commit the result as an ordinary commit and push it normally.
+5. Other clones sync as usual and writers resume.
+6. Run `lint` afterwards; its `skipped` list names any duplicate ids a
+   missed unpushed event caused.
+
+Clients' read cursors reset once, as the logs changed.
 
 ## Ordering and replay
 
@@ -55,7 +110,8 @@ document's history as a lost edit instead of skipping it (see Documents).
 
 ## Derived activity and tag intervals
 
-Ticket views expose `activity`, the event reference (`id`, `actor`, `ts`)
+Ticket views expose `activity`, the event reference (`id`, `actor`,
+`identity`, `ts`)
 corresponding to `last_event`: any accepted own-ticket event, including replay
 no-ops and lost document versions. Other-side relationship changes do not
 advance it. `tag_since` records the effective absent-to-present event for each
@@ -103,8 +159,10 @@ Prose:
 
 Actors:
 
-- `actor` — on the tracker root entity, declares a display name for an actor
-  id. Written once by each actor on first use.
+- `actor` — on the tracker root entity, declares a display name for a
+  writer. Written once by each writer, on its first write, naming that
+  write's identity. It is what events without `as` resolve to, and the name
+  builds that predate identities show.
 
 Tracker-level (entity = tracker root): `config` changes that must be
 historical, such as adding a status to the vocabulary.
@@ -120,7 +178,7 @@ displayed four zero-padded digits (`ZZ-0042`); the log stores only the
 integer, so references written in that form keep resolving. The
 publish step assigns `max + 1` after a fetch and retries on push rejection,
 dropping its own unpublished `number` events before retrying. Unpublished
-tail of an actor's own log is the only thing ever rewritten, because nobody
+tail of a writer's own log is the only thing ever rewritten, because nobody
 has seen it. Gaps are never reused.
 
 Until published, a ticket displays as its short ULID prefix. Prose should not
@@ -173,17 +231,20 @@ Org reconciles its edited set against the state it reads before applying.
 
 Lint additionally reports: concurrent changes to the same scalar field of one
 entity (the later ULID won; a human should know), lost document edits,
-dangling repo aliases, actors without a declared name.
+dangling repo aliases, writers with events that resolve to no identity
+(`unnamed_actors`: no `as` and no declared name), and events whose `as` the
+tracker does not accept (`unknown_identities`). Replay keeps such events:
+`as` says who, not what.
 
 ## Prose ownership
 
 Four kinds of text, four rules:
 
-| Kind | Example | Storage | Writers |
+| Kind | Example | Storage | Written as |
 |------|---------|---------|---------|
-| Description | the ticket body the human writes | document `description` | human; agents read only |
-| Current summaries | brief, research notes (`summary`, `brief`, `notes`) | named documents | human and agents, compare-and-set |
-| Records | short deltas: a decision and what it supersedes, an outcome, a pointer | comments | anyone, append-only |
+| Description | the ticket body the human writes | document `description` | the human's identity; `agent` reads only |
+| Current summaries | brief, research notes (`summary`, `brief`, `notes`) | named documents | the human's identity and `agent`, compare-and-set |
+| Records | short deltas: a decision and what it supersedes, an outcome, a pointer | comments | any identity, append-only |
 | Bulky material | handoffs, research tied to code | files in a code repository, linked by a comment's `link` | that repository's owners |
 
 Structure, not instructions, decides between a comment and a document:
@@ -306,8 +367,9 @@ none changes a decision above.
 - **Parent.** The highest event id in the clone at write time, or `null` for
   the first event of a tracker.
 - **Concurrency rule.** For two events A < B in ULID order from different
-  actors, B is concurrent with A when `B.parent < A.id` (B's writer had not
-  seen A). Events of one actor are never concurrent with each other.
+  writers, B is concurrent with A when `B.parent < A.id` (B's writer had not
+  seen A). Events of one writer are never concurrent with each other; the
+  identity plays no part, so one identity on two clones is still reported.
 - **Duplicate ids at replay.** Byte-identical duplicate lines (which union
   merge can produce) count once. Different lines with the same id are all
   skipped and reported.
@@ -338,8 +400,8 @@ none changes a decision above.
   `null` clears the kind. `parent`: `{to}` where `null` clears the parent.
   `relate`, `unrelate`: `{to}`. `tag`, `untag`: `{tag}`. `number`:
   `{number}`, at least 1. `archive`, `unarchive`, `tombstone`: `{}`.
-  `actor`: `{name}`, the writing actor's own display name; a later
-  declaration renames it.
+  `actor`: `{name}`, the writer's own display name; a later declaration
+  renames it.
   Nullable fields (`kind.to`, `parent.to`, `doc.base`) must be present, so a
   writer always states what it means. Unknown fields in `data` and in the
   envelope are ignored at replay, so the format can grow.
@@ -349,7 +411,9 @@ none changes a decision above.
 - **Name formats.** Statuses, kinds, document names and repository aliases:
   one or more of `A-Z a-z 0-9 _ -`, at most 64 characters. The number
   prefix: an uppercase letter and up to nine uppercase letters or digits.
-  Actor names: a single non-empty line of at most 128 bytes. Branch names
+  Identities in `actors`, `--actor-name` and `zwanenzang.defaultActor`
+  have the vocabulary format too. Writer display names in `actor` events:
+  a single non-empty line of at most 128 bytes. Branch names
   and merge request URLs: a single non-empty line. Numbers display
   unpadded, `ZZ-42`; padded input such as `ZZ-0042` is accepted.
 - **Repository aliases** are declared in `zwanenzang.toml` as
@@ -368,8 +432,9 @@ none changes a decision above.
   `stale-doc-base`.
 - **Concurrent field reports.** For each accepted `title`, `status`,
   `kind`, `priority` or `parent` event, every earlier change to the same field of the
-  same ticket by another actor that its writer had not seen is reported, if
-  the values differ. Two actors choosing the same value is not a conflict.
+  same ticket by another writer that its writer had not seen is reported,
+  if the values differ. Two writers choosing the same value is not a
+  conflict.
 - **Numbers.** "Unique and greater than any existing number": a number
   equal to an existing one is `number-not-unique`, a smaller one
   `number-not-greater`; a ticket that already has a number cannot get
@@ -378,7 +443,7 @@ none changes a decision above.
   hybrid clock and as the next event's parent, even when replay skips it
   (an unknown operation from a newer build, say), unless its id is out of
   range (below). Empty lines are ignored. A line found in a log other than
-  its actor's is `actor-mismatch`.
+  its writer's is `actor-mismatch`.
 - **Ids out of range.** Going through ids in ULID order, an id whose time is
   more than 1000 years after the newest id seen before it (the tracker
   root's id for the first) is `id-out-of-range`: skipped, and not seen.
@@ -390,8 +455,10 @@ none changes a decision above.
   past everything seen is refused with the same code.
 - **Live writes are all or nothing per command.** A command such as
   `create --parent P --tag X` writes several events; if any is refused,
-  none is written. The actor's `actor` declaration is written only together
-  with at least one real change, never alone. A document version whose text
+  none is written. The writer's `actor` declaration is written only
+  together with at least one real change, never alone. Every event of the
+  write, the declaration and the `number` events its sync publishes
+  included, carries the write's `as`. A document version whose text
   equals the current version is a no-op.
 - **Batched client writes (milestone 3).** `apply` compiles a JSON list to
   one ordinary live-write plan; each change is one existing operation.
@@ -430,9 +497,13 @@ none changes a decision above.
   Supporting files are copied after every event has been accepted and
   before any line is appended. `--dry-run` runs the same validation and
   writes nothing.
-- **Its own actor.** Each run writes as a new actor that declares the name
-  `ai-workflow import`, not as the clone's actor: the human did not write
-  these events, and one log per run keeps an import recognisable.
+- **Its own writer.** Each run writes as a new writer with the identity
+  `import`, not as the clone's writer: the human did not write these
+  events, and one log per run keeps an import recognisable. The new writer
+  declares the name `import` too. The numbers the sync after the import
+  publishes are written by the clone's writer, also as `import`. `import`
+  is reserved and accepted without being in `actors`, so an import needs
+  neither `--actor-name` nor a configured identity.
 - **Ids and times.** Ids come from the hybrid clock at import time and
   `ts` is the import time; history is not reconstructed from the source's
   git log, because ids order writes and wall-clock time is display only,

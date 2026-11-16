@@ -131,8 +131,54 @@ The script sees the arguments it was given in \"$@\" and its stdin."
       (let ((err (should-error (zwanenzang-test-call dir '("read")) :type 'user-error)))
         (should (string-prefix-p "zwanenzang: cannot run " (cadr err)))))))
 
+(ert-deftest zwanenzang-call-passes-the-configured-actor-name-first ()
+  (zwanenzang-test-with-dir dir
+    (let ((zwanenzang-program
+           (zwanenzang-test--fake-program dir "printf '{\"args\": \"%s\"}' \"$*\"")))
+      (should (equal (alist-get 'args (zwanenzang-test-call-configured dir '("read")))
+                     (concat "-C " (file-name-as-directory dir) " read")))
+      (let ((zwanenzang-actor-name "agent"))
+        (should (equal (alist-get 'args (zwanenzang-test-call-configured dir '("apply")))
+                       (concat "-C " (file-name-as-directory dir)
+                               " --actor-name agent apply")))
+        ;; An explicit name in the arguments replaces it.
+        (should (equal (alist-get 'args (zwanenzang-test-call dir '("sync")))
+                       (concat "-C " (file-name-as-directory dir)
+                               " --actor-name tester sync")))))))
+
+(ert-deftest zwanenzang-actor-name-defaults-to-the-clone-default ()
+  (should (null (default-value 'zwanenzang-actor-name)))
+  (should (custom-variable-p 'zwanenzang-actor-name))
+  (should (equal (zwanenzang--global-args '("read")) nil))
+  (let ((zwanenzang-actor-name "binarin"))
+    (should (equal (zwanenzang--global-args '("read")) '("--actor-name" "binarin")))
+    (should (equal (zwanenzang--global-args '("--actor-name" "agent" "read")) nil))
+    (should (equal (zwanenzang--global-args '("read" "--actor-name=agent")) nil))
+    ;; After "--" it is a value, not the option.
+    (should (equal (zwanenzang--global-args '("comment" "ZZ-1" "--" "--actor-name"))
+                   '("--actor-name" "binarin")))))
+
+(ert-deftest zwanenzang-author-is-the-identity-then-the-writer-name ()
+  (let ((pull (zwanenzang--pull-create
+               :actors '((01M7JEQCKRH7E5CDSJ25G48SBT . "declared")))))
+    (should (equal (zwanenzang--author
+                    pull '((actor . "01M7JEQCKRH7E5CDSJ25G48SBT") (identity . "agent")))
+                   "agent"))
+    (should (equal (zwanenzang--author
+                    pull '((actor . "01M7JEQCKRH7E5CDSJ25G48SBT") (identity . :null)))
+                   "declared"))
+    (should (equal (zwanenzang--author
+                    pull '((actor . "01M7JEQZZZZZZZZZZZZZZZZZZZ") (identity . :null)))
+                   "01M7JEQZZZ"))
+    (should (string-match-p
+             "\\`\\[2026-11-07T00:00:00Z\\] agent:\n"
+             (zwanenzang--comment-record
+              pull '((id . "x") (actor . "01M7JEQCKRH7E5CDSJ25G48SBT") (identity . "agent")
+                     (ts . "2026-11-07T00:00:00Z") (text . "hi") (link . :null)))))))
+
 (ert-deftest zwanenzang-command-name-skips-global-options ()
   (should (equal (zwanenzang--command-name '("--actor-name" "tester" "sync")) "sync"))
+  (should (equal (zwanenzang--command-name '("--actor-name" "agent" "apply")) "apply"))
   (should (equal (zwanenzang--command-name '("-C" "/x" "--tracker" "/y" "doc" "get")) "doc"))
   (should (equal (zwanenzang--command-name '("--actor-name=tester" "read")) "read"))
   (should (equal (zwanenzang--command-name nil) "zwanenzang")))

@@ -24,9 +24,9 @@ choose the form by these rules.
   sub-headings or tables, open questions, or anything that will be revised.
   Announce a new or substantially changed document with a one-line comment.
 - Bulky material that belongs to a code repository, such as research notes or
-  a handoff file, lives in that repository. Point to it with a
-  one-line `zz comment T "what it is" --link URL`, not with a bare path in
-  the text.
+  a handoff file, lives in that repository. Point to it with a one-line
+  `zz --actor-name agent comment T "what it is" --link URL`, not with a bare
+  path in the text.
 - Do not restate in prose what ticket fields already hold: links to other
   tickets, status, tags.
 
@@ -53,7 +53,7 @@ Org lists start with `-`, which the argument parser rejects as a comment
 argument, so pass prose with `--file` or on stdin:
 
 ```sh
-zz comment ZZ-42 --file note.org
+zz --actor-name agent comment ZZ-42 --file note.org
 ```
 
 Writing a document names the version it is based on: `version` from `doc get`,
@@ -61,7 +61,7 @@ or `none` for a new document. The text comes from `--file` or stdin. Run
 `sync` before the `doc get`, since the base check only sees what the clone has.
 
 ```sh
-zz doc set ZZ-42 brief --base <version> --file brief.org
+zz --actor-name agent doc set ZZ-42 brief --base <version> --file brief.org
 ```
 
 When the base is not current, or another clone wrote a version at the same
