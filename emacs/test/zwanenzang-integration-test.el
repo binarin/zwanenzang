@@ -62,6 +62,18 @@
                                (alist-get 'comments ticket))
                        '("agent" "tester")))))))
 
+(ert-deftest zwanenzang-integration-explicit-identity-wins-over-the-setting ()
+  (zwanenzang-test-with-tracker dir
+    (let ((id (zwanenzang-test-create dir "Shared"))
+          (zwanenzang-actor-name "agent"))
+      ;; `zwanenzang-test-call' passes --actor-name tester itself.
+      (should (equal (alist-get 'as (alist-get 'event (zwanenzang-test-call
+                                                        dir (list "comment" id "explicit"))))
+                     "tester"))
+      (should (equal (alist-get 'as (alist-get 'event (zwanenzang-test-call-configured
+                                                        dir (list "comment" id "setting"))))
+                     "agent")))))
+
 (ert-deftest zwanenzang-integration-command-error-is-user-error ()
   (zwanenzang-test-with-dir dir
     (let ((err (should-error (zwanenzang-test-call dir '("read") '((cursors)))

@@ -474,6 +474,8 @@ Decided 2026-11-07 for the first Emacs implementation.
   the default nil passes nothing, so each clone's
   `zwanenzang.defaultActor` decides, and a clone without one refuses the
   client's writes with `actor-required`. Reads pass it too; they ignore it.
+  A call whose own arguments already name `--actor-name` keeps that one
+  and is not given the setting, since the CLI refuses the flag twice.
 
 ### Activation and calls
 

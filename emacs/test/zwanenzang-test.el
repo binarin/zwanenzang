@@ -141,17 +141,22 @@ The script sees the arguments it was given in \"$@\" and its stdin."
         (should (equal (alist-get 'args (zwanenzang-test-call-configured dir '("apply")))
                        (concat "-C " (file-name-as-directory dir)
                                " --actor-name agent apply")))
-        ;; An explicit name in the arguments comes later, so it wins.
+        ;; An explicit name in the arguments replaces it.
         (should (equal (alist-get 'args (zwanenzang-test-call dir '("sync")))
                        (concat "-C " (file-name-as-directory dir)
-                               " --actor-name agent --actor-name tester sync")))))))
+                               " --actor-name tester sync")))))))
 
 (ert-deftest zwanenzang-actor-name-defaults-to-the-clone-default ()
   (should (null (default-value 'zwanenzang-actor-name)))
   (should (custom-variable-p 'zwanenzang-actor-name))
-  (should (equal (zwanenzang--global-args) nil))
+  (should (equal (zwanenzang--global-args '("read")) nil))
   (let ((zwanenzang-actor-name "binarin"))
-    (should (equal (zwanenzang--global-args) '("--actor-name" "binarin")))))
+    (should (equal (zwanenzang--global-args '("read")) '("--actor-name" "binarin")))
+    (should (equal (zwanenzang--global-args '("--actor-name" "agent" "read")) nil))
+    (should (equal (zwanenzang--global-args '("read" "--actor-name=agent")) nil))
+    ;; After "--" it is a value, not the option.
+    (should (equal (zwanenzang--global-args '("comment" "ZZ-1" "--" "--actor-name"))
+                   '("--actor-name" "binarin")))))
 
 (ert-deftest zwanenzang-author-is-the-identity-then-the-writer-name ()
   (let ((pull (zwanenzang--pull-create

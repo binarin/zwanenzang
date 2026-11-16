@@ -45,6 +45,7 @@ Remote scopes use `zwanenzang' from the remote PATH instead."
 
 (defcustom zwanenzang-actor-name nil
   "Identity the client writes as, passed to every CLI call as `--actor-name'.
+A call whose own arguments name `--actor-name' keeps that one instead.
 It must be one of the tracker's `actors'.  nil passes no name, so each
 tracker clone's `zwanenzang.defaultActor' git setting decides, and a
 clone without one refuses the client's writes."
@@ -92,14 +93,22 @@ signals `user-error'."
      (user-error "zwanenzang: cannot encode the request as JSON: %s"
                  (error-message-string err)))))
 
-(defun zwanenzang--global-args ()
-  "The global CLI options every call passes before its own arguments."
-  (and zwanenzang-actor-name (list "--actor-name" zwanenzang-actor-name)))
+(defun zwanenzang--global-args (args)
+  "The global CLI options a call with ARGS passes before ARGS.
+`zwanenzang-actor-name' is left out when ARGS name an identity already,
+since the CLI refuses `--actor-name' given twice."
+  (and zwanenzang-actor-name
+       (not (seq-some (lambda (arg)
+                        (or (equal arg "--actor-name")
+                            (string-prefix-p "--actor-name=" arg)))
+                      ;; Arguments after "--" are values, not options.
+                      (seq-take-while (lambda (arg) (not (equal arg "--"))) args)))
+       (list "--actor-name" zwanenzang-actor-name)))
 
 (defun zwanenzang--run (directory args &optional input)
   "Run the CLI on the tracker at or above DIRECTORY with ARGS.
 Use `zwanenzang-program' locally, or remote `zwanenzang' through TRAMP.
-`zwanenzang-actor-name', when set, comes first, so ARGS can override it.
+`zwanenzang-actor-name', when set, is passed unless ARGS name an identity.
 INPUT, when non-nil, is encoded as JSON and given on stdin.  Return a
 plist with :exit (the exit status), :parsed (whether stdout is one JSON
 value), :json (that value) and :stderr.  This signals only when the
@@ -109,7 +118,7 @@ for `zwanenzang-call' to judge."
          (stdin (if input (zwanenzang--json-encode input) ""))
          (remote (file-remote-p default-directory))
          (program (if remote "zwanenzang" zwanenzang-program))
-         (args (append (zwanenzang--global-args) args))
+         (args (append (zwanenzang--global-args args) args))
          stderr-file stdin-file
          (coding-system-for-read 'utf-8)
          (coding-system-for-write 'utf-8))
