@@ -71,13 +71,13 @@ impl SyncReport {
     }
 }
 
-/// The commit identity of an actor: its display name, falling back like the
-/// actor declaration does, and an address made from its id.
+/// The commit identity of a writer: `name` (the identity of the write, or
+/// the writer's declared name), else the writer id, and an address made
+/// from the writer id.
 pub fn identity(actor: Ulid, name: Option<String>) -> Identity {
     let name = name
         .filter(|n| valid_actor_name(n))
-        .or_else(|| std::env::var("USER").ok().filter(|n| valid_actor_name(n)))
-        .unwrap_or_else(|| "unknown".to_string());
+        .unwrap_or_else(|| actor.to_string());
     Identity {
         name,
         email: format!("{actor}@zwanenzang.invalid"),
@@ -85,7 +85,9 @@ pub fn identity(actor: Ulid, name: Option<String>) -> Identity {
 }
 
 impl Tracker {
-    /// Publishes under the tracker lock; the `sync` command.
+    /// Publishes under the tracker lock; the `sync` command. `actor_name`
+    /// is the identity of the `number` events it writes, as for
+    /// [`Tracker::write`]; a sync with nothing to number needs none.
     pub fn sync(&self, clock: &mut dyn Clock, actor_name: Option<&str>) -> Result<SyncReport> {
         let repo = self.repo()?;
         let _lock = lock_repo(&repo)?;
@@ -233,13 +235,11 @@ impl Tracker {
             n => format!("publish {n} numbers"),
         };
         let actor = w.events[0].actor;
-        let name = w
-            .replay
-            .state
-            .actors
-            .get(&actor)
-            .and_then(|a| a.name.clone());
-        if !repo.commit(&[PathBuf::from("events")], &message, &identity(actor, name))? {
+        if !repo.commit(
+            &[PathBuf::from("events")],
+            &message,
+            &identity(actor, w.identity.clone()),
+        )? {
             return Err(Error::Git(
                 "numbers were written but nothing was committed".into(),
             ));

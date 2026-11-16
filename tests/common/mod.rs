@@ -132,14 +132,31 @@ pub fn run_in(dir: &Path, args: &[&str], stdin: &str) -> Out {
     run_in_env(dir, args, stdin, &[])
 }
 
+/// The identity the helpers write as unless a test picks another; `init`
+/// puts it in the tracker's `actors` list.
+pub const TESTER: &str = "tester";
+
 /// Runs with per-child environment overrides, avoiding process-global state
 /// in parallel tests. The same disposable-repository checks still apply.
 pub fn run_in_env(dir: &Path, args: &[&str], stdin: &str, env: &[(&str, &str)]) -> Out {
+    run_as(dir, Some(TESTER), args, stdin, env)
+}
+
+/// Runs with `--actor-name actor`, or without the flag for `None`.
+pub fn run_as(
+    dir: &Path,
+    actor: Option<&str>,
+    args: &[&str],
+    stdin: &str,
+    env: &[(&str, &str)],
+) -> Out {
     assert_opens_disposable(dir);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_zwanenzang"))
-        .arg("-C")
-        .arg(dir)
-        .args(["--actor-name", "tester"])
+    let mut command = Command::new(env!("CARGO_BIN_EXE_zwanenzang"));
+    command.arg("-C").arg(dir);
+    if let Some(a) = actor {
+        command.args(["--actor-name", a]);
+    }
+    let mut child = command
         .args(args)
         .current_dir(dir)
         .envs(env.iter().copied())

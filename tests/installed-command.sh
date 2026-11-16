@@ -34,7 +34,7 @@ cli() {
     local command=$1
     shift
     env PATH="$cli_path" "$package/bin/$command" -C "$repo" \
-        --actor-name 'installed command test' "$@"
+        --actor-name installed-command-test "$@"
 }
 
 # With no caller git, both installed paths must retain the packaged fallback.

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::replay::Replay;
-use crate::state::{Document, Ticket};
+use crate::state::{Document, EventRef, Ticket};
 use crate::store::Tracker;
 use crate::ulid::{Ulid, is_prefix_text};
 
@@ -117,6 +117,22 @@ impl<'a> View<'a> {
         }
     }
 
+    /// The identity of an event by writer `actor` with `as` value
+    /// `identity`; see [`crate::state::State::identity_of`].
+    pub fn identity(&self, actor: Ulid, identity: Option<&str>) -> Option<String> {
+        self.replay.state.identity_of(actor, identity)
+    }
+
+    /// An event reference with its resolved identity next to the writer.
+    pub fn event_ref(&self, r: &EventRef) -> Value {
+        json!({
+            "id": r.id,
+            "actor": r.actor,
+            "identity": self.identity(r.actor, r.identity.as_deref()),
+            "ts": r.ts,
+        })
+    }
+
     fn live(&self, id: &Ulid) -> bool {
         self.replay
             .state
@@ -144,8 +160,10 @@ impl<'a> View<'a> {
             "archived": t.archived,
             "tombstoned": t.tombstoned,
             "last_event": t.last_event,
-            "activity": t.activity,
-            "tag_since": t.tag_since,
+            "activity": self.event_ref(&t.activity),
+            "tag_since": t.tag_since.iter()
+                .map(|(tag, r)| (tag.clone(), self.event_ref(r)))
+                .collect::<BTreeMap<String, Value>>(),
         })
     }
 
@@ -153,7 +171,15 @@ impl<'a> View<'a> {
         json!({
             "current": d.current,
             "blob": d.current_version().map(|v| &v.blob),
-            "versions": d.versions,
+            "versions": d.versions.iter().map(|v| json!({
+                "id": v.id,
+                "actor": v.actor,
+                "identity": self.identity(v.actor, v.identity.as_deref()),
+                "ts": v.ts,
+                "blob": v.blob,
+                "base": v.base,
+                "lost": v.lost,
+            })).collect::<Vec<_>>(),
         })
     }
 
@@ -195,6 +221,7 @@ impl<'a> View<'a> {
                 json!({
                     "id": c.id,
                     "actor": c.actor,
+                    "identity": self.identity(c.actor, c.identity.as_deref()),
                     "ts": c.ts,
                     "text": text,
                     "blob": c.blob,
@@ -208,7 +235,7 @@ impl<'a> View<'a> {
         obj.insert("related".into(), json!(related));
         obj.insert("branches".into(), json!(branches));
         obj.insert("mrs".into(), json!(mrs));
-        obj.insert("created".into(), json!(t.created));
+        obj.insert("created".into(), self.event_ref(&t.created));
         obj.insert("documents".into(), json!(documents));
         obj.insert("comments".into(), json!(comments));
         v

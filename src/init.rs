@@ -39,7 +39,7 @@ pub fn run(
 ) -> Result<Started> {
     // The configuration is validated first: a bad prefix or name is
     // refused before the destination or the remote is touched.
-    Config::new(next_id(clock, None), name, prefix)
+    Config::new_with_actor(next_id(clock, None), name, prefix, actor_name)
         .validate()
         .map_err(|message| Error::Config {
             path: dir.join(crate::config::CONFIG_FILE),

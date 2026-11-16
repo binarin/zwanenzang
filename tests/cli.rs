@@ -69,6 +69,7 @@ fn init_writes_tracker_files() {
     assert_eq!(read(&d, ".gitattributes"), "events/*.jsonl merge=union\n");
     assert!(!d.join(".gitignore").exists());
     assert_eq!(actor_of(&d), out["actor"]);
+    assert_eq!(out["identity"], TESTER);
     assert_eq!(git(&d, &["log", "--format=%s"]), "init\n");
     assert_eq!(out["sync"]["upstream"], "origin/tracker-test-repo");
     assert_eq!(out["sync"]["pushed"], true);
@@ -966,4 +967,200 @@ fn a_new_tracker_has_the_default_vocabulary() {
     assert_eq!(scope["tracker"]["retired_statuses"], json!([]));
     let toml = read(p, "zwanenzang.toml");
     assert!(toml.contains("\nretired_statuses = []\n"), "{toml}");
+}
+
+fn run_actor(p: &std::path::Path, actor: Option<&str>, args: &[&str]) -> Out {
+    run_as(p, actor, args, "", &[])
+}
+
+#[test]
+fn init_lists_its_actor_name_and_agent() {
+    let net = InitNet::new();
+    let out = net.init("named-test-repo", &["--prefix", "ZZ"]);
+    assert_eq!(out.code, 0, "{}", out.json);
+    let d = net.dir.path().join("named-test-repo");
+    assert!(
+        read(&d, "zwanenzang.toml").contains("\nactors = [\"tester\", \"agent\"]\n"),
+        "{}",
+        read(&d, "zwanenzang.toml")
+    );
+    // A name that is not a vocabulary entry cannot be listed.
+    let out = net.init(
+        "spaced-test-repo",
+        &["--prefix", "ZZ", "--actor-name", "two words"],
+    );
+    assert_eq!(out.json["error"]["code"], "config", "{}", out.json);
+    assert!(!net.dir.path().join("spaced-test-repo").exists());
+}
+
+#[test]
+fn identity_comes_from_the_flag_then_the_clone_default_else_refused() {
+    let d = tracker();
+    let p = d.path();
+    let before = logs(p);
+    let refused = run_actor(p, None, &["create", "nobody"]);
+    assert_eq!(refused.code, 1);
+    assert_eq!(refused.json["error"]["code"], "actor-required");
+    assert!(
+        refused.json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("zwanenzang.defaultActor")
+    );
+    let unknown = run_actor(p, Some("stranger"), &["create", "nobody"]);
+    assert_eq!(unknown.json["error"]["code"], "unknown-actor");
+    assert!(
+        unknown.json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("tester, agent")
+    );
+    assert_eq!(logs(p), before);
+    // Read-only commands and dry runs need no identity.
+    assert_eq!(run_actor(p, None, &["list"]).code, 0);
+    assert_eq!(run_actor(p, None, &["lint"]).code, 0);
+    assert_eq!(run_as(p, None, &["read"], "{}", &[]).code, 0);
+    assert_eq!(run_actor(p, None, &["sync"]).code, 0);
+
+    let t = id(&ok(p, &["create", "flagged"]));
+    git(
+        p,
+        &["config", "--local", "zwanenzang.defaultActor", "agent"],
+    );
+    let by_default = run_actor(p, None, &["comment", &t, "from the default"]);
+    assert_eq!(by_default.code, 0, "{}", by_default.json);
+    assert_eq!(by_default.json["event"]["as"], "agent");
+    // The flag wins over the default.
+    let flagged = run_actor(p, Some("tester"), &["tag", &t, "x"]);
+    assert_eq!(flagged.json["event"]["as"], "tester");
+    git(
+        p,
+        &["config", "--local", "zwanenzang.defaultActor", "nobody"],
+    );
+    let bad_default = run_actor(p, None, &["tag", &t, "y"]);
+    assert_eq!(bad_default.json["error"]["code"], "unknown-actor");
+    assert_eq!(run_in(p, &["lint"], "").code, 0);
+}
+
+#[test]
+fn outputs_show_the_identity_next_to_the_writer() {
+    let d = tracker();
+    let p = d.path();
+    let t = id(&ok(p, &["create", "shown", "--tag", "seen"]));
+    let writer = actor_of(p);
+    run_ok_as(p, "agent", &["comment", &t, "agent note"]);
+    let v1 = run_as(
+        p,
+        Some("agent"),
+        &["doc", "set", &t, "plan", "--base", "none"],
+        "the plan",
+        &[],
+    );
+    assert_eq!(v1.code, 0, "{}", v1.json);
+    let show = ok(p, &["show", &t]);
+    assert_eq!(show["created"]["actor"], writer.as_str());
+    assert_eq!(show["created"]["identity"], TESTER);
+    assert_eq!(show["tag_since"]["seen"]["identity"], TESTER);
+    assert_eq!(show["activity"]["identity"], "agent");
+    assert_eq!(show["comments"][0]["actor"], writer.as_str());
+    assert_eq!(show["comments"][0]["identity"], "agent");
+    assert_eq!(
+        show["documents"]["plan"]["versions"][0]["identity"],
+        "agent"
+    );
+    assert_eq!(
+        show["documents"]["plan"]["versions"][0]["actor"],
+        writer.as_str()
+    );
+    let listed = &ok(p, &["list"])["tickets"][0];
+    assert_eq!(listed["activity"]["identity"], "agent");
+    let queried = &ok(p, &["query", &t])["tickets"][0];
+    assert_eq!(queried["comments"][0]["identity"], "agent");
+    let doc = ok(p, &["doc", "get", &t, "plan"]);
+    assert_eq!(doc["actor"], writer.as_str());
+    assert_eq!(doc["identity"], "agent");
+    let read = ok_stdin(p, &["read"], "{}");
+    let events = read["tickets"][0]["events"].as_array().unwrap();
+    assert!(events.iter().all(|e| e["identity"] == e["as"]));
+    assert_eq!(read["tracker"]["actors"], json!({&writer: TESTER}));
+}
+
+fn run_ok_as(p: &std::path::Path, actor: &str, args: &[&str]) -> Value {
+    let o = run_actor(p, Some(actor), args);
+    assert_eq!(o.code, 0, "{args:?} failed: {} {}", o.json, o.stderr);
+    o.json
+}
+
+#[test]
+fn events_without_as_resolve_to_the_writers_declared_name() {
+    let d = tracker();
+    let p = d.path();
+    let t = id(&ok(p, &["create", "old"]));
+    let writer = actor_of(p);
+    let base = ok(p, &["show", &t])["last_event"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let next = |n: u128| {
+        let b = zwanenzang::ulid::Ulid::parse_canonical(&base).unwrap();
+        zwanenzang::ulid::Ulid(b.0 + n).to_canonical()
+    };
+    // As written before identities: no `as`, by the declared writer and by
+    // a writer that never declared a name.
+    let undeclared = "00000000000000000000000001";
+    append_raw(
+        p,
+        &writer,
+        &[line(
+            &next(1),
+            &writer,
+            &base,
+            &t,
+            "comment",
+            json!({"text": "old note"}),
+        )],
+    );
+    append_raw(
+        p,
+        undeclared,
+        &[line(
+            &next(2),
+            undeclared,
+            &next(1),
+            &t,
+            "tag",
+            json!({"tag": "stray"}),
+        )],
+    );
+    let show = ok(p, &["show", &t]);
+    assert_eq!(show["comments"][0]["identity"], TESTER);
+    assert_eq!(show["tag_since"]["stray"]["identity"], Value::Null);
+    let read = ok_stdin(p, &["read"], "{}");
+    let events = read["tickets"][0]["events"].as_array().unwrap();
+    let old = events.iter().find(|e| e["id"] == next(1).as_str()).unwrap();
+    assert_eq!(old.get("as"), None);
+    assert_eq!(old["identity"], TESTER);
+    // Lint reports the writer whose events resolve to no identity, and an
+    // event naming an identity the tracker does not list.
+    let mut stranger: Value = serde_json::from_str(&line(
+        &next(3),
+        &writer,
+        &next(2),
+        &t,
+        "tag",
+        json!({"tag": "z"}),
+    ))
+    .unwrap();
+    stranger["as"] = json!("stranger");
+    append_raw(p, &writer, &[stranger.to_string()]);
+    let lint = run_in(p, &["lint"], "");
+    assert_eq!(lint.code, 1);
+    assert_eq!(
+        lint.json["unnamed_actors"],
+        json!([{"actor": undeclared, "events": 1}])
+    );
+    assert_eq!(
+        lint.json["unknown_identities"],
+        json!([{"event": next(3), "actor": writer, "as": "stranger", "op": "tag"}])
+    );
 }

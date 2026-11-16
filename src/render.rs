@@ -367,8 +367,9 @@ impl Site {
         let included = |id: &Ulid| order.contains_key(id);
         let ordered = |ids: &mut Vec<Ulid>| ids.sort_by_key(|id| order[id]);
 
-        let actor = |id: Ulid| -> String {
-            match state.actors.get(&id).and_then(|a| a.name.clone()) {
+        // Who wrote an event: its identity, else the writer's short id.
+        let actor = |id: Ulid, identity: Option<&str>| -> String {
+            match state.identity_of(id, identity) {
                 Some(n) => n,
                 None => id.to_canonical()[..10].to_string(),
             }
@@ -439,7 +440,7 @@ impl Site {
                 let text = tracker.get_blob(&v.blob)?;
                 doc_values.push(json!({
                     "name": name,
-                    "actor": actor(v.actor),
+                    "actor": actor(v.actor, v.identity.as_deref()),
                     "ts": v.ts,
                     "html": org::to_html(&text, &links),
                     "text": text,
@@ -462,7 +463,7 @@ impl Site {
                     json!({"label": l, "href": href})
                 });
                 comment_values.push(json!({
-                    "actor": actor(c.actor),
+                    "actor": actor(c.actor, c.identity.as_deref()),
                     "ts": c.ts,
                     "html": text.as_deref().map(|s| org::to_html(s, &links)),
                     "text": text,

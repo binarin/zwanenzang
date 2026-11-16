@@ -38,11 +38,36 @@ accepted by `init --remote`, `--tracker-url` and the project-local
   **local** git configuration. No global config or project file is consulted.
   Missing configuration is `not-a-tracker`; multiple values are
   `invalid-argument`. Explicit `-C` never falls back to URL selection.
-- `--actor-name NAME`: display name declared by this clone's first write.
-  Defaults to `$USER`, then `unknown`. Ignored once the actor is declared.
+- `--actor-name NAME`: the identity this write is made as, recorded as `as`
+  on every event the command writes, including the `number` events its
+  sync publishes. Without it, the clone's `zwanenzang.defaultActor` local
+  git configuration is used. A write that changes something with neither
+  is refused with `actor-required`; a name the tracker does not accept is
+  refused with `unknown-actor`, even on a dry run. Read-only commands, dry
+  runs without the flag and a `sync` with nothing to number need none.
 
 The `git` binary must be on `PATH` (the nix package falls back to its own).
-The clone's actor id is `zwanenzang.actor` in its local git configuration.
+The clone's writer id is `zwanenzang.actor` in its local git configuration;
+`zwanenzang.defaultActor` there, set by hand, is its default identity.
+
+### Identities
+
+An event's `actor` is its writer, the clone's id, which names its log. Its
+identity is who the write is for, chosen per write: the envelope's `as`.
+The tracker's `actors` list in `zwanenzang.toml` names the identities
+writes may use, in the vocabulary name format:
+
+```toml
+actors = ["alice", "agent"]
+```
+
+`init` writes the name given to it with `--actor-name`, if any, followed by
+`agent`. A configuration without the key, from a tracker created before
+identities, accepts any name in the vocabulary format. `import` is the
+importer's identity and is always accepted. Outputs resolve each event's
+identity next to its writer, as `identity`: its `as`, or for an event
+written before identities its writer's declared display name, or `null`
+when the writer declared none.
 
 ### URL-selected storage
 
@@ -65,7 +90,7 @@ selector's branch. Invalid storage is refused, never reset or replaced.
 Incomplete storage and origin mismatches are `invalid-argument`; git failures
 are `git`, filesystem failures `io`. A failed clone may leave a directory
 requiring manual inspection. Symlinks to valid standalone clones work; linked
-worktrees do not. The clone's existing actor, unpublished work and
+worktrees do not. The clone's existing writer, unpublished work and
 configuration survive reuse.
 
 The initial clone needs the network; existing clones are not fetched implicitly.
@@ -107,7 +132,7 @@ them; any change to them fails with `tombstoned`.
 
 | Command | Writes | Output |
 |---|---|---|
-| `init DIRECTORY --remote LOCATOR --prefix P [--name N]` | config, `.gitattributes`, `AGENTS.md`, actor id; a git repository on the published branch; first commit; origin and upstream; initial push | init object |
+| `init DIRECTORY --remote LOCATOR --prefix P [--name N]` | config (with `actors`), `.gitattributes`, `AGENTS.md`, writer id; a git repository on the published branch; first commit; origin and upstream; initial push | init object |
 | `create TITLE [--status S] [--kind K] [--parent T] [--tag X]...` | `create`, then `parent`, `tag` | mutation object |
 | `status T STATUS` | `status` | mutation object |
 | `title T TITLE` | `title` | mutation object |
@@ -199,8 +224,10 @@ that ticket out, or a path pattern starting with `docs/`
 `*` matches any characters and `?` one character, neither crossing a
 `/`, and the pattern must match the whole path. `--repo-alias FROM=TO` imports the source's repository
 alias `FROM` as `TO`. Every alias the imported branches and merge requests
-use must be declared in `zwanenzang.toml` first. The import is written as a
-new actor named `ai-workflow import`; `--actor-name` names only this clone's actor, which numbers the imported tickets in the sync afterwards. All
+use must be declared in `zwanenzang.toml` first. The import is written by a
+new writer as the identity `import`, which `actors` need not list; the
+clone's own writer numbers the imported tickets in the sync afterwards, as
+`import` too. `--actor-name` and `zwanenzang.defaultActor` play no part. All
 of it is written or none of it; `--dry-run` validates everything and
 writes nothing. Running it again imports only tickets not imported yet.
 Which events each imported ticket becomes is an importer detail, not part
@@ -288,7 +315,7 @@ in batches.
 The whole batch is validated in input order through the ordinary live-write
 core, against the effects of earlier changes. Reference resolution and
 request shape checks precede that validation. A failure writes no events,
-blobs or commit and performs no sync. Existing actor-id/lock bookkeeping may
+blobs or commit and performs no sync. Existing writer-id/lock bookkeeping may
 still occur. There are no partial results. Invalid JSON, missing/unknown
 request, change or data fields, bad field types, unsupported operations and
 invalid created references use `invalid-argument`. Existing ticket resolution
@@ -344,19 +371,20 @@ cursor from the last read; null requests discovery of all live tickets.
 Unknown or ambiguous references fail the whole call with the usual ticket
 reference errors. Duplicate references to the same ticket, malformed cursors
 and unknown request fields fail with `invalid-argument`.
-No actor is allocated; no git repository is needed.
+No writer is allocated and no identity is needed; no git repository is
+needed.
 
 ```json
 {"tracker": {"id": "<tracker ULID>", "name": "...", "prefix": "ZZ",
              "statuses": ["todo", "..."], "retired_statuses": ["draft", "..."],
              "kinds": ["task", "..."],
              "priority": {"highest": 65, "lowest": 67, "default": 66},
-             "actors": {"<actor ULID>": "<display name>"}},
+             "actors": {"<writer ULID>": "<display name>"}},
  "cursor": "<opaque scope cursor>" | null,
  "reset": false,
  "tickets": [{"ticket": {<full ticket object>},
               "documents": {"description": "<current text>", "plan": "..."},
-              "events": [{<accepted event>}, ...],
+              "events": [{<accepted event>, "identity": "agent" | null}, ...],
               "cursor": "<opaque ticket cursor>", "reset": false}]}
 ```
 
@@ -371,9 +399,12 @@ No actor is allocated; no git repository is needed.
   Vocabularies include accepted `config` events. `retired_statuses` are
   the configuration's retired names: still in `statuses`, so tickets may
   carry them, but refused in new writes with `retired-status`. `tracker.actors` maps
-  every actor with an accepted declaration to its display name, so a
-  client can name comment authors; undeclared actors are left out.
-- Events are in id order, exclusive of the input cursor. They include
+  every writer with an accepted declaration to its display name, which is
+  what its events without `as` resolve to; undeclared writers are left
+  out. Comments, document versions and events carry their resolved
+  `identity` themselves.
+- Events are in id order, exclusive of the input cursor. Each is the
+  envelope as written plus its resolved `identity`. They include
   relations from the other end, child moves on both old and new parents,
   and tombstones that remove visible children or relations. The event's
   `entity` remains the ticket it was written on. Tracker-level events are
@@ -417,12 +448,16 @@ The tracker starts independent history on a new branch:
              "statuses": ["todo", "..."], "retired_statuses": [],
              "kinds": ["task", "..."]},
  "remote": {"url": "https://forge.example/owner/repo.git", "branch": "tickets"},
- "actor": "<this clone's actor ULID>",
+ "actor": "<this clone's writer ULID>",
+ "identity": "<the --actor-name given>" | null,
  "sync": {<sync object>}}
 ```
 
 `remote.url` is the locator's URL half and `remote.branch` the branch
-published. `--name` defaults to the destination directory's name. The remote's
+published. `identity` is the `--actor-name` given, which the new
+configuration's `actors` list starts with; it must be in the vocabulary
+name format (`config` otherwise). `init` writes no events and does not set
+`zwanenzang.defaultActor`. `--name` defaults to the destination directory's name. The remote's
 default-branch settings are never touched, and connected project repositories
 are neither discovered nor configured.
 
@@ -531,8 +566,10 @@ be serialized with sync.
   existing tag, `--remove` of a tag the ticket does not have, a document
   version with the text it already has) is not written: `written` is
   `false`, `event` is `null` and `events` is empty.
-- The first write by a clone's actor also writes an `actor` event before
-  the requested one, so `events` may be longer than one.
+- The first write by a clone's writer also writes an `actor` event before
+  the requested one, declaring the write's identity as the writer's
+  display name, so `events` may be longer than one. Every event carries
+  the write's `as`.
 - For `create`, `event` is the `create` event and `events` also holds the
   `parent` and `tag` events from `--parent` and `--tag`.
 - A command writes all of its events or none: if one is refused, nothing is
@@ -547,7 +584,8 @@ be serialized with sync.
 ```json
 {"dry_run": false,
  "source": {"root": "/path", "tickets": "/path/tickets", "revision": "<commit>" | null},
- "actor": "<the import actor's ULID>" | null,
+ "actor": "<the import writer's ULID>" | null,
+ "identity": "import" | null,
  "events": 183,
  "imported": [{"source": "AIWF-0003", "file": "tickets/AIWF-0003-x.md", "id": "<ULID>" | null,
                "title": "...", "status": "todo", "tags": ["needs_human"],
@@ -568,7 +606,7 @@ be serialized with sync.
 - `imported[].tags` are the tags the mapped status implies: `needs_human`
   for `revw` (from `ready-for-review`) and `wait` (from
   `needs-human-input`), otherwise empty.
-- `actor` and each `imported[].id` are `null` on a dry run and when
+- `actor`, `identity` and each `imported[].id` are `null` on a dry run and when
   nothing was written. `events` counts the lines written, or that would
   be written on a dry run.
 - `already_imported`: tickets an earlier run imported, found by their
@@ -596,9 +634,13 @@ be serialized with sync.
 Each event is one envelope:
 
 ```json
-{"id": "...", "actor": "...", "parent": "..." | null, "ts": "2026-11-07T12:34:56Z",
+{"id": "...", "actor": "...", "as": "agent", "parent": "..." | null, "ts": "2026-11-07T12:34:56Z",
  "entity": "...", "op": "status", "data": {"to": "agnt"}}
 ```
+
+`actor` is the writer and `as` the identity (see Identities). `as` is left
+out of events written before identities, and is ignored by builds that
+predate it.
 
 Operation data:
 
@@ -618,7 +660,7 @@ Operation data:
 | `archive`, `unarchive`, `tombstone` | `{}` |
 | `comment` | `{text}` or `{blob}`, plus optional `{link}` |
 | `doc` | `{name, blob, base: version id \| null}` |
-| `actor` | `{name}` (the writing actor's display name) |
+| `actor` | `{name}` (the writer's display name) |
 | `config` | `{add_statuses?, add_kinds?}` |
 
 ### Ticket object
@@ -634,17 +676,19 @@ Operation data:
  "tags": ["..."], "branches": [{"repo": "app", "name": "..."}],
  "mrs": [{"repo": "app", "url": "..."}],
  "archived": false, "tombstoned": false,
- "created": {"id": "<ULID>", "actor": "<ULID>", "ts": "..."},
+ "created": {"id": "<ULID>", "actor": "<ULID>", "identity": "agent" | null, "ts": "..."},
  "last_event": "<ULID>",
- "activity": {"id": "<ULID>", "actor": "<ULID>", "ts": "..."},
- "tag_since": {"example": {"id": "<ULID>", "actor": "<ULID>", "ts": "..."}},
+ "activity": {"id": "<ULID>", "actor": "<ULID>", "identity": "agent" | null, "ts": "..."},
+ "tag_since": {"example": {"id": "<ULID>", "actor": "<ULID>", "identity": "agent" | null, "ts": "..."}},
  "documents": {"description": {"current": "<version id>" | null, "blob": "<sha256>" | null,
-                               "versions": [{"id", "actor", "ts", "blob", "base", "lost"}]}},
- "comments": [{"id", "actor", "ts", "text", "blob", "link"}]}
+                               "versions": [{"id", "actor", "identity", "ts", "blob", "base", "lost"}]}},
+ "comments": [{"id", "actor", "identity", "ts", "text", "blob", "link"}]}
 ```
 
 - `short_id` is the shortest unique prefix of the id among all entities, at
   least 10 characters. `display` is the number when there is one.
+- `actor` is the writer's id; `identity` is the identity resolved as
+  described under Identities.
 - `priority` is an explicit native Org value: 0–64 means numeric cookies,
   65–90 means A–Z. Null means no cookie, not an explicit default. Effective
   priority uses `[priority].default` in `zwanenzang.toml`; `highest`, `lowest`
@@ -683,7 +727,8 @@ tombstoned endpoints, and contain no cross-tracker identities.
 
 ```json
 {"ticket": "<ULID>", "display": "...", "name": "description",
- "version": "<version id>", "blob": "<sha256>", "actor": "<ULID>", "ts": "...",
+ "version": "<version id>", "blob": "<sha256>", "actor": "<ULID>",
+ "identity": "agent" | null, "ts": "...",
  "text": "..."}
 ```
 
@@ -725,14 +770,15 @@ described in the design note on the static site, not part of this contract.
  "lost_documents": [{"entity", "name", "event", "actor", "base", "current"}],
  "dependency_cycles": [{"ticket", "to"}],
  "dangling_repos": [{"event", "entity", "op", "repo"}],
- "unnamed_actors": [{"actor", "events"}]}
+ "unnamed_actors": [{"actor", "events"}],
+ "unknown_identities": [{"event", "actor", "as", "op"}]}
 ```
 
 - `skipped`: lines replay did not apply, with the reason `code` (see below)
   and the line as found (a lossy rendering when the line is not valid
   UTF-8, which is skipped as `malformed`). `log` is the log file name without `.jsonl`,
   `line` is 1-based; `id` and `op` are `null` when they could not be read.
-- `concurrent`: two changes by different actors to the same field (`title`,
+- `concurrent`: two changes by different writers to the same field (`title`,
   `status`, `kind`, `priority`, `parent`) of one ticket where the later writer had not
   seen the earlier change, with different values. The later one won.
   Directed dependency add/remove disagreements on the same edge use field
@@ -747,7 +793,12 @@ described in the design note on the static site, not part of this contract.
   removing edges can clear it. A nonempty array makes lint exit 1.
 - `dangling_repos`: `branch` and `mr` events naming a repository alias that
   `zwanenzang.toml` does not declare.
-- `unnamed_actors`: actors with accepted events but no `actor` declaration.
+- `unnamed_actors`: writers with accepted events that resolve to no
+  identity: events without `as`, by a writer with no `actor` declaration.
+  `events` counts those events.
+- `unknown_identities`: accepted events whose `as` the tracker does not
+  accept (not in `actors`, or not in the name format when the key is
+  absent). Replay keeps them.
 
 ## Error codes
 
@@ -759,7 +810,9 @@ Command errors:
 | `already-initialized` | `init` in an existing tracker or anywhere inside one |
 | `branch-exists` | `init` target branch already on the remote, or created while the init ran |
 | `fetch-failed`, `push-failed` | `init` could not read the remote, or its initial push failed; the local tracker is kept and the message names the retry push command |
-| `config` | `zwanenzang.toml` or the actor id file is invalid, or `init` got a bad prefix or name |
+| `config` | `zwanenzang.toml` or the writer id in the clone's git configuration is invalid, or `init` got a bad prefix, name or `--actor-name` |
+| `actor-required` | a write that changes something names no identity: no `--actor-name` and no `zwanenzang.defaultActor` in the clone; nothing was written |
+| `unknown-actor` | `--actor-name` or `zwanenzang.defaultActor` names an identity the tracker does not accept; nothing was written |
 | `unknown-ticket`, `ambiguous-ticket` | a ticket reference did not resolve to one ticket |
 | `unknown-document` | `doc get` of a document the ticket does not have |
 | `missing-blob` | a blob to read is missing |
@@ -782,7 +835,7 @@ Rejections: returned as the error code when a write is refused, and as
 | `malformed` | the line is not a valid event envelope (replay only) |
 | `invalid-data` | the operation's data does not parse or is out of range |
 | `unknown-op` | an operation this build does not know (replay only) |
-| `actor-mismatch` | the event's actor is not the log it was found in (replay only) |
+| `actor-mismatch` | the event's writer (`actor`) is not the log it was found in (replay only) |
 | `duplicate-id` | different lines share one id (replay only) |
 | `id-not-after-parent` | the id does not sort after the event's parent |
 | `id-out-of-range` | the id's time is more than 1000 years after the newest id before it; such a line also does not count as seen |

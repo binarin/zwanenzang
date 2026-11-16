@@ -39,7 +39,9 @@ pub struct Cli {
     /// Use a durable clone of this exact origin URL instead of local discovery.
     #[arg(long, global = true, value_name = "URL", conflicts_with = "tracker")]
     pub tracker_url: Option<String>,
-    /// Display name declared on this actor's first write.
+    /// The identity this write is made as, one of the tracker's `actors`;
+    /// recorded on every event it writes. Defaults to the clone's
+    /// `zwanenzang.defaultActor`; a write with neither is refused.
     #[arg(long, global = true, value_name = "NAME")]
     pub actor_name: Option<String>,
     #[command(subcommand)]
@@ -256,8 +258,8 @@ pub enum AgentHooksCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ImportCommand {
-    /// Import the frozen ai-workflow tracker, written as a new actor named
-    /// "ai-workflow import". Tickets already imported are skipped.
+    /// Import the frozen ai-workflow tracker, written by a new writer as
+    /// identity "import". Tickets already imported are skipped.
     AiWorkflow {
         /// The tracker checkout (holding tickets/ and docs/), or its
         /// tickets/ directory. Only read.
@@ -468,6 +470,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     "branch": started.branch,
                 },
                 "actor": started.actor,
+                "identity": cli.actor_name,
                 "sync": started.report,
             }),
             0,
@@ -715,6 +718,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     "version": v.id,
                     "blob": v.blob,
                     "actor": v.actor,
+                    "identity": view.identity(v.actor, v.identity.as_deref()),
                     "ts": v.ts,
                     "text": text,
                 }),
@@ -829,7 +833,6 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             let mut opts = crate::import::Options {
                 source,
                 dry_run,
-                publisher_name: ctx.actor_name.clone(),
                 ..Default::default()
             };
             for entry in exclude {

@@ -658,7 +658,7 @@ fn concurrency_rule() {
     assert!(is_concurrent(&a, &c(21, ACTOR_B, None)));
     // B had seen A, or something after A.
     assert!(!is_concurrent(&a, &c(21, ACTOR_B, Some(20))));
-    // Same actor: never concurrent, even with a stale parent.
+    // Same writer: never concurrent, even with a stale parent.
     assert!(!is_concurrent(&a, &c(21, ACTOR_A, Some(10))));
 }
 
@@ -998,4 +998,119 @@ fn short_ids_grow_until_unique() {
     assert_eq!(s[&ids[0]].len(), 26);
     assert_eq!(s[&ids[2]].len(), 10);
     assert!(ids[0].to_canonical().starts_with(&s[&ids[0]]));
+}
+
+#[test]
+fn events_without_as_resolve_to_the_declared_name() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let mut tagged = ev(
+        u(20),
+        ACTOR_A,
+        Some(u(BASE_LAST)),
+        u(T1),
+        Op::Tag(TagData { tag: "x".into() }),
+    );
+    tagged.identity = Some("agent".into());
+    append_events(&t, &[tagged]);
+    let rp = load(&t);
+    assert!(rp.skipped.is_empty());
+    // A's old events carry no `as` and resolve to its declared name; its
+    // new one carries `as`.
+    let ticket = &rp.state.tickets[&u(T1)];
+    assert_eq!(ticket.created.identity, None);
+    assert_eq!(
+        rp.state.identity_of(ticket.created.actor, None).as_deref(),
+        Some("alice")
+    );
+    let view = View::new(&t, &rp);
+    let shown = view.ticket(ticket);
+    assert_eq!(shown["created"]["actor"], json!(ACTOR_A));
+    assert_eq!(shown["created"]["identity"], "alice");
+    assert_eq!(shown["activity"]["identity"], "agent");
+    assert_eq!(shown["tag_since"]["x"]["identity"], "agent");
+    // An undeclared writer's events without `as` resolve to nothing.
+    assert_eq!(rp.state.identity_of(ACTOR_B, None), None);
+    assert_eq!(
+        rp.state.identity_of(ACTOR_B, Some("agent")).as_deref(),
+        Some("agent")
+    );
+}
+
+#[test]
+fn writers_sharing_an_identity_are_still_concurrent() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    // Two clones of one identity, neither having seen the other's change.
+    let mut a = ev(u(20), ACTOR_A, Some(u(BASE_LAST)), u(T1), status("next"));
+    let mut b = ev(u(21), ACTOR_B, Some(u(BASE_LAST)), u(T1), status("wait"));
+    a.identity = Some("agent".into());
+    b.identity = Some("agent".into());
+    append_events(&t, &[a, b]);
+    let rp = load(&t);
+    assert_eq!(rp.state.concurrent.len(), 1);
+    assert_eq!(rp.state.concurrent[0].earlier, u(20));
+    assert_eq!(rp.state.concurrent[0].later, u(21));
+    let (report, issues) = lint(&t.config, &rp);
+    assert!(issues);
+    assert_eq!(report["concurrent"].as_array().unwrap().len(), 1);
+    // B never declared a name, but every event of it has an identity.
+    assert_eq!(report["unnamed_actors"], json!([]));
+}
+
+#[test]
+fn lint_reports_writers_without_identity_and_unknown_identities() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let mut listed = ev(
+        u(20),
+        ACTOR_B,
+        Some(u(BASE_LAST)),
+        u(T1),
+        Op::Tag(TagData { tag: "a".into() }),
+    );
+    listed.identity = Some("agent".into());
+    let bare = ev(
+        u(21),
+        ACTOR_B,
+        Some(u(20)),
+        u(T1),
+        Op::Tag(TagData { tag: "b".into() }),
+    );
+    let mut stranger = ev(
+        u(22),
+        ACTOR_B,
+        Some(u(21)),
+        u(T1),
+        Op::Tag(TagData { tag: "c".into() }),
+    );
+    stranger.identity = Some("stranger".into());
+    let mut imported = ev(
+        u(23),
+        ACTOR_B,
+        Some(u(22)),
+        u(T1),
+        Op::Tag(TagData { tag: "d".into() }),
+    );
+    imported.identity = Some("import".into());
+    append_events(&t, &[listed, bare, stranger, imported]);
+    let rp = load(&t);
+    // Lint reports the event; replay keeps it.
+    assert!(rp.skipped.is_empty());
+    assert!(rp.state.tickets[&u(T1)].tags.contains("c"));
+    let (report, issues) = lint(&t.config, &rp);
+    assert!(issues);
+    // Only the one event without `as` lacks an identity.
+    assert_eq!(
+        report["unnamed_actors"],
+        json!([{"actor": ACTOR_B, "events": 1}])
+    );
+    assert_eq!(
+        report["unknown_identities"],
+        json!([{"event": u(22), "actor": ACTOR_B, "as": "stranger", "op": "tag"}])
+    );
+    // Without an actors list, any name in the vocabulary format is known.
+    let mut open = t.config.clone();
+    open.actors = None;
+    assert_eq!(lint(&open, &rp).0["unknown_identities"], json!([]));
 }

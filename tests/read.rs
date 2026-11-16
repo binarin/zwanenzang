@@ -8,6 +8,17 @@ fn scope(p: &std::path::Path, request: Value) -> Value {
     ok_stdin(p, &["read"], &request.to_string())
 }
 
+/// The events of a read entry as written: without the resolved `identity`
+/// the read adds to each, after checking it matches `as`.
+fn written(events: &Value) -> Value {
+    let mut events = events.clone();
+    for e in events.as_array_mut().unwrap() {
+        let identity = e.as_object_mut().unwrap().remove("identity").unwrap();
+        assert_eq!(identity, e["as"]);
+    }
+    events
+}
+
 fn entry<'a>(v: &'a Value, id: &str) -> &'a Value {
     v["tickets"]
         .as_array()
@@ -45,7 +56,10 @@ fn scope_discovery_documents_and_incremental_history() {
     let b = id(&ok(p, &["create", "second"]));
     let changed = scope(p, request);
     assert_eq!(changed["tickets"].as_array().unwrap().len(), 2);
-    assert_eq!(entry(&changed, &a)["events"], json!([status["event"]]));
+    assert_eq!(
+        written(&entry(&changed, &a)["events"]),
+        json!([status["event"]])
+    );
     assert_eq!(entry(&changed, &b)["ticket"]["title"], "second");
 }
 
@@ -92,11 +106,11 @@ fn indirect_events_cover_old_and_new_parents_relations_and_tombstones() {
     let dead = ok(p, &["tombstone", &c]);
     let out = scope(p, request);
     assert_eq!(
-        entry(&out, &a)["events"],
+        written(&entry(&out, &a)["events"]),
         json!([moved["event"], related["event"], dead["event"]])
     );
     assert_eq!(
-        entry(&out, &b)["events"],
+        written(&entry(&out, &b)["events"]),
         json!([moved["event"], dead["event"]])
     );
     assert_eq!(entry(&out, &a)["ticket"]["children"], json!([]));
@@ -239,7 +253,10 @@ fn unarchive_is_in_history_and_brings_an_absent_ticket_back() {
     let first = scope(p, json!({"cursors": {&a: null}}));
     let cursor = entry(&first, &a)["cursor"].clone();
     assert_eq!(
-        entry(&first, &a)["events"].as_array().unwrap().last(),
+        written(&entry(&first, &a)["events"])
+            .as_array()
+            .unwrap()
+            .last(),
         Some(&archived["event"])
     );
     // Archived and absent from the scope: not discovered, even from the start.
@@ -251,7 +268,10 @@ fn unarchive_is_in_history_and_brings_an_absent_ticket_back() {
         p,
         json!({"cursors": {&a: cursor}, "since": first["cursor"]}),
     );
-    assert_eq!(entry(&known, &a)["events"], json!([revived["event"]]));
+    assert_eq!(
+        written(&entry(&known, &a)["events"]),
+        json!([revived["event"]])
+    );
     assert_eq!(entry(&known, &a)["ticket"]["archived"], false);
     let absent = scope(p, json!({"since": first["cursor"]}));
     assert_eq!(absent["tickets"].as_array().unwrap().len(), 1);

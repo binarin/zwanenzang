@@ -88,16 +88,28 @@ document bases; this convention does not add stronger read semantics.
 
 ## Actor identity
 
-An actor id is a ULID created on first use in a clone and stored in that
-clone's `.git/config` under `zwanenzang.actor`. It is per clone, so the same
-human on two machines is two actors, which is what makes per-actor logs safe
-without coordination. The display name is declared by an `actor` event and
-may be the same on both machines.
+Writers and identities are separate (see the
+[data model](01-data-model.md)). The **writer** id is a ULID created on the
+first write in a clone and stored in that clone's `.git/config` under
+`zwanenzang.actor`. It is per clone, so the same human on two machines is
+two writers, which is what makes per-writer logs safe without coordination
+and keeps concurrent edits from two machines reported.
 
-Identity lives only inside the clone, even when that clone is placed beneath
-the home directory. There is no separate user identity file. Shared clients on
-one execution host use the clone's one actor and display name; a session-specific
-`--actor-name` does not create a session identity.
+The **identity** is named on every write: `--actor-name NAME`, else the
+clone's `zwanenzang.defaultActor`, set by hand with `git config`. A write
+with neither is refused (`actor-required`), as is a name not in the
+tracker's `actors` list (`unknown-actor`); there is no `$USER` fallback,
+because agents on the human's host would otherwise write as the human.
+Dry runs and read-only commands need no identity, and neither does a
+`sync` with nothing to number. The identity is recorded as `as` on each
+event the write produces, so any clone can write as any identity: an agent
+session passes `--actor-name agent` in the human's clone, and the human's
+edits from that clone are the human's.
+
+Both live only inside the tracker and its clone, even when that clone is
+placed beneath the home directory. There is no separate user identity file:
+the list of identities is the tracker's configuration, and the default is
+the clone's.
 
 ## Remotes
 
@@ -114,7 +126,8 @@ One tracker is one repository and one compartment. The tool has no view that
 spans trackers and no state that outlives a clone:
 
 - derived state is computed per invocation from one clone
-- actor identity is in the clone
+- the writer id and default identity are in the clone; the identities a
+  tracker accepts are in its configuration
 - configuration is in the clone
 - the parent directory of stable clones holds no registry, identity, derived
   state or URL-to-path mapping file; its child names are computed from URLs
@@ -254,10 +267,14 @@ None at present.
 - **Concurrent inits.** The repository is created in a temporary directory
   and its `.git` renamed into place, since several `git init`s in one
   directory fail on each other; exactly one rename succeeds.
-- **Actor id** in the clone's local git configuration, `zwanenzang.actor`,
+- **Writer id** in the clone's local git configuration, `zwanenzang.actor`,
   created on the clone's first write. A fresh `git clone` therefore starts
-  as a new actor, which is what per-clone actors mean. The first write
-  also emits the `actor` event, named from `--actor-name` or `$USER`.
+  as a new writer, which is what per-clone writers mean. The first write
+  also emits the writer's `actor` event, naming that write's identity.
+- **Identities in `init`.** `init` writes `actors = [NAME, "agent"]` when
+  given `--actor-name NAME`, and `actors = ["agent"]` otherwise; the human
+  adds names by editing `zwanenzang.toml`. It does not set the clone's
+  `zwanenzang.defaultActor`.
 - **Lock.** One exclusive lock for the whole clone, `zwanenzang.lock` in
   the git directory, held across the write, the commit and the whole sync.
   This answers the lock-scope question: contention is a human and a few
@@ -268,8 +285,9 @@ None at present.
   the work tree, staged or not, are left alone; edits to `docs/` and to
   `zwanenzang.toml` are the human's to commit. A sync first commits any
   log lines an interrupted command appended but did not commit.
-- **Commit identity and message.** Author and committer are the actor:
-  its display name and `<actor id>@zwanenzang.invalid`, so a clone needs
+- **Commit identity and message.** Author and committer are the identity
+  of the write, else the writer's display name, else the writer id, with
+  `<writer id>@zwanenzang.invalid`, so a clone needs
   no git identity of its own and history shows who wrote what. Commits
   skip hooks and signing, since an agent cannot answer a passphrase prompt
   and the clone is the tool's. The message names the main operation and
@@ -298,8 +316,9 @@ None at present.
   branch yet is not an error; the push creates it.
 - **Numbering at publish.** After the fetch and rebase, every live ticket
   without a number gets the next one, in id order, from the highest number
-  in use plus one, written by this clone's actor and committed as
-  `publish ...`. The publishing clone numbers other actors' tickets too,
+  in use plus one, written by this clone's writer as the identity of the
+  write the sync follows (or of the `sync` command) and committed as
+  `publish ...`. The publishing clone numbers other writers' tickets too,
   such as an import's. Without an upstream this happens at once after
   every write.
 - **A push that does not land takes its numbers back.** If the push is

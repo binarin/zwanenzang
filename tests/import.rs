@@ -307,7 +307,16 @@ fn imports_every_frontmatter_shape() {
     )
     .unwrap();
     assert_eq!(first["op"], "actor");
-    assert_eq!(first["data"]["name"], "ai-workflow import");
+    assert_eq!(first["data"]["name"], "import");
+    // Every line of the run, and the numbers its sync published through the
+    // clone's own writer, carry the reserved identity.
+    assert_eq!(report["identity"], "import");
+    for (name, bytes) in logs(p) {
+        for line in String::from_utf8(bytes).unwrap().lines() {
+            let e: Value = serde_json::from_str(line).unwrap();
+            assert_eq!(e["as"], "import", "{name}: {line}");
+        }
+    }
 
     // Replay accepts every event and lint finds nothing.
     let lint = run_in(p, &["lint"], "");
@@ -329,6 +338,7 @@ fn dry_run_reports_and_writes_nothing() {
     let report = import(p, &fixture(), &["--exclude", "AIWF-0004", "--dry-run"]);
     assert_eq!(report["dry_run"], true);
     assert_eq!(report["actor"], Value::Null);
+    assert_eq!(report["identity"], Value::Null);
     assert_eq!(report["imported"].as_array().unwrap().len(), 8);
     assert!(
         report["imported"]
@@ -661,5 +671,36 @@ fn doc_patterns_leave_supporting_files_out() {
             "notes/x.md",
         ],
         "invalid-argument",
+    );
+}
+
+#[test]
+fn import_needs_no_actor_name_and_no_listed_identity() {
+    let d = target();
+    let p = d.path();
+    // The tracker lists only `tester` and `agent`; the run names neither.
+    let src = fixture();
+    let out = run_as(
+        p,
+        None,
+        &[
+            "import",
+            "ai-workflow",
+            src.to_str().unwrap(),
+            "--repo-alias",
+            "docs-site=site",
+        ],
+        "",
+        &[],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.json, out.stderr);
+    assert_eq!(out.json["identity"], "import");
+    assert_eq!(out.json["sync"]["numbered"].as_array().unwrap().len(), 9);
+    let lint = run_in(p, &["lint"], "");
+    assert_eq!(lint.code, 0, "{}", lint.json);
+    let t = &ok(p, &["list"])["tickets"][0];
+    assert_eq!(
+        ok(p, &["show", t["id"].as_str().unwrap()])["created"]["identity"],
+        "import"
     );
 }

@@ -280,6 +280,9 @@ impl Serialize for Op {
 pub struct RawEnvelope {
     pub id: Ulid,
     pub actor: Ulid,
+    /// The identity the event was written as: envelope field `as`.
+    #[serde(default, rename = "as")]
+    pub identity: Option<String>,
     #[serde(default)]
     pub parent: Option<Ulid>,
     pub ts: String,
@@ -297,7 +300,11 @@ impl RawEnvelope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     pub id: Ulid,
+    /// The writer: the clone's actor id, which names the log.
     pub actor: Ulid,
+    /// The named identity of the write, envelope field `as`. Absent in
+    /// events written before identities; see [`crate::state::State::identity_of`].
+    pub identity: Option<String>,
     pub parent: Option<Ulid>,
     pub ts: String,
     pub entity: Ulid,
@@ -308,6 +315,8 @@ pub struct Event {
 struct EnvelopeOut<'a> {
     id: Ulid,
     actor: Ulid,
+    #[serde(rename = "as", skip_serializing_if = "Option::is_none")]
+    identity: Option<&'a str>,
     parent: Option<Ulid>,
     ts: &'a str,
     entity: Ulid,
@@ -320,6 +329,7 @@ impl Serialize for Event {
         EnvelopeOut {
             id: self.id,
             actor: self.actor,
+            identity: self.identity.as_deref(),
             parent: self.parent,
             ts: &self.ts,
             entity: self.entity,
@@ -336,6 +346,7 @@ impl Event {
         Ok(Event {
             id: raw.id,
             actor: raw.actor,
+            identity: raw.identity,
             parent: raw.parent,
             ts: raw.ts,
             entity: raw.entity,
@@ -357,6 +368,7 @@ mod tests {
         Event {
             id: Ulid::from_parts(10, 1),
             actor: Ulid::from_parts(1, 1),
+            identity: None,
             parent: Some(Ulid::from_parts(9, 1)),
             ts: "2026-11-07T12:34:56Z".into(),
             entity: Ulid::from_parts(5, 1),
@@ -377,6 +389,20 @@ mod tests {
                 Ulid::from_parts(5, 1)
             )
         );
+    }
+
+    #[test]
+    fn identity_follows_the_actor_and_is_left_out_when_absent() {
+        let mut e = ev(Op::Status(TextTo { to: "doing".into() }));
+        assert!(!e.to_line().contains("\"as\""));
+        e.identity = Some("agent".into());
+        let line = e.to_line();
+        assert!(line.contains(&format!(
+            r#""actor":"{}","as":"agent","parent""#,
+            Ulid::from_parts(1, 1)
+        )));
+        let raw = RawEnvelope::parse(&line).unwrap();
+        assert_eq!(Event::from_raw(raw).unwrap(), e);
     }
 
     #[test]

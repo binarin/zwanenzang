@@ -53,7 +53,7 @@ pub fn new_tracker(dir: &tempfile::TempDir) -> Tracker {
         "ZZ",
         "main",
         &[],
-        None,
+        Some("tester"),
         &mut init_clock(),
     )
     .expect("init")
@@ -126,6 +126,7 @@ pub fn ev(id: Ulid, actor: Ulid, parent: Option<Ulid>, entity: Ulid, op: Op) -> 
     Event {
         id,
         actor,
+        identity: None,
         parent,
         ts: "2026-11-07T00:00:00Z".into(),
         entity,

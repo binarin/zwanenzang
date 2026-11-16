@@ -9,10 +9,9 @@ use crate::clock::{Clock, format_ts, leaps_too_far, next_id};
 use crate::error::{Error, Result};
 use crate::event::{ActorData, CreateData, Event, Op, TextTo};
 use crate::git::Repo;
-use crate::names::valid_actor_name;
 use crate::replay::{Replay, replay};
 use crate::state::{RejectCode, Rejection, apply};
-use crate::store::{Tracker, blob_name, lock_repo};
+use crate::store::{DEFAULT_ACTOR_KEY, Tracker, blob_name, lock_repo};
 use crate::sync::SyncReport;
 use crate::ulid::Ulid;
 
@@ -45,17 +44,15 @@ pub struct Plan {
 /// How [`Tracker::write_with`] writes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteOptions<'a> {
-    /// Display name for an actor that has not declared one yet; see
-    /// [`Tracker::write`].
+    /// The identity of the write, recorded as `as` on every event it
+    /// writes; see [`Tracker::write`].
     pub actor_name: Option<&'a str>,
-    /// Write as a new actor with a fresh id instead of this clone's actor.
-    /// The new actor declares `actor_name`, which is then required.
+    /// Write as a new writer with a fresh id instead of this clone's
+    /// writer. `actor_name` is then required.
     pub new_actor: bool,
-    /// Validate and build every event, but write nothing.
+    /// Validate and build every event, but write nothing. Needs no
+    /// identity.
     pub dry_run: bool,
-    /// Display name for this clone's actor when the sync after a
-    /// `new_actor` write numbers tickets; `actor_name` serves otherwise.
-    pub publisher_name: Option<&'a str>,
     /// The commit message, instead of one naming the main event.
     pub message: Option<&'a str>,
 }
@@ -64,6 +61,9 @@ pub struct WriteOptions<'a> {
 pub struct Written {
     /// Every line written, including an `actor` declaration.
     pub events: Vec<Event>,
+    /// The identity the events were written as; `None` only for a dry run
+    /// or a write of nothing that named none.
+    pub identity: Option<String>,
     /// Ids of the written events that came from the plan, in plan order;
     /// planned operations that changed nothing are absent.
     pub planned: Vec<Ulid>,
@@ -108,6 +108,11 @@ impl Tracker {
     /// Performs one mutating command. `plan` sees the replayed state and
     /// returns what to write. Either every planned event that changes state
     /// is written, or, if any is refused, nothing is.
+    ///
+    /// Every event carries the write's identity: `actor_name`, else the
+    /// clone's `zwanenzang.defaultActor`. A write that changes anything
+    /// with neither is refused, as is an identity the tracker does not
+    /// accept.
     pub fn write(
         &self,
         clock: &mut dyn Clock,
@@ -144,21 +149,16 @@ impl Tracker {
             Some(m) => m.to_string(),
             None => commit_message(self, &w),
         };
-        let name = w
-            .replay
-            .state
-            .actors
-            .get(&actor)
-            .and_then(|a| a.name.clone());
         let mut paths = vec![PathBuf::from("events"), PathBuf::from("blobs")];
         paths.extend(files);
-        repo.commit(&paths, &message, &crate::sync::identity(actor, name))?;
-        let publisher = if opts.new_actor {
-            opts.publisher_name
-        } else {
-            opts.actor_name
-        };
-        let report = self.sync_locked(&repo, clock, publisher)?;
+        repo.commit(
+            &paths,
+            &message,
+            &crate::sync::identity(actor, w.identity.clone()),
+        )?;
+        // Numbers the sync publishes are part of this write.
+        let identity = w.identity.clone();
+        let report = self.sync_locked(&repo, clock, identity.as_deref())?;
         w.replay = self.load()?;
         w.sync = Some(report);
         Ok(w)
@@ -175,6 +175,7 @@ impl Tracker {
         before_append: impl FnOnce(&[Event]) -> Result<Vec<PathBuf>>,
     ) -> Result<(Written, Vec<PathBuf>)> {
         let mut rp = self.load()?;
+        let identity = self.write_identity(repo, opts.actor_name)?;
         let actor = if opts.new_actor {
             if opts.actor_name.is_none() {
                 return Err(Error::InvalidArgument("a new actor needs a name".into()));
@@ -200,22 +201,15 @@ impl Tracker {
         // (operation, index in the plan, or None for the actor declaration)
         let mut ops: Vec<(Target, Op, Option<usize>)> = Vec::new();
         let declared = state.actors.get(&actor).is_some_and(|a| a.name.is_some());
-        if !declared && !plan.ops.is_empty() {
-            let name = match opts.actor_name {
-                Some(n) => {
-                    if !valid_actor_name(n) {
-                        return Err(Error::InvalidArgument(format!("invalid actor name {n:?}")));
-                    }
-                    n.to_string()
-                }
-                None => std::env::var("USER")
-                    .ok()
-                    .filter(|n| valid_actor_name(n))
-                    .unwrap_or_else(|| "unknown".to_string()),
-            };
+        // A writer's first write still declares a display name, its
+        // identity then, so builds that predate `as` show a name.
+        if !declared
+            && !plan.ops.is_empty()
+            && let Some(name) = &identity
+        {
             ops.push((
                 Target::Entity(state.root),
-                Op::Actor(ActorData { name }),
+                Op::Actor(ActorData { name: name.clone() }),
                 None,
             ));
         }
@@ -257,6 +251,7 @@ impl Tracker {
             let ev = Event {
                 id,
                 actor,
+                identity: identity.clone(),
                 parent: highest,
                 ts,
                 entity,
@@ -339,6 +334,7 @@ impl Tracker {
             // Nothing but a possible actor declaration: write nothing.
             let w = Written {
                 events: Vec::new(),
+                identity,
                 planned,
                 outcomes,
                 replay: rp,
@@ -352,12 +348,16 @@ impl Tracker {
             rp.highest_seen = highest;
             let w = Written {
                 events,
+                identity,
                 planned,
                 outcomes,
                 replay: rp,
                 sync: None,
             };
             return Ok((w, Vec::new()));
+        }
+        if identity.is_none() {
+            return Err(Error::ActorRequired);
         }
         let files = before_append(&events)?;
 
@@ -384,12 +384,38 @@ impl Tracker {
         rp.highest_seen = highest;
         let w = Written {
             events,
+            identity,
             planned,
             outcomes,
             replay: rp,
             sync: None,
         };
         Ok((w, files))
+    }
+
+    /// The identity a write names: `flag`, else the clone's
+    /// `zwanenzang.defaultActor`, refused unless the tracker accepts it.
+    /// `None` when neither is set.
+    fn write_identity(&self, repo: &Repo, flag: Option<&str>) -> Result<Option<String>> {
+        let (name, source) = match flag {
+            Some(n) => (n.to_string(), "--actor-name"),
+            None => match repo.config_get(DEFAULT_ACTOR_KEY)? {
+                Some(n) => (n.trim().to_string(), DEFAULT_ACTOR_KEY),
+                None => return Ok(None),
+            },
+        };
+        if self.config.accepts_identity(&name) {
+            return Ok(Some(name));
+        }
+        Err(Error::UnknownActor(match &self.config.actors {
+            Some(list) => format!(
+                "{source} {name:?} is not one of the actors in zwanenzang.toml: {}",
+                list.join(", ")
+            ),
+            None => format!(
+                "{source} {name:?} is not a valid actor name: use letters, digits, `_` and `-`"
+            ),
+        }))
     }
 }
 

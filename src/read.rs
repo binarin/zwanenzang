@@ -144,10 +144,19 @@ pub fn read(tracker: &Tracker, request: Request) -> Result<Value> {
                 documents.insert(name, tracker.get_blob(&v.blob)?);
             }
         }
+        // Each event as written, with its resolved identity added.
+        let shown: Vec<Value> = events[offset..]
+            .iter()
+            .map(|e| {
+                let mut v = json!(e);
+                v["identity"] = json!(view.identity(e.actor, e.identity.as_deref()));
+                v
+            })
+            .collect();
         tickets.push(json!({
             "ticket": view.ticket(t),
             "documents": documents,
-            "events": events[offset..],
+            "events": shown,
             "cursor": cursor(t.id, events),
             "reset": ticket_reset,
         }));
