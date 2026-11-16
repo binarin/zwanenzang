@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::clock::{Clock, format_ts, leaps_too_far, next_id};
+use crate::config::AGENT_IDENTITY;
 use crate::error::{Error, Result};
 use crate::event::{ActorData, CreateData, Event, Op, TextTo};
 use crate::git::Repo;
@@ -394,8 +395,9 @@ impl Tracker {
     }
 
     /// The identity a write names: `flag`, else the clone's
-    /// `zwanenzang.defaultActor`, refused unless the tracker accepts it.
-    /// `None` when neither is set.
+    /// `zwanenzang.defaultActor`, refused unless the tracker accepts it,
+    /// and refused whatever it is (apart from the importer's) when the
+    /// configuration has no `actors` list. `None` when neither is set.
     fn write_identity(&self, repo: &Repo, flag: Option<&str>) -> Result<Option<String>> {
         let (name, source) = match flag {
             Some(n) => (n.to_string(), "--actor-name"),
@@ -407,15 +409,24 @@ impl Tracker {
         if self.config.accepts_identity(&name) {
             return Ok(Some(name));
         }
-        Err(Error::UnknownActor(match &self.config.actors {
-            Some(list) => format!(
+        match &self.config.actors {
+            Some(list) => Err(Error::UnknownActor(format!(
                 "{source} {name:?} is not one of the actors in zwanenzang.toml: {}",
                 list.join(", ")
-            ),
-            None => format!(
-                "{source} {name:?} is not a valid actor name: use letters, digits, `_` and `-`"
-            ),
-        }))
+            ))),
+            None => {
+                let mut example = vec![name.as_str()];
+                if name != AGENT_IDENTITY {
+                    example.push(AGENT_IDENTITY);
+                }
+                Err(Error::ActorsNotConfigured(format!(
+                    "zwanenzang.toml has no `actors` list, so no write may name {source} \
+                     {name:?}: add the identities writes may use to its top-level table, \
+                     such as `actors = {example:?}`, and commit it \
+                     (scripts/assign-identities.py in the zwanenzang repository adds it)"
+                )))
+            }
+        }
     }
 }
 

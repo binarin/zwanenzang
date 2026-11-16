@@ -186,6 +186,12 @@ impl Tracker {
         clock: &mut dyn Clock,
         actor_name: Option<&str>,
     ) -> Result<Vec<Numbered>> {
+        // Nothing to number writes nothing, so it needs no accepted
+        // identity: a sync must still fetch a tracker's new `actors` list.
+        let unnumbered = |t: &crate::state::Ticket| !t.tombstoned && t.number.is_none();
+        if !self.load()?.state.tickets.values().any(unnumbered) {
+            return Ok(Vec::new());
+        }
         let opts = WriteOptions {
             actor_name,
             ..WriteOptions::default()
@@ -199,7 +205,7 @@ impl Tracker {
                 let mut next = rp.state.numbers.keys().max().map_or(1, |n| n + 1);
                 let mut plan = Plan::default();
                 for t in rp.state.tickets.values() {
-                    if t.tombstoned || t.number.is_some() {
+                    if !unnumbered(t) {
                         continue;
                     }
                     numbered.push(Numbered {

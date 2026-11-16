@@ -61,7 +61,7 @@ pub struct Config {
     #[serde(default)]
     pub kinds: Vec<String>,
     /// The identities writes may name with `--actor-name`. Without the key
-    /// any identity in the vocabulary format is accepted.
+    /// none is, apart from [`IMPORT_IDENTITY`]; old events still replay.
     #[serde(default)]
     pub actors: Option<Vec<String>>,
     #[serde(default)]
@@ -164,15 +164,15 @@ impl Config {
         Ok(())
     }
 
-    /// Whether a write may name identity `name`: one of `actors`, or any
-    /// name in the vocabulary format when the key is absent, and always
-    /// [`IMPORT_IDENTITY`].
+    /// Whether a write may name identity `name`: one of `actors`, and
+    /// always [`IMPORT_IDENTITY`]. Without the key only the importer's
+    /// identity is accepted.
     pub fn accepts_identity(&self, name: &str) -> bool {
         name == IMPORT_IDENTITY
-            || match &self.actors {
-                Some(list) => list.iter().any(|a| a == name),
-                None => valid_name(name),
-            }
+            || self
+                .actors
+                .as_ref()
+                .is_some_and(|list| list.iter().any(|a| a == name))
     }
 
     /// Whether new writes must not use status `s`.
@@ -287,14 +287,15 @@ mod tests {
         bad.actors = Some(vec!["has space".into()]);
         assert!(bad.validate().unwrap_err().contains("invalid actor"));
 
-        // An older configuration without the key accepts any name in the
-        // vocabulary format.
+        // An older configuration without the key still parses, but accepts
+        // no identity apart from the importer's.
         let old = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n\
                    statuses = [\"todo\"]\n";
         let old = Config::parse(old).unwrap();
         assert_eq!(old.actors, None);
-        assert!(old.accepts_identity("tester"));
-        assert!(!old.accepts_identity("has space"));
+        assert!(!old.accepts_identity("tester"));
+        assert!(!old.accepts_identity("agent"));
+        assert!(old.accepts_identity("import"));
         assert!(!old.to_toml().contains("actors ="));
     }
 

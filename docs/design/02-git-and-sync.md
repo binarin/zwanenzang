@@ -98,7 +98,9 @@ and keeps concurrent edits from two machines reported.
 The **identity** is named on every write: `--actor-name NAME`, else the
 clone's `zwanenzang.defaultActor`, set by hand with `git config`. A write
 with neither is refused (`actor-required`), as is a name not in the
-tracker's `actors` list (`unknown-actor`); there is no `$USER` fallback,
+tracker's `actors` list (`unknown-actor`), or any name but `import` when
+the configuration has no such list (`actors-not-configured`); there is no
+`$USER` fallback,
 because agents on the human's host would otherwise write as the human.
 Dry runs and read-only commands need no identity, and neither does a
 `sync` with nothing to number. The identity is recorded as `as` on each

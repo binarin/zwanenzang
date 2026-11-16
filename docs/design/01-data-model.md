@@ -71,10 +71,11 @@ unknown envelope field, so they still replay every event; they show each
 writer's display name instead of the identity.
 
 A tracker whose `zwanenzang.toml` has no `actors` key, one created before
-identities, accepts any identity in the vocabulary name format, so
-upgrading the build breaks no tracker; writes still have to name one.
-Adding the key restricts them. The identity `import` is reserved for the
-importer and accepted whatever the list says.
+identities, still replays every event, but accepts no identity for new
+writes: they are refused with `actors-not-configured`, whose message says
+to add the list. Upgrading the build therefore stops writes to such a
+tracker until its owner adds the key; the identity `import` is reserved
+for the importer and accepted whatever the list says.
 
 ## Ordering and replay
 

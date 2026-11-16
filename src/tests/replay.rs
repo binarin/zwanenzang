@@ -1109,8 +1109,15 @@ fn lint_reports_writers_without_identity_and_unknown_identities() {
         report["unknown_identities"],
         json!([{"event": u(22), "actor": ACTOR_B, "as": "stranger", "op": "tag"}])
     );
-    // Without an actors list, any name in the vocabulary format is known.
-    let mut open = t.config.clone();
-    open.actors = None;
-    assert_eq!(lint(&open, &rp).0["unknown_identities"], json!([]));
+    // Without an actors list only the importer's identity is known.
+    let mut unlisted = t.config.clone();
+    unlisted.actors = None;
+    let unknown = lint(&unlisted, &rp).0["unknown_identities"].clone();
+    let names: Vec<&str> = unknown
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["as"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["agent", "stranger"]);
 }

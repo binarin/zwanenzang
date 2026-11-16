@@ -770,16 +770,34 @@ fn dry_run_needs_no_identity() {
 }
 
 #[test]
-fn without_an_actors_list_any_name_in_the_vocabulary_format_is_accepted() {
+fn without_an_actors_list_only_the_importer_may_write() {
     let dir = disposable_dir();
     let mut t = based(&dir);
     t.config.actors = None;
     let mut c = FixedClock::new(1_000_000);
-    let w = write_as(&t, &mut c, Some("someone"), false, status("next")).unwrap();
-    assert_eq!(w.events[0].identity.as_deref(), Some("someone"));
-    let r = write_as(&t, &mut c, Some("two words"), false, status("done"));
-    assert_eq!(r.unwrap_err().code(), "unknown-actor");
-    // An identity is still required.
-    let r = write_as(&t, &mut c, None, false, status("done"));
-    assert_eq!(r.unwrap_err().code(), "actor-required");
+    let before = log_snapshot(&t);
+    let e = write_as(&t, &mut c, Some("someone"), false, status("next")).unwrap_err();
+    assert_eq!(e.code(), "actors-not-configured");
+    assert!(
+        e.to_string().contains(r#"`actors = ["someone", "agent"]`"#),
+        "{e}"
+    );
+    let e = write_as(&t, &mut c, Some("agent"), false, status("next")).unwrap_err();
+    assert!(e.to_string().contains(r#"`actors = ["agent"]`"#), "{e}");
+    // A dry run naming an identity is refused too, and so is the default.
+    let r = write_as(&t, &mut c, Some("someone"), true, status("next"));
+    assert_eq!(r.unwrap_err().code(), "actors-not-configured");
+    set_default_actor(&t, "agent");
+    let r = write_as(&t, &mut c, None, false, status("next"));
+    assert_eq!(r.unwrap_err().code(), "actors-not-configured");
+    assert_eq!(log_snapshot(&t), before);
+
+    // The importer's identity is exempt; its sync numbers every ticket.
+    write_as(&t, &mut c, Some("import"), false, status("next")).unwrap();
+    // A sync with nothing to number writes nothing, so it needs no
+    // accepted identity, from the flag or the clone default.
+    let after = log_snapshot(&t);
+    assert!(t.sync(&mut c, None).unwrap().numbered.is_empty());
+    assert!(t.sync(&mut c, Some("agent")).unwrap().numbered.is_empty());
+    assert_eq!(log_snapshot(&t), after);
 }

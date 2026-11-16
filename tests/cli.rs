@@ -1043,6 +1043,36 @@ fn identity_comes_from_the_flag_then_the_clone_default_else_refused() {
 }
 
 #[test]
+fn a_tracker_without_an_actors_list_refuses_named_writes() {
+    let d = tracker();
+    let p = d.path();
+    let config = read(p, "zwanenzang.toml");
+    let without: String = config
+        .lines()
+        .filter(|l| !l.starts_with("actors = "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_ne!(without, config);
+    std::fs::write(p.join("zwanenzang.toml"), without).unwrap();
+    let before = logs(p);
+    let refused = run_actor(p, Some("tester"), &["create", "nobody"]);
+    assert_eq!(refused.code, 1);
+    assert_eq!(refused.json["error"]["code"], "actors-not-configured");
+    assert!(
+        refused.json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(r#"actors = ["tester", "agent"]"#),
+        "{}",
+        refused.json
+    );
+    assert_eq!(logs(p), before);
+    // Reads, and a sync with nothing to number, still work.
+    assert_eq!(run_as(p, None, &["read"], "{}", &[]).code, 0);
+    assert_eq!(run_actor(p, Some("tester"), &["sync"]).code, 0);
+}
+
+#[test]
 fn outputs_show_the_identity_next_to_the_writer() {
     let d = tracker();
     let p = d.path();

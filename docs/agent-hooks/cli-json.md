@@ -43,8 +43,10 @@ accepted by `init --remote`, `--tracker-url` and the project-local
   sync publishes. Without it, the clone's `zwanenzang.defaultActor` local
   git configuration is used. A write that changes something with neither
   is refused with `actor-required`; a name the tracker does not accept is
-  refused with `unknown-actor`, even on a dry run. Read-only commands, dry
-  runs without the flag and a `sync` with nothing to number need none.
+  refused with `unknown-actor`, even on a dry run, and any name but
+  `import` on a tracker whose configuration has no `actors` list with
+  `actors-not-configured`. Read-only commands, dry runs without the flag
+  and a `sync` with nothing to number need none.
 
 The `git` binary must be on `PATH` (the nix package falls back to its own).
 The clone's writer id is `zwanenzang.actor` in its local git configuration;
@@ -63,8 +65,9 @@ actors = ["alice", "agent"]
 
 `init` writes the name given to it with `--actor-name`, if any, followed by
 `agent`. A configuration without the key, from a tracker created before
-identities, accepts any name in the vocabulary format. `import` is the
-importer's identity and is always accepted. Outputs resolve each event's
+identities, accepts none: its old events still replay, but a write naming
+an identity is refused with `actors-not-configured` until the key is
+added. `import` is the importer's identity and is always accepted. Outputs resolve each event's
 identity next to its writer, as `identity`: its `as`, or for an event
 written before identities its writer's declared display name, or `null`
 when the writer declared none.
@@ -813,6 +816,7 @@ Command errors:
 | `config` | `zwanenzang.toml` or the writer id in the clone's git configuration is invalid, or `init` got a bad prefix, name or `--actor-name` |
 | `actor-required` | a write that changes something names no identity: no `--actor-name` and no `zwanenzang.defaultActor` in the clone; nothing was written |
 | `unknown-actor` | `--actor-name` or `zwanenzang.defaultActor` names an identity the tracker does not accept; nothing was written |
+| `actors-not-configured` | `zwanenzang.toml` has no `actors` list, so no identity but `import` is accepted; add one, such as `actors = ["alice", "agent"]`, and commit it; nothing was written |
 | `unknown-ticket`, `ambiguous-ticket` | a ticket reference did not resolve to one ticket |
 | `unknown-document` | `doc get` of a document the ticket does not have |
 | `missing-blob` | a blob to read is missing |
