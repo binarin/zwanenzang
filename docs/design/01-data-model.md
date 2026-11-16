@@ -61,9 +61,12 @@ so their concurrent changes are still reported.
 
 An event's identity is its `as`; an event without `as`, written before
 identities, resolves to its writer's declared display name (the `actor`
-operation below), and to none when the writer never declared one. Old
-events are not rewritten by the tool; a tracker's owner can add `as` to
-its unpublished history by hand. Builds that predate `as` ignore it as an
+operation below), and to none when the writer never declared one. The
+tool never rewrites old events. `scripts/assign-identities.py` is a
+one-off for a tracker's owner to add `as` to every old event by hand
+(comments as `agent`, the rest as the human): a history rewrite, published
+with a forced push from one clone and followed by replacing every other
+clone, since a line's id must stay one byte sequence. Builds that predate `as` ignore it as an
 unknown envelope field, so they still replay every event; they show each
 writer's display name instead of the identity.
 
