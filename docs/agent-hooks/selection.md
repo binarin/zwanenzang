@@ -30,9 +30,12 @@ clone is persistent data, not a cache: leave it alone during workspace
 cleanup. Where it lives and how it is validated is in the "URL-selected
 storage" section of `zz agent-hooks show-document cli-json`.
 
-Pass a stable `--actor-name` on writes if desired. The actor belongs to the
-clone, not the session; its name defaults to `$USER` or `unknown` on the first
-write. Concurrent writes and syncs wait on the clone lock. Do not manually
+An agent passes `--actor-name` on every write, so that its writes can be told
+apart from the human's. Any name that says it is an agent will do, such as
+`agent`; do not spend effort choosing one. The actor belongs to the clone, not
+the session: the first write declares its name, which then cannot change, and
+later `--actor-name` values are ignored. Without one, the name defaults to
+`$USER` or `unknown`. Concurrent writes and syncs wait on the clone lock. Do not manually
 change git state or configuration while clients use it. Reads are unlocked:
 retry reads that overlap writes.
 

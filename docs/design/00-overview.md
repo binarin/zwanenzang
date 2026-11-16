@@ -38,7 +38,12 @@ owners. Process lives elsewhere.
 
 ## Non-goals
 
-- Development process: stages, reviews, approvals, merge authority.
+- Development process: stages, reviews, approvals, merge authority. The
+  tool enforces none. The bundled agent documents do state rules of use:
+  that agent writes carry an actor name, where prose belongs, what `depend`
+  and `relate` mean, and what the default statuses and the two workflow
+  tags mean. These are the same in every tracker that keeps the defaults;
+  anything beyond them is the project's.
 - Deadlines, capacity, estimation, boards with WIP limits.
 - Multi-user collaboration with untrusted participants. Actors are one person
   and their agents; signing and abuse resistance are not design drivers.

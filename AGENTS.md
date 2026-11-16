@@ -21,74 +21,15 @@ design decisions.
 
 This project's tracker is `zwanenzang-tracker` on the forge
 (`https://forgejo.lynx-lizard.ts.net/binarin/zwanenzang-tracker`). How to use
-it is in [docs/agent-hooks](docs/agent-hooks/overview.md), the same text
-`zz agent-hooks show-document overview` prints. An agent orchestrating a batch run
-of implementer and reviewer agents over its tickets follows
-`docs/batch-ticket-run.md` in that tracker repository.
+it, including statuses, workflow tags, the `brief` handoff and how to advance
+a ticket, is in [docs/agent-hooks](docs/agent-hooks/overview.md), the same
+text `zz agent-hooks show-document overview` prints; this project adds
+nothing to it. An agent orchestrating a batch run of implementer and
+reviewer agents over its tickets follows `docs/batch-ticket-run.md` in that
+tracker repository.
 
-For work on this project:
-
-- Work only on tickets tagged `ready_for_agent`, whatever their status. Only
-  the human adds or removes that tag; it stays through `agnt`, `wait` and
-  `revw`.
-- Use `agnt` while implementing or addressing review feedback.
-- Move the ticket to `revw` and tag it `needs_human` when its merge request is
-  ready for human review, and record the merge request link on the ticket.
-- When you need an answer from the human, use `wait` and tag `needs_human`.
-- Mark it `done` only after confirming the merge request was merged, or when
-  the human explicitly instructs you to do so. Implementation complete and
-  passing tests alone do not mean the ticket is done.
-
-These are conventions for agents working on this project, not rules enforced
-by zwanenzang or imposed on other projects using it.
-
-### Ticket-only requests and autonomy
-
-A request containing only a ticket reference means: refresh the tracker, read
-that ticket's documents and relevant history, and advance it to the next
-actionable step, not merely report its status. Explicit investigation-only,
-read-only or other limits in the current request still apply. This convention
-does not authorize merging, bypassing review, or starting other agents.
-
-- Use `agnt` while investigating as well as implementing. Read the current
-  implementation brief before treating historical comments as instructions.
-- Ask about unresolved decisions that materially affect scope, human-facing
-  behavior, compatibility or explicit project constraints. Do not invent
-  acceptance or silently override a restriction because it looks stale.
-- Choose ordinary implementation details within the agreed scope yourself;
-  record consequential choices and test them. An investigation need not
-  prescribe every technical detail before implementation can start.
-- When a human resolves a blocker, update the brief and continue with the
-  next authorized step without asking for another start signal. A `wait`
-  status is not by itself an instruction to remain idle: check its recorded
-  unblock condition. If uncertainty remains, ask one focused question with
-  a recommendation and explain what can proceed meanwhile.
-
-### Investigation handoff
-
-Maintain one agent-owned named Org document, `implementation-brief`, as the
-current handoff for investigated work. Do not rewrite the human-owned
-`description`. Research notes and comments may remain as evidence, but must
-not be the only place to discover the current decisions.
-
-Before handing off, and after consequential human answers, consolidate:
-
-- Goal, confirmed scope and explicit non-goals.
-- Confirmed decisions and acceptance criteria, including relevant tests.
-- Open human decisions, each with a recommendation and the precise condition
-  that unblocks work; state explicitly when none remain.
-- Technical choices delegated to implementation rather than awaiting approval.
-- Next action and authorization boundary: investigation only, implementation
-  authorized, or awaiting a named decision. Cite the human instruction that
-  establishes that boundary; the document cannot grant authority itself.
-- Which earlier proposals or restrictions are superseded, and why. Preserve
-  history without leaving obsolete "do not implement" statements ambiguous.
-
-Keep the brief concise and self-contained, linking detailed research instead
-of accumulating a chronological transcript. If blocked, record the blocker
-and unblock condition on the ticket. On resolution, update both the brief and
-status; follow the existing review/done rules for implementation work.
-Private ticket details and handoffs stay in the private tracker, never here.
+Private ticket details and handoffs stay in the private tracker, never in
+this repository.
 
 ## Nix flake
 
@@ -112,8 +53,10 @@ Private ticket details and handoffs stay in the private tracker, never here.
 ## Scope guard
 
 Tracking only. If a change would add process rules, stages, approvals,
-scheduling or reminders, it does not belong here; the design overview lists
-non-goals. The Emacs client is developed here, as the `zwanenzang` package
+scheduling or reminders to the tool, it does not belong here; the design
+overview lists non-goals. The bundled agent documents may state rules of use
+(actor names, where prose belongs, ticket links, the default statuses and
+workflow tags), which the tool does not enforce. The Emacs client is developed here, as the `zwanenzang` package
 in `emacs/` (Emacs 31+, built-in libraries plus the specifically accepted
 `org-ql` dependency and its required closure). Other direct external packages
 require individual human acceptance; this is not blanket permission.

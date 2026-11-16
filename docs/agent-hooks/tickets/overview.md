@@ -18,7 +18,13 @@ are in the clone's `zwanenzang.toml`.
   `doc get`.
 - `zz agent-hooks show-document tickets/writing`: changing tickets, and what a
   write reports.
-- `zz agent-hooks show-document tickets/prose`: comments and named documents.
+- `zz agent-hooks show-document tickets/prose`: comments and named documents,
+  and which of the two a text belongs in.
+- `zz agent-hooks show-document tickets/brief`: what the `brief` document
+  covers.
+- `zz agent-hooks show-document tickets/statuses`: what the default statuses
+  and workflow tags mean, when an agent changes them, and how it advances a
+  ticket.
 - `zz agent-hooks show-document tickets/numbers`: when a ticket gets its
   number.
 - `zz agent-hooks show-document tickets/conflicts`: when a write meets another
