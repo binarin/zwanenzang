@@ -21,65 +21,15 @@ design decisions.
 
 This project's tracker is `zwanenzang-tracker` on the forge
 (`https://forgejo.lynx-lizard.ts.net/binarin/zwanenzang-tracker`). How to use
-it is in [docs/agent-hooks](docs/agent-hooks/overview.md), the same text
-`zz agent-hooks show-document overview` prints. An agent orchestrating a batch run
-of implementer and reviewer agents over its tickets follows
-`docs/batch-ticket-run.md` in that tracker repository.
+it, including statuses, workflow tags, the `brief` handoff and how to advance
+a ticket, is in [docs/agent-hooks](docs/agent-hooks/overview.md), the same
+text `zz agent-hooks show-document overview` prints; this project adds
+nothing to it. An agent orchestrating a batch run of implementer and
+reviewer agents over its tickets follows `docs/batch-ticket-run.md` in that
+tracker repository.
 
-Statuses, the `ready_for_agent` and `needs_human` tags, and when an agent
-changes them follow `zz agent-hooks show-document tickets/statuses`; this
-project adds nothing to them. In particular, implementation complete and
-passing tests alone do not make a ticket `done`.
-
-### Ticket-only requests and autonomy
-
-In an interactive session, a request containing only a ticket reference means: refresh the tracker, read
-that ticket's documents and relevant history, and advance it to the next
-actionable step, not merely report its status. Explicit investigation-only,
-read-only or other limits in the current request still apply. This convention
-does not authorize merging, bypassing review, or starting other agents.
-
-- When working autonomously, `agnt` covers investigating as well as
-  implementing. Read the current `brief` before treating historical
-  comments as instructions.
-- Ask about unresolved decisions that materially affect scope, human-facing
-  behavior, compatibility or explicit project constraints. Do not invent
-  acceptance or silently override a restriction because it looks stale.
-- Choose ordinary implementation details within the agreed scope yourself;
-  record consequential choices and test them. An investigation need not
-  prescribe every technical detail before implementation can start.
-- When a human resolves a blocker, update the brief and continue with the
-  next authorized step without asking for another start signal. A `wait`
-  status is not by itself an instruction to remain idle: check its recorded
-  unblock condition. If uncertainty remains, ask one focused question with
-  a recommendation and explain what can proceed meanwhile.
-
-### Investigation handoff
-
-Maintain one agent-owned named Org document, `brief`, as the current handoff
-for investigated work (older tickets may hold it as `implementation-brief`).
-Do not rewrite the human-owned `description`. Research notes and comments may
-remain as evidence, but must not be the only place to discover the current
-decisions.
-
-Before handing off, and after consequential human answers, consolidate:
-
-- Goal, confirmed scope and explicit non-goals.
-- Confirmed decisions and acceptance criteria, including relevant tests.
-- Open human decisions, each with a recommendation and the precise condition
-  that unblocks work; state explicitly when none remain.
-- Technical choices delegated to implementation rather than awaiting approval.
-- Next action and authorization boundary: investigation only, implementation
-  authorized, or awaiting a named decision. Cite the human instruction that
-  establishes that boundary; the document cannot grant authority itself.
-- Which earlier proposals or restrictions are superseded, and why. Preserve
-  history without leaving obsolete "do not implement" statements ambiguous.
-
-Keep the brief concise and self-contained, linking detailed research instead
-of accumulating a chronological transcript. If blocked, record the blocker
-and unblock condition on the ticket. On resolution, update both the brief and
-status; follow the existing review/done rules for implementation work.
-Private ticket details and handoffs stay in the private tracker, never here.
+Private ticket details and handoffs stay in the private tracker, never in
+this repository.
 
 ## Nix flake
 

@@ -28,6 +28,28 @@ Two tags carry workflow; every other tag only classifies.
 An agent may add or remove classification tags. It adds and removes
 `needs_human` as described below, and never touches `ready_for_agent`.
 
+## Advancing a ticket
+
+A request that is only a ticket reference means: sync, read the ticket's
+documents and relevant history, and advance it to the next actionable step,
+not merely report its status. Limits stated in the request, such as
+investigation only or read only, still apply. Such a request does not
+authorize merging, bypassing review, or starting other agents.
+
+- Ask the human about unresolved decisions that materially affect scope,
+  human-facing behavior, compatibility or explicit project constraints. Do
+  not invent acceptance, and do not silently override a restriction because
+  it looks stale.
+- Choose ordinary implementation details within the agreed scope yourself;
+  record the consequential ones and test them. An investigation need not
+  settle every technical detail before implementation can start.
+- When the human resolves a blocker, update the brief and continue with the
+  next authorized step without waiting for another start signal. `wait` is
+  not by itself an instruction to stay idle: check its recorded unblock
+  condition.
+- If uncertainty remains, ask one focused question with a recommendation,
+  and say what can proceed meanwhile.
+
 ## Interactive and autonomous work
 
 The rules for `agnt` and `ready_for_agent` govern autonomous work only.

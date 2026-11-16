@@ -38,7 +38,9 @@ Use these document names, and avoid inventing others:
 - `summary`: a short, self-contained statement of the ticket, for readers
   who will not read further.
 - `brief`: the current state and plan: goal, scope, decisions, open
-  questions, next step. Readers look here first for what is current.
+  questions, next step. Readers look here first for what is current, before
+  treating older comments as instructions. What it covers is in
+  `zz agent-hooks show-document tickets/brief`.
 - `notes`: research, findings and evidence that support the brief.
 
 Another name is fine when none of these fit; announce it in a comment. An
