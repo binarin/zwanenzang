@@ -43,6 +43,14 @@
 Remote scopes use `zwanenzang' from the remote PATH instead."
   :type 'string)
 
+(defcustom zwanenzang-actor-name nil
+  "Identity the client writes as, passed to every CLI call as `--actor-name'.
+It must be one of the tracker's `actors'.  nil passes no name, so each
+tracker clone's `zwanenzang.defaultActor' git setting decides, and a
+clone without one refuses the client's writes."
+  :type '(choice (const :tag "The clone's default" nil)
+                 (string :tag "Identity")))
+
 (defcustom zwanenzang-org-files 'agenda
   "Org files scanned for scope roots by commands acting on every scope.
 The symbol `agenda' means the files of `org-agenda-files'."
@@ -84,9 +92,14 @@ signals `user-error'."
      (user-error "zwanenzang: cannot encode the request as JSON: %s"
                  (error-message-string err)))))
 
+(defun zwanenzang--global-args ()
+  "The global CLI options every call passes before its own arguments."
+  (and zwanenzang-actor-name (list "--actor-name" zwanenzang-actor-name)))
+
 (defun zwanenzang--run (directory args &optional input)
   "Run the CLI on the tracker at or above DIRECTORY with ARGS.
 Use `zwanenzang-program' locally, or remote `zwanenzang' through TRAMP.
+`zwanenzang-actor-name', when set, comes first, so ARGS can override it.
 INPUT, when non-nil, is encoded as JSON and given on stdin.  Return a
 plist with :exit (the exit status), :parsed (whether stdout is one JSON
 value), :json (that value) and :stderr.  This signals only when the
@@ -96,6 +109,7 @@ for `zwanenzang-call' to judge."
          (stdin (if input (zwanenzang--json-encode input) ""))
          (remote (file-remote-p default-directory))
          (program (if remote "zwanenzang" zwanenzang-program))
+         (args (append (zwanenzang--global-args) args))
          stderr-file stdin-file
          (coding-system-for-read 'utf-8)
          (coding-system-for-write 'utf-8))
@@ -1379,15 +1393,21 @@ nesting changed) or `conflict'."
   (unless (eq value :null) value))
 
 (defun zwanenzang--actor-name (pull actor)
-  "The display name of ACTOR in PULL's tracker, or its short id."
+  "The display name of writer ACTOR in PULL's tracker, or its short id."
   (or (alist-get (intern actor) (zwanenzang--pull-actors pull))
       (substring actor 0 (min 10 (length actor)))))
+
+(defun zwanenzang--author (pull record)
+  "Who wrote RECORD, a comment or document version, in PULL's tracker.
+Its resolved identity, else its writer's name or short id."
+  (or (zwanenzang--null (alist-get 'identity record))
+      (zwanenzang--actor-name pull (alist-get 'actor record))))
 
 (defun zwanenzang--comment-record (pull comment)
   "COMMENT as PULL renders it in the comments drawer: a header line, text, link."
   (let ((link (zwanenzang--null (alist-get 'link comment))))
     (concat (format "[%s] %s:\n" (alist-get 'ts comment)
-                    (zwanenzang--actor-name pull (alist-get 'actor comment)))
+                    (zwanenzang--author pull comment))
             (zwanenzang--comment-text (alist-get 'text comment))
             (and link
                  (concat (org-link-make-string
@@ -1429,7 +1449,7 @@ body, so it is not listed."
                      (format " %s %s"
                              (substring (alist-get 'ts version) 0
                                         (min 10 (length (alist-get 'ts version))))
-                             (zwanenzang--actor-name pull (alist-get 'actor version)))
+                             (zwanenzang--author pull version))
                    "")
                  "\n"))))
    (alist-get 'documents ticket) ""))
@@ -4228,9 +4248,9 @@ ACTOR is the author's display name.  Nil when the document has none."
     (when current
       (list current
             (if version
-                (zwanenzang--actor-name
+                (zwanenzang--author
                  (zwanenzang--pull-create :actors (alist-get 'actors (alist-get 'tracker read)))
-                 (alist-get 'actor version))
+                 version)
               "unknown")
             (or (alist-get name (alist-get 'documents entry)) "")))))
 
