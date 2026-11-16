@@ -23,7 +23,9 @@ org file on the desktop until milestone 3 makes it a synced scope.
   private and holds this project's own events.
 - Agent-facing documentation is done, moved out of milestone 5: the
   [agent hooks](../agent-hooks/overview.md) say how an agent uses a tracker
-  from a project, with no process rules attached. They ship inside the
+  from a project, including its rules of use (actor names, where prose
+  belongs, ticket links, the default statuses and workflow tags) but no
+  further process. They ship inside the
   executable rather than being copied into each project:
   `zz agent-hooks init` prints a bootstrap paragraph naming the selected
   tracker's prefix, for the project to paste into its own agent
@@ -36,8 +38,8 @@ org file on the desktop until milestone 3 makes it a synced scope.
   `.md`, and a directory's `overview.md` is named after the directory
   (`tickets/overview.md` is `tickets`). `build.rs` embeds the tree, so Cargo
   and Nix builds carry the same text. The JSON contract lives there too, as
-  `cli-json`, not copied. Project policy, workflow rules and agent-framework
-  formats such as skill files stay out of the bundle.
+  `cli-json`, not copied. Project policy beyond those rules of use, and
+  agent-framework formats such as skill files, stay out of the bundle.
 
 ## 1. Design notes and schema
 

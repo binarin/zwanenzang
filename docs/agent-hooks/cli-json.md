@@ -611,6 +611,7 @@ Operation data:
 | `priority` | `{to: integer \| null}`; native Org value |
 | `parent` | `{to: ticket id \| null}` |
 | `relate`, `unrelate` | `{to: ticket id}` |
+| `depend`, `undepend` | `{to: ticket id}`; the prerequisite |
 | `branch` | `{repo, name}` |
 | `mr` | `{repo, url}` |
 | `tag`, `untag` | `{tag}` |

@@ -1,5 +1,8 @@
 # Changing tickets
 
+An agent passes `--actor-name` on every write; see
+`zz agent-hooks show-document selection`.
+
 ```sh
 zz create "A title" --status todo --tag example
 zz status ZZ-42 agnt
@@ -19,6 +22,13 @@ letter codes 65–90 (A–Z). Batch `priority` takes a required nullable `to`.
 `depend T P` records T's prerequisite P; `--remove` removes it. Self-edges and
 local cycles are refused; cycles formed concurrently survive sync and are
 reported by `lint`. Dependencies never veto status changes.
+
+Use `depend` only when T cannot be finished without P. For any other
+connection between two tickets use `relate T U`, which has no direction.
+Record links with these commands rather than in comment text.
+
+When to change a status, and the two workflow tags, are in
+`zz agent-hooks show-document tickets/statuses`.
 
 ## What a write reports
 

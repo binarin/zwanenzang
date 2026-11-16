@@ -182,9 +182,16 @@ Four kinds of text, four rules:
 | Kind | Example | Storage | Writers |
 |------|---------|---------|---------|
 | Description | the ticket body the human writes | document `description` | human; agents read only |
-| Current summaries | overview, current status, roadmap | named documents | human and agents, compare-and-set |
-| Records | decisions, evidence summaries, review verdicts | comments | anyone, append-only |
-| Bulky material | plans, full reviews, research | files in `docs/`, linked | anyone, git-merged like any file |
+| Current summaries | brief, research notes (`summary`, `brief`, `notes`) | named documents | human and agents, compare-and-set |
+| Records | short deltas: a decision and what it supersedes, an outcome, a pointer | comments | anyone, append-only |
+| Bulky material | handoffs, research tied to code | files in a code repository, linked by a comment's `link` | that repository's owners |
+
+Structure, not instructions, decides between a comment and a document:
+sub-headings, tables, open questions or text that will be revised make it a
+document. The agent-facing form of these rules is `tickets/prose` in the
+[agent hooks](../agent-hooks/overview.md). The tracker's own `docs/`
+directory holds files `import` copied; agents have no committed way to add
+files there, so the rules above do not send new material to it.
 
 Whether `description` stays human-only or becomes co-edited is an open
 question; start human-only.
@@ -213,15 +220,19 @@ they store UTF-8 text and never parse or convert it.
   statuses" below).
   Status never says who may work on a ticket; two tags do:
   - `ready_for_agent`: standing permission, added and removed only by the
-    human. An agent may move a tagged ticket to `agnt`; the tag stays
-    through `agnt`, `wait` and `revw`. An agent never works on an untagged
-    ticket, whatever its status.
+    human, for an agent to pick the ticket up autonomously; the tag stays
+    through `agnt`, `wait` and `revw`. An interactive session the human is
+    directing needs no tag, and a human handing work over and leaving
+    grants it for that ticket.
   - `needs_human`: an agent waits on the human. `wait` with it is an
     agent's question, `wait` without it waits on something else. `revw`
     always also carries `needs_human`, so the attention queue and its
     waiting age need nothing status-specific.
-  These are conventions for the human and the agents; zwanenzang does not
-  enforce them.
+  `agnt` is set by whoever starts autonomous work, is a status and not a
+  lock, and does not request work. These are conventions for the human and
+  the agents; zwanenzang does not enforce them. Their agent-facing form,
+  the same for every tracker on the default vocabulary, is
+  `tickets/statuses` in the [agent hooks](../agent-hooks/overview.md).
   `create` records the initial status in its own data (`{title, status,
   kind?}`, status defaulting to the first vocabulary entry), so derived state
   never depends on the configuration file's current defaults. The default

@@ -26,32 +26,22 @@ it is in [docs/agent-hooks](docs/agent-hooks/overview.md), the same text
 of implementer and reviewer agents over its tickets follows
 `docs/batch-ticket-run.md` in that tracker repository.
 
-For work on this project:
-
-- Work only on tickets tagged `ready_for_agent`, whatever their status. Only
-  the human adds or removes that tag; it stays through `agnt`, `wait` and
-  `revw`.
-- Use `agnt` while implementing or addressing review feedback.
-- Move the ticket to `revw` and tag it `needs_human` when its merge request is
-  ready for human review, and record the merge request link on the ticket.
-- When you need an answer from the human, use `wait` and tag `needs_human`.
-- Mark it `done` only after confirming the merge request was merged, or when
-  the human explicitly instructs you to do so. Implementation complete and
-  passing tests alone do not mean the ticket is done.
-
-These are conventions for agents working on this project, not rules enforced
-by zwanenzang or imposed on other projects using it.
+Statuses, the `ready_for_agent` and `needs_human` tags, and when an agent
+changes them follow `zz agent-hooks show-document tickets/statuses`; this
+project adds nothing to them. In particular, implementation complete and
+passing tests alone do not make a ticket `done`.
 
 ### Ticket-only requests and autonomy
 
-A request containing only a ticket reference means: refresh the tracker, read
+In an interactive session, a request containing only a ticket reference means: refresh the tracker, read
 that ticket's documents and relevant history, and advance it to the next
 actionable step, not merely report its status. Explicit investigation-only,
 read-only or other limits in the current request still apply. This convention
 does not authorize merging, bypassing review, or starting other agents.
 
-- Use `agnt` while investigating as well as implementing. Read the current
-  implementation brief before treating historical comments as instructions.
+- When working autonomously, `agnt` covers investigating as well as
+  implementing. Read the current `brief` before treating historical
+  comments as instructions.
 - Ask about unresolved decisions that materially affect scope, human-facing
   behavior, compatibility or explicit project constraints. Do not invent
   acceptance or silently override a restriction because it looks stale.
@@ -66,10 +56,11 @@ does not authorize merging, bypassing review, or starting other agents.
 
 ### Investigation handoff
 
-Maintain one agent-owned named Org document, `implementation-brief`, as the
-current handoff for investigated work. Do not rewrite the human-owned
-`description`. Research notes and comments may remain as evidence, but must
-not be the only place to discover the current decisions.
+Maintain one agent-owned named Org document, `brief`, as the current handoff
+for investigated work (older tickets may hold it as `implementation-brief`).
+Do not rewrite the human-owned `description`. Research notes and comments may
+remain as evidence, but must not be the only place to discover the current
+decisions.
 
 Before handing off, and after consequential human answers, consolidate:
 
@@ -112,8 +103,10 @@ Private ticket details and handoffs stay in the private tracker, never here.
 ## Scope guard
 
 Tracking only. If a change would add process rules, stages, approvals,
-scheduling or reminders, it does not belong here; the design overview lists
-non-goals. The Emacs client is developed here, as the `zwanenzang` package
+scheduling or reminders to the tool, it does not belong here; the design
+overview lists non-goals. The bundled agent documents may state rules of use
+(actor names, where prose belongs, ticket links, the default statuses and
+workflow tags), which the tool does not enforce. The Emacs client is developed here, as the `zwanenzang` package
 in `emacs/` (Emacs 31+, built-in libraries plus the specifically accepted
 `org-ql` dependency and its required closure). Other direct external packages
 require individual human acceptance; this is not blanket permission.
