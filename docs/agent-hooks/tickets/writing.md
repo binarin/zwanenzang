@@ -1,15 +1,16 @@
 # Changing tickets
 
-An agent passes `--actor-name` on every write; see
+An agent passes `--actor-name agent` on every write; the tool refuses a write
+naming no identity or one the tracker does not list. See
 `zz agent-hooks show-document selection`.
 
 ```sh
-zz create "A title" --status todo --tag example
-zz status ZZ-42 agnt
-zz priority ZZ-42 65   # Native Org A
-zz priority ZZ-42 --clear
-zz mr ZZ-42 app https://forge.example/app/pulls/7
-zz depend ZZ-43 ZZ-42
+zz --actor-name agent create "A title" --status todo --tag example
+zz --actor-name agent status ZZ-42 agnt
+zz --actor-name agent priority ZZ-42 65   # Native Org A
+zz --actor-name agent priority ZZ-42 --clear
+zz --actor-name agent mr ZZ-42 app https://forge.example/app/pulls/7
+zz --actor-name agent depend ZZ-43 ZZ-42
 ```
 
 An unknown status or kind is refused, and so is a status the tracker retired

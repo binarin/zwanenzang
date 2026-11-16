@@ -30,14 +30,22 @@ clone is persistent data, not a cache: leave it alone during workspace
 cleanup. Where it lives and how it is validated is in the "URL-selected
 storage" section of `zz agent-hooks show-document cli-json`.
 
-An agent passes `--actor-name` on every write, so that its writes can be told
-apart from the human's. Any name that says it is an agent will do, such as
-`agent`; do not spend effort choosing one. The actor belongs to the clone, not
-the session: the first write declares its name, which then cannot change, and
-later `--actor-name` values are ignored. Without one, the name defaults to
-`$USER` or `unknown`. Concurrent writes and syncs wait on the clone lock. Do not manually
-change git state or configuration while clients use it. Reads are unlocked:
-retry reads that overlap writes.
+An agent passes `--actor-name agent` on every write, so that its writes can
+be told apart from the human's. The name is the identity of that one write,
+recorded on every event it produces; it is not tied to the clone or the
+session, and the human writes through the same clone under their own name.
+A tracker lists the identities it accepts and refuses any other name
+(`unknown-actor`); `agent` is always in the list `init` writes. Do not pick
+another name, and never write under the human's. A write without
+`--actor-name` falls back to the clone's configured default identity, which
+is normally the human's, or is refused (`actor-required`) when there is
+none; so do not leave the flag out. Reads need no name, and neither does a
+`sync` unless it has ticket numbers to publish; passing it there too is
+harmless.
+
+Concurrent writes and syncs wait on the clone lock. Do not manually change
+git state or configuration while clients use it. Reads are unlocked: retry
+reads that overlap writes.
 
 Git credentials must work non-interactively. After initial provisioning,
 offline writes remain local until a successful sync.

@@ -30,7 +30,7 @@ Read the ones the task needs:
 - `zz agent-hooks show-document tickets`: reading and changing tickets,
   comments and documents, statuses and workflow tags.
 
-Before any write, read `selection` for the mandatory `--actor-name`, and
+Before any write, read `selection` for the mandatory `--actor-name agent`, and
 `tickets/prose` before writing comments or documents.
 - `zz agent-hooks show-document cli-json`: the full JSON contract, with every
   command, field and error code.
