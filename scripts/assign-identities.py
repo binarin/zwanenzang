@@ -7,22 +7,32 @@ to their writer's declared name. This adds `as` to each such event in
 (by default `comment`), the human identity for everything else. It looks
 at nothing but the operation. Events that already have `as` are left as
 they are. The tracker configuration gets an `actors` list naming both
-identities when it has none.
+identities when it has none; without one the tool refuses new writes.
 
-The script refuses a dirty work tree and commits nothing: review the diff
-and commit it yourself.
+It changes files in the work tree only and commits nothing, so publishing
+the result is an ordinary commit and a normal push. It holds the clone's
+lock, the one the CLI takes for every write, from before it checks the
+work tree is clean until the files are written, so the CLI cannot append
+to this clone meanwhile. Other clones are not stopped by it: an event
+another clone appends to a log rewritten here, and pushes only afterwards,
+rebases without a conflict, but union merge then keeps both the old and
+the rewritten lines, and replay drops both as duplicate ids. So:
 
-Rewriting changes published lines, and a line's id must stay one byte
-sequence everywhere, so this is a history rewrite: publish it with a
-forced push from the one clone that ran it, after every other clone has
-pushed, and replace every other clone afterwards. A clone that keeps the
-old lines would merge both versions of each id, and replay would skip
-them all as duplicate ids. Clients' read cursors reset once.
+  1. Pause every writer, human and agent, until the migration is pushed,
+     and sync every clone so that none holds unpushed events.
+  2. Bring this checkout up to date with `zz sync`.
+  3. Run this script on it, then review `git diff`.
+  4. Commit the result and push it normally.
+  5. Other clones sync as usual; writers resume.
+  6. Run `zz lint` afterwards; its `skipped` list names any duplicate ids.
+
+Clients' read cursors reset once.
 
 Usage: assign-identities.py [options] TRACKER_DIR
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -31,7 +41,9 @@ import sys
 import tempfile
 
 CONFIG_FILE = "zwanenzang.toml"
-NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# The CLI's clone lock, `LOCK_FILE` in src/store.rs, in the git directory.
+LOCK_FILE = "zwanenzang.lock"
+NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # The envelope's writer, as the tool writes it: `"actor":"<ULID>"`.
 ACTOR_FIELD = re.compile(r'"actor"\s*:\s*"[0-9A-HJKMNP-TV-Z]{26}"')
 ACTORS_KEY = re.compile(r"^\s*actors\s*=")
@@ -52,9 +64,27 @@ def git(root, *args):
     return result.stdout
 
 
-def check_clean(root):
+def check_top(root):
     if git(root, "rev-parse", "--show-toplevel").strip() != os.path.realpath(root):
         fail(f"{root} is not the top of a git work tree")
+
+
+def lock_clone(root):
+    """Takes the clone lock as `lock_repo` in src/store.rs does: an
+    exclusive `flock` on the lock file in the git directory, created if
+    missing and never truncated, blocking until it is free. It is held
+    until the returned descriptor is closed or the process exits."""
+    path = os.path.join(git(root, "rev-parse", "--absolute-git-dir").strip(), LOCK_FILE)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o666)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"assign-identities: waiting for {path}", file=sys.stderr)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def check_clean(root):
     dirty = git(root, "status", "--porcelain", "--untracked-files=all")
     if dirty:
         fail(f"{root} has uncommitted changes; commit or remove them first:\n{dirty}")
@@ -109,6 +139,8 @@ def rewrite_log(path, human, agent, agent_ops, dry_run):
             line = raw.decode("utf-8")
             event = json.loads(line)
             op = event.get("op") if isinstance(event, dict) else None
+            if not isinstance(op, str):
+                raise ValueError(f"operation {op!r} is not a string")
             identity = agent if op in agent_ops else human
             new = with_identity(line, identity)
         except ValueError as e:
@@ -187,8 +219,9 @@ def config_with_actors(text, names):
 def main():
     parser = argparse.ArgumentParser(
         description="Add an `as` identity to every zwanenzang event lacking one.",
-        epilog="Commits nothing. Publishing the result is a history rewrite; "
-        "read this script's header first.",
+        epilog="Commits nothing. Pause every writer and push every clone first; "
+        "publish the result as an ordinary commit and push, then run `zz lint`. "
+        "The procedure is in this script's header.",
     )
     parser.add_argument("tracker", help="the tracker checkout (holding zwanenzang.toml)")
     parser.add_argument(
@@ -210,7 +243,7 @@ def main():
     args = parser.parse_args()
     agent_ops = set(args.agent_op or ["comment"])
     for name in (args.human, args.agent):
-        if not NAME.match(name):
+        if not NAME.fullmatch(name):
             fail(f"identity {name!r} must be 1-64 of A-Z a-z 0-9 _ -")
     if args.human == args.agent:
         fail("--human and --agent must differ")
@@ -219,6 +252,8 @@ def main():
     config_path = os.path.join(root, CONFIG_FILE)
     if not os.path.isfile(config_path):
         fail(f"no {CONFIG_FILE} in {root}")
+    check_top(root)
+    lock = lock_clone(root)
     check_clean(root)
 
     with open(config_path, encoding="utf-8") as f:
@@ -253,6 +288,7 @@ def main():
             pass
         if not args.dry_run:
             replace(config_path, new_config.encode("utf-8"))
+    os.close(lock)
 
     verb = "would add" if args.dry_run else "added"
     print(
@@ -263,7 +299,10 @@ def main():
     if actors is None:
         print(f"{verb} actors = [{args.human!r}, {args.agent!r}] to {CONFIG_FILE}")
     if not args.dry_run:
-        print("nothing is committed; review `git diff`, then commit and publish by hand")
+        print(
+            "nothing is committed; review `git diff`, commit it and push normally "
+            "while writers are still paused, then run `zz lint`"
+        )
 
 
 if __name__ == "__main__":

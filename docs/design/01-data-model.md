@@ -62,11 +62,7 @@ so their concurrent changes are still reported.
 An event's identity is its `as`; an event without `as`, written before
 identities, resolves to its writer's declared display name (the `actor`
 operation below), and to none when the writer never declared one. The
-tool never rewrites old events. `scripts/assign-identities.py` is a
-one-off for a tracker's owner to add `as` to every old event by hand
-(comments as `agent`, the rest as the human): a history rewrite, published
-with a forced push from one clone and followed by replacing every other
-clone, since a line's id must stay one byte sequence. Builds that predate `as` ignore it as an
+tool never rewrites old events. Builds that predate `as` ignore it as an
 unknown envelope field, so they still replay every event; they show each
 writer's display name instead of the identity.
 
@@ -76,6 +72,29 @@ writes: they are refused with `actors-not-configured`, whose message says
 to add the list. Upgrading the build therefore stops writes to such a
 tracker until its owner adds the key; the identity `import` is reserved
 for the importer and accepted whatever the list says.
+
+`scripts/assign-identities.py` is a one-off for a tracker's owner: it adds
+the `actors` list when there is none, and `as` to every old event
+(comments as `agent`, the rest as the human). It changes files in the
+work tree only, so publishing it is an ordinary commit and push, and
+other clones fetch and rebase onto it as usual. It holds the clone's lock
+while it reads and rewrites, so the CLI cannot append to that clone
+meanwhile, but nothing stops other clones. An event another clone appends
+to a log the migration rewrote, and pushes only after the migration, still
+rebases without a conflict, yet union merge then keeps both the old and
+the rewritten form of that log's lines, and replay drops both as duplicate
+ids. So:
+
+1. Pause every writer, human and agent, until the migration is pushed,
+   and sync every clone so that none holds unpushed events.
+2. Bring the clone that runs the migration up to date with `sync`.
+3. Run the script there, and review `git diff`.
+4. Commit the result as an ordinary commit and push it normally.
+5. Other clones sync as usual and writers resume.
+6. Run `lint` afterwards; its `skipped` list names any duplicate ids a
+   missed unpushed event caused.
+
+Clients' read cursors reset once, as the logs changed.
 
 ## Ordering and replay
 
