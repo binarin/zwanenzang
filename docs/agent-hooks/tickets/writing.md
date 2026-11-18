@@ -24,6 +24,16 @@ letter codes 65–90 (A–Z). Batch `priority` takes a required nullable `to`.
 local cycles are refused; cycles formed concurrently survive sync and are
 reported by `lint`. Dependencies never veto status changes.
 
+A ticket tagged `PROJ` is a project; its subtree (children, their children
+and so on) is its work. While any of them is unfinished (not `done` or
+`cncl`), every status change of the project is refused with
+`proj-hierarchy`; once all are, it may only become `done` or `cncl`.
+Reopening a finished project to an unfinished status is always allowed.
+This binds every writer. Finish the subtree first, or in the same `apply`.
+Tombstoned tickets do not count; archived ones count by their status.
+Reopening a child or adding one under a finished project is not refused,
+and `lint` reports it.
+
 Use `depend` only when T cannot be finished without P. For any other
 connection between two tickets use `relate T U`, which has no direction.
 Record links with these commands rather than in comment text.

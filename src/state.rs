@@ -56,6 +56,9 @@ pub enum RejectCode {
     ParentCycle,
     SelfRelation,
     DependencyCycle,
+    /// A status change on a `PROJ` ticket that its subtree does not allow.
+    /// Only ever a live-write error; see [`State::proj_refusal`].
+    ProjHierarchy,
     /// A document write whose base is not the current version. Only ever a
     /// live-write error; at replay such a version is kept and marked lost.
     StaleDocBase,
@@ -93,6 +96,7 @@ impl RejectCode {
             RejectCode::ParentCycle => "parent-cycle",
             RejectCode::SelfRelation => "self-relation",
             RejectCode::DependencyCycle => "dependency-cycle",
+            RejectCode::ProjHierarchy => "proj-hierarchy",
             RejectCode::StaleDocBase => "stale-doc-base",
             RejectCode::MissingBlob => "missing-blob",
             RejectCode::InvalidComment => "invalid-comment",
@@ -119,6 +123,17 @@ impl fmt::Display for Rejection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
     }
+}
+
+/// The tag that makes a ticket a project, whose status follows its
+/// subtree. Hard-coded: see `01-data-model.md`.
+pub const PROJ_TAG: &str = "PROJ";
+
+/// The statuses that count as finished for the `PROJ` rule.
+pub const FINISHED_STATUSES: [&str; 2] = ["done", "cncl"];
+
+pub fn is_finished(status: &str) -> bool {
+    FINISHED_STATUSES.contains(&status)
 }
 
 fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Rejection> {
@@ -439,6 +454,109 @@ impl State {
             }
         }
         false
+    }
+
+    /// The live tickets below `id`, its whole subtree. Tombstoned tickets
+    /// are left out but their children are not. Safe when merged history
+    /// left a parent cycle.
+    pub fn descendants(&self, id: Ulid) -> Vec<Ulid> {
+        let mut children: BTreeMap<Ulid, Vec<Ulid>> = BTreeMap::new();
+        for t in self.tickets.values() {
+            if let Some(p) = t.parent {
+                children.entry(p).or_default().push(t.id);
+            }
+        }
+        let mut seen = BTreeSet::from([id]);
+        let mut pending = vec![id];
+        let mut found = Vec::new();
+        while let Some(cur) = pending.pop() {
+            for c in children.get(&cur).into_iter().flatten() {
+                if seen.insert(*c) {
+                    pending.push(*c);
+                    if !self.tickets[c].tombstoned {
+                        found.push(*c);
+                    }
+                }
+            }
+        }
+        found.sort();
+        found
+    }
+
+    /// The live descendants of `id` whose status is not finished.
+    pub fn unfinished_descendants(&self, id: Ulid) -> Vec<Ulid> {
+        self.descendants(id)
+            .into_iter()
+            .filter(|d| !is_finished(&self.tickets[d].status))
+            .collect()
+    }
+
+    /// Why the `PROJ` rule refuses ticket `id` moving from status `from`
+    /// to its current status in this state, or `None` when it allows it.
+    /// `display` names tickets in the message.
+    ///
+    /// A `PROJ` ticket may not change status while a descendant is
+    /// unfinished, and then only to `done` or `cncl`. Reopening, from
+    /// `done` or `cncl` to an unfinished status, is always allowed, also
+    /// with unfinished descendants left behind. The rule looks at
+    /// the state after a whole write, so a write may finish the subtree
+    /// and the project in any order.
+    pub fn proj_refusal(
+        &self,
+        id: Ulid,
+        from: &str,
+        display: impl Fn(Ulid) -> String,
+    ) -> Option<Rejection> {
+        let t = self.tickets.get(&id)?;
+        if t.tombstoned
+            || !t.tags.contains(PROJ_TAG)
+            || t.status == from
+            || (is_finished(from) && !is_finished(&t.status))
+        {
+            return None;
+        }
+        let open = self.unfinished_descendants(id);
+        let message = if !open.is_empty() {
+            format!(
+                "{} is tagged {PROJ_TAG} and has unfinished descendants ({}); \
+                 its status cannot change until they are {}",
+                display(id),
+                open.iter()
+                    .map(|d| display(*d))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                FINISHED_STATUSES.join(" or "),
+            )
+        } else if !is_finished(&t.status) {
+            format!(
+                "{} is tagged {PROJ_TAG} and its descendants are finished; \
+                 its status can only become {}, not {:?}",
+                display(id),
+                FINISHED_STATUSES.join(" or "),
+                t.status,
+            )
+        } else {
+            return None;
+        };
+        Some(Rejection {
+            code: RejectCode::ProjHierarchy,
+            message,
+        })
+    }
+
+    /// Finished `PROJ` tickets with unfinished live descendants, for lint:
+    /// what concurrent writes, re-parenting, new children or reopened
+    /// children leave behind, none of which the live rule refuses.
+    pub fn proj_open_descendants(&self) -> Vec<Value> {
+        self.tickets
+            .values()
+            .filter(|t| !t.tombstoned && t.tags.contains(PROJ_TAG) && is_finished(&t.status))
+            .filter_map(|t| {
+                let open = self.unfinished_descendants(t.id);
+                (!open.is_empty())
+                    .then(|| json!({"ticket": t.id, "status": t.status, "unfinished": open}))
+            })
+            .collect()
     }
 
     /// Every edge participating in a current cycle, including tombstoned tickets.

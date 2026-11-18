@@ -126,6 +126,39 @@ fn concurrent_dependencies_preserve_and_diagnose_cycles() {
 }
 
 #[test]
+fn concurrent_writes_past_the_proj_rule_are_kept_and_diagnosed() {
+    let net = Net::new();
+    let a = net.path("a");
+    let proj = id(&ok(&a, &["create", "Project", "--tag", "PROJ"]));
+    let child = id(&ok(
+        &a,
+        &["create", "Child", "--parent", &proj, "--status", "done"],
+    ));
+    let b = net.clone_as("b");
+    net.offline(&a, true);
+    net.offline(&b, true);
+    // Each write is allowed where it is made.
+    ok(&a, &["status", &proj, "done"]);
+    ok(&b, &["status", &child, "next"]);
+    net.offline(&a, false);
+    net.offline(&b, false);
+    ok(&a, &["sync"]);
+    ok(&b, &["sync"]);
+    ok(&a, &["sync"]);
+    assert_eq!(tickets(&a), tickets(&b));
+    assert_eq!(ok(&a, &["show", &proj])["status"], "done");
+    let lint = run_in(&a, &["lint"], "");
+    assert_eq!(lint.code, 1);
+    assert_eq!(lint.json["skipped"], json!([]));
+    assert_eq!(
+        lint.json["proj_open_descendants"],
+        json!([{"ticket": proj, "status": "done", "unfinished": [child]}])
+    );
+    ok(&b, &["status", &child, "done"]);
+    assert_eq!(run_in(&b, &["lint"], "").code, 0);
+}
+
+#[test]
 fn clones_share_one_numbering() {
     let net = Net::new();
     let a = net.path("a");

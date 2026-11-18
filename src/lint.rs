@@ -43,7 +43,9 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         })
         .collect();
     let dependency_cycles = rp.state.dependency_cycles();
+    let proj_open = rp.state.proj_open_descendants();
     let issues = !dependency_cycles.is_empty()
+        || !proj_open.is_empty()
         || !rp.skipped.is_empty()
         || !rp.state.concurrent.is_empty()
         || !rp.state.lost_docs.is_empty()
@@ -57,6 +59,7 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         "concurrent": rp.state.concurrent,
         "lost_documents": rp.state.lost_docs,
         "dependency_cycles": dependency_cycles,
+        "proj_open_descendants": proj_open,
         "dangling_repos": dangling,
         "unnamed_actors": unnamed,
         "unknown_identities": unknown_identities,

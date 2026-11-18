@@ -3307,6 +3307,122 @@ Unless something blocks it, which is reported.  MAP and TARGETS are as in
              (if (equal name "description") name (format "document %s" name))))
     (op op)))
 
+;; The CLI refuses a status change on a ticket tagged PROJ unless its whole
+;; subtree is finished after the write, and then accepts only done or
+;; cncl.  A refusal would refuse the whole push, so the plan leaves out
+;; such status changes and reports them, as it does for blocked headings.
+
+(defconst zwanenzang-proj-tag "PROJ"
+  "The tag that makes a ticket a project: see `zwanenzang--plan-proj'.")
+
+(defconst zwanenzang--finished-statuses '("done" "cncl")
+  "The tracker statuses that finish a ticket for the PROJ rule.")
+
+(defun zwanenzang--plan-key (ref)
+  "A hash key for REF, a ticket id or a reference to a created ticket."
+  (if (stringp ref) ref (format "#%d" (alist-get 'created ref))))
+
+(defun zwanenzang--plan-tracker-after (plan entries known)
+  "What PLAN leaves of the tracker: a hash of keys to (STATUS PARENT TAGS DEAD).
+ENTRIES are the push's read, newer than KNOWN, the summaries of every
+ticket.  Created tickets have `zwanenzang--plan-key' keys."
+  (let ((after (make-hash-table :test #'equal)))
+    (cl-flet ((put (ticket)
+                (puthash (alist-get 'id ticket)
+                         (list (alist-get 'status ticket)
+                               (zwanenzang--null (alist-get 'parent ticket))
+                               (append (alist-get 'tags ticket) nil)
+                               (eq (alist-get 'tombstoned ticket) t))
+                         after)))
+      (when known (maphash (lambda (_id summary) (put summary)) known))
+      (dolist (entry entries) (put (alist-get 'ticket entry))))
+    (let ((index 0))
+      (dolist (change (reverse (zwanenzang--plan-changes plan)))
+        (let* ((op (alist-get 'op change))
+               (data (alist-get 'data change))
+               (key (if (equal op "create") (format "#%d" index)
+                      (zwanenzang--plan-key (alist-get 'ticket change))))
+               (state (or (gethash key after) (list nil nil nil nil))))
+          (pcase op
+            ("create" (setq state (list (alist-get 'status data) nil nil nil)))
+            ("status" (setf (nth 0 state) (alist-get 'to data)))
+            ("parent" (let ((to (alist-get 'to data)))
+                        (setf (nth 1 state) (and to (not (eq to :null))
+                                                 (zwanenzang--plan-key to)))))
+            ("tag" (cl-pushnew (alist-get 'tag data) (nth 2 state) :test #'equal))
+            ("untag" (setf (nth 2 state) (remove (alist-get 'tag data) (nth 2 state)))))
+          (puthash key state after))
+        (cl-incf index)))
+    after))
+
+(defun zwanenzang--plan-proj-unfinished (after key)
+  "The live descendants of KEY in AFTER, as from `zwanenzang--plan-tracker-after',
+whose status is not finished.  Tombstoned tickets are passed through."
+  (let ((children (make-hash-table :test #'equal))
+        (seen (list key)) (pending (list key)) open)
+    (maphash (lambda (k state)
+               (when (nth 1 state) (push k (gethash (nth 1 state) children))))
+             after)
+    (while pending
+      (dolist (child (gethash (pop pending) children))
+        (unless (member child seen)
+          (push child seen)
+          (push child pending)
+          (let ((state (gethash child after)))
+            (unless (or (nth 3 state)
+                        (member (nth 0 state) zwanenzang--finished-statuses))
+              (push child open))))))
+    open))
+
+(defun zwanenzang--plan-proj (plan entries known)
+  "Leave out of PLAN the status changes the PROJ rule would refuse.
+ENTRIES and KNOWN are as in `zwanenzang--plan-push'.  Each one left out
+gets a report line; leaving one out can make another refused, so this
+repeats until none is.  Creates are left to the CLI."
+  (let ((before (make-hash-table :test #'equal))
+        (label (lambda (key)
+                 (let ((summary (or (and known (gethash key known))
+                                    (alist-get 'ticket
+                                               (seq-find (lambda (e) (equal key (alist-get 'id (alist-get 'ticket e))))
+                                                         entries)))))
+                   (if summary (alist-get 'display summary) "a new ticket"))))
+        refused)
+    (maphash (lambda (key state) (puthash key (nth 0 state) before))
+             (zwanenzang--plan-tracker-after (zwanenzang--plan-create) entries known))
+    (while
+        (let ((after (zwanenzang--plan-tracker-after plan entries known)))
+          (setq refused nil)
+          (maphash
+           (lambda (key state)
+             (when (and (not refused)
+                        (gethash key before)
+                        (not (nth 3 state))
+                        (member zwanenzang-proj-tag (nth 2 state))
+                        (not (equal (nth 0 state) (gethash key before)))
+                        ;; Reopening a finished project is always allowed.
+                        (not (and (member (gethash key before) zwanenzang--finished-statuses)
+                                  (not (member (nth 0 state)
+                                               zwanenzang--finished-statuses)))))
+               (let ((open (zwanenzang--plan-proj-unfinished after key)))
+                 (when (or open (not (member (nth 0 state) zwanenzang--finished-statuses)))
+                   (setq refused
+                         (list key
+                               (if open
+                                   (format "has unfinished descendants %s"
+                                           (string-join (sort (mapcar label open) #'string<) ", "))
+                                 "may only become done or cncl now")))))))
+           after)
+          refused)
+      (let ((key (car refused)))
+        (setf (zwanenzang--plan-changes plan)
+              (seq-remove (lambda (c) (and (equal (alist-get 'op c) "status")
+                                           (equal (alist-get 'ticket c) key)))
+                          (zwanenzang--plan-changes plan)))
+        (zwanenzang--plan-line plan "%s: status not pushed: tagged %s, it %s"
+                               (let ((summary (and known (gethash key known))))
+                                 (if summary (zwanenzang--label summary) (funcall label key)))
+                               zwanenzang-proj-tag (cadr refused))))))
+
 (defun zwanenzang--plan-push (headings blocked entries map &optional known)
   "The plan of one push, comparing Org with a read; the buffer is not changed.
 HEADINGS is from `zwanenzang--scan-all', BLOCKED from
@@ -3347,6 +3463,7 @@ tracker ids to summaries for resolving dependency numbers."
             (zwanenzang--plan-line plan "%s: not pushed: the heading has no title" id))
            (t
             (zwanenzang--plan-fields plan h id entry map targets known))))))
+    (zwanenzang--plan-proj plan entries known)
     ;; Remove old edges before adding replacements, avoiding transient cycles.
     ;; Creates remain first and in order: their change-index references stay valid.
     (setf (zwanenzang--plan-changes plan)

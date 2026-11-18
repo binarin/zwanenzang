@@ -331,6 +331,22 @@ impl Tracker {
             }
             events.push(ev);
         }
+        // The PROJ rule judges the whole write, not each event: Org pushes
+        // a parent's change before its children's.
+        let display = |id: Ulid| match state.tickets.get(&id).and_then(|t| t.number) {
+            Some(n) => format!("{}-{n}", self.config.prefix),
+            None => id.to_string()[..10].to_string(),
+        };
+        for t in state.tickets.values() {
+            let from = match rp.state.tickets.get(&t.id) {
+                Some(before) => before.status.as_str(),
+                // A new ticket starts from the default status.
+                None => state.statuses[0].as_str(),
+            };
+            if let Some(r) = state.proj_refusal(t.id, from, display) {
+                return Err(Error::Rejected(r));
+            }
+        }
         if planned.is_empty() {
             // Nothing but a possible actor declaration: write nothing.
             let w = Written {

@@ -936,6 +936,17 @@ does.
   its note there too. A tracker id mismatch skips the whole scope. Headings
   tagged `zz_conflict` for field conflicts are pushed like any other, and
   the final pull clears their tag and drawer once the fields agree.
+- A status change the CLI's `PROJ` rule would refuse (data model,
+  Projects) is left out of the batch and reported, `ZZ-1 Title: status not
+  pushed: tagged PROJ, it has unfinished descendants ZZ-3`, so it does not
+  refuse the rest of the scope. Push judges it as the CLI does, on the
+  tracker after the whole batch: its read, `list --all` and the batch's own
+  statuses, parents and tags, repeating while one left out makes another
+  refused. Org keeps the keyword; the pull ending the push writes no note,
+  and the next push tries again. This is the one exception to "the
+  human's push goes through". A new heading the rule refuses, and a comment
+  send or archive whose status change it refuses, are refused by the CLI
+  with `proj-hierarchy` as a whole, nothing lost.
 - A new heading that cannot be created (unmapped keyword, no title, a
   blocked ticket heading above it) is only reported; it is not a ticket, so
   no note is written on it. A ticket moved under a blocked heading keeps
