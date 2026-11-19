@@ -2,8 +2,10 @@
 
 What the default statuses and the two workflow tags mean, and when an agent
 changes them. The CLI enforces none of this: any status may follow any other,
-and dependencies never veto a change. A tracker may configure other statuses
-in its `zwanenzang.toml`; then the project's instructions say what they mean.
+and dependencies never veto a change. The one exception is a ticket tagged
+`PROJ`, a project: see `zz agent-hooks show-document tickets/writing`. A
+tracker may configure other statuses in its `zwanenzang.toml`; then the
+project's instructions say what they mean.
 
 ## Statuses
 

@@ -26,7 +26,9 @@ owners. Process lives elsewhere.
 1. **Trusted metadata first, flexibility second.** The derived state of a
    tracker is always consistent and always explainable from its history.
 2. **The human may override anything.** A direct jump from todo to done is
-   allowed; the history records it truthfully.
+   allowed; the history records it truthfully. The one status rule the
+   tool enforces, for every actor, is that a ticket tagged `PROJ` finishes
+   only after its subtree (see [data model](01-data-model.md)).
 3. **Org is the human's authority.** The Emacs side never loses a human edit
    to a machine edit. Conflicts are shown, not resolved silently.
 4. **Append only, merge never.** Git replicates the log; it does not merge
@@ -39,7 +41,7 @@ owners. Process lives elsewhere.
 ## Non-goals
 
 - Development process: stages, reviews, approvals, merge authority. The
-  tool enforces none. The bundled agent documents do state rules of use:
+  tool enforces none, apart from the `PROJ` rule above. The bundled agent documents do state rules of use:
   that agents write as the `agent` identity, where prose belongs, what `depend`
   and `relate` mean, and what the default statuses and the two workflow
   tags mean. These are the same in every tracker that keeps the defaults;

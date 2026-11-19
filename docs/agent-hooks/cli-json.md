@@ -772,6 +772,7 @@ described in the design note on the static site, not part of this contract.
  "concurrent": [{"entity", "field", "earlier", "earlier_value", "later", "later_value", "won"}],
  "lost_documents": [{"entity", "name", "event", "actor", "base", "current"}],
  "dependency_cycles": [{"ticket", "to"}],
+ "proj_open_descendants": [{"ticket", "status", "unfinished"}],
  "dangling_repos": [{"event", "entity", "op", "repo"}],
  "unnamed_actors": [{"actor", "events"}],
  "unknown_identities": [{"event", "actor", "as", "op"}]}
@@ -794,6 +795,11 @@ described in the design note on the static site, not part of this contract.
   sorted by dependent (`ticket`) then prerequisite (`to`). Tombstoned endpoints
   are included. This is a current-graph diagnostic, not skipped history;
   removing edges can clear it. A nonempty array makes lint exit 1.
+- `proj_open_descendants`: every live ticket tagged `PROJ` whose status is
+  `done` or `cncl` while live descendants are not, with those descendants'
+  ids in `unfinished`, sorted. Writes that reopen or add a child, re-parent,
+  or race through sync leave this behind; the live rule does not refuse
+  them; reopening the project clears it. A nonempty array makes lint exit 1.
 - `dangling_repos`: `branch` and `mr` events naming a repository alias that
   `zwanenzang.toml` does not declare.
 - `unnamed_actors`: writers with accepted events that resolve to no
@@ -854,6 +860,7 @@ Rejections: returned as the error code when a write is refused, and as
 | `unknown-target`, `target-tombstoned` | a parent, relation or dependency target is missing or tombstoned |
 | `parent-cycle`, `self-relation` | the parent chain would loop, or a ticket relates to itself |
 | `dependency-cycle` | a dependency self-edge (write/replay), or an added edge would close a cycle (write only) |
+| `proj-hierarchy` | `create`, `status` or `apply` would change the status of a ticket tagged `PROJ` while a live descendant is unfinished, or to anything but `done` or `cncl` once none is; reopening from `done` or `cncl` to an unfinished status is always accepted; judged on the state after the whole write (write only) |
 | `stale-doc-base` | `doc set` with a base that is not the current version (write only) |
 | `missing-blob` | a `doc` or `comment` names a blob that does not exist |
 | `number-not-unique`, `number-not-greater`, `already-numbered` | number assignment rules |

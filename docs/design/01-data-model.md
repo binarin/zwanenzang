@@ -137,7 +137,9 @@ Ticket lifecycle and metadata:
 - `relate` / `unrelate` — undirected relation to another ticket.
 - `depend` / `undepend` — add/remove a same-tracker prerequisite on the
   dependent ticket, `{to: <prerequisite id>}`. Reverse `blocks` is derived.
-  Multiple prerequisites mean all-of. No tracker-side status enforcement.
+  Multiple prerequisites mean all-of. No tracker-side status enforcement:
+  dependencies never veto a status change (the `PROJ` rule below is about
+  the parent hierarchy, not dependencies).
 - `branch`, `mr` — repository-scoped references: `{repo, name}` or `{repo, url}`.
   `repo` is an alias from `zwanenzang.toml`, so one tracker can span several
   code repositories.
@@ -357,6 +359,43 @@ none changes a decision above.
   `todo`, `blocked` to `wait`, `review` to `revw` plus `needs_human`), so
   no history is rewritten. The list is configuration, not an event, like
   the rest of the vocabulary file.
+- **Projects.** Decided 2026-11-18 (ZZ-48): a ticket tagged `PROJ` groups
+  its descendants, and its status follows them. This deliberately lifts
+  "no tracker-side status enforcement" for this one rule, for every actor,
+  the human included. `create`, `status` and `apply` refuse a write that
+  changes the status of a `PROJ` ticket with `proj-hierarchy`, writing
+  nothing, when after the write
+  - any descendant is unfinished: no status change at all; or
+  - every descendant is finished, and the new status is not `done` or
+    `cncl`.
+
+  Reopening is the exception: a change from `done` or `cncl` to an
+  unfinished status is always accepted, also while descendants are
+  unfinished (human decision, 2026-11-18). After that the rule applies
+  again, so a reopened project stays at its status until it finishes.
+
+  Finished means status `done` or `cncl`. Descendants are the whole
+  subtree by `parent`. Tombstoned tickets are left out, though their own
+  children are not; archived ones count by their status, so archiving
+  does not finish a ticket. Cancelling never cascades. A project with no
+  descendants counts as finished below, so it stays at its status until
+  it becomes `done` or `cncl`. The tag and the two
+  statuses are hard-coded and always on; there is no configuration.
+
+  The rule judges the state after the whole write, not each event in it:
+  one `apply` may finish a project before or after its children, as the
+  Org client sends a parent's change before its children's. A new ticket
+  starts from the first (default) status, so `create --tag PROJ --status
+  next` is a change and refused, `--status done` is not. A batch that
+  tags a ticket `PROJ` and changes its status is judged as a project.
+  Only status writes are checked: removing the tag, re-parenting a
+  ticket, adding an unfinished child under a finished project or
+  reopening a child of one is not refused; reopening the project is the
+  way back to a consistent state. Replay applies every status
+  event as before, so concurrent writes that pass the check in their own
+  clones survive sync. `lint` reports what any of these leave behind, a
+  finished `PROJ` ticket with unfinished descendants, as
+  `proj_open_descendants`, like concurrent dependency cycles.
 - **Tag format.** Org-compatible: one or more of `A-Z a-z 0-9 _ @ # %`, at
   most 64 characters.
 - **Titles.** Non-empty after trimming, a single line, at most 512 bytes.
