@@ -140,6 +140,11 @@ impl Tracker {
         before_append: impl FnOnce(&[Event]) -> Result<Vec<PathBuf>>,
     ) -> Result<Written> {
         let repo = self.repo()?;
+        // Before the lock, whose file a refused write must not create
+        // either; checked again under it.
+        if !opts.dry_run {
+            repo.require_commit_identity()?;
+        }
         let _lock = lock_repo(&repo)?;
         let (mut w, files) = self.write_locked(&repo, clock, opts, plan, before_append)?;
         if !w.written() || opts.dry_run {
@@ -175,6 +180,9 @@ impl Tracker {
         plan: impl FnOnce(&Replay) -> Result<Plan>,
         before_append: impl FnOnce(&[Event]) -> Result<Vec<PathBuf>>,
     ) -> Result<(Written, Vec<PathBuf>)> {
+        if !opts.dry_run {
+            repo.require_commit_identity()?;
+        }
         let mut rp = self.load()?;
         let identity = self.write_identity(repo, opts.actor_name)?;
         let actor = if opts.new_actor {

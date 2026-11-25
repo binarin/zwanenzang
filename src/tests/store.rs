@@ -4,7 +4,7 @@ use super::util::*;
 use crate::clock::FixedClock;
 use crate::config::{CONFIG_FILE, Config};
 use crate::error::Error;
-use crate::store::{Tracker, blob_name, find_root};
+use crate::store::{Tracker, blob_name, find_root, hold_if_current};
 
 #[test]
 fn init_writes_layout() {
@@ -46,8 +46,17 @@ fn init_writes_layout() {
 fn init_twice_refused() {
     let dir = disposable_dir();
     new_tracker(&dir);
-    let err = Tracker::create_local(dir.path(), "x", "ZZ", "main", &[], None, &mut init_clock())
-        .unwrap_err();
+    let err = Tracker::create_local(
+        dir.path(),
+        "x",
+        "ZZ",
+        "main",
+        &[],
+        None,
+        false,
+        &mut init_clock(),
+    )
+    .unwrap_err();
     assert!(matches!(err, Error::AlreadyInitialized(_)), "{err}");
 }
 
@@ -58,8 +67,17 @@ fn init_inside_a_tracker_refused() {
     let sub = dir.path().join("sub");
     fs::create_dir(&sub).unwrap();
     for target in [sub.clone(), t.events_dir(), sub.join("not/yet/there")] {
-        let err = Tracker::create_local(&target, "x", "QQ", "main", &[], None, &mut init_clock())
-            .unwrap_err();
+        let err = Tracker::create_local(
+            &target,
+            "x",
+            "QQ",
+            "main",
+            &[],
+            None,
+            false,
+            &mut init_clock(),
+        )
+        .unwrap_err();
         match err {
             Error::AlreadyInitialized(found) => assert_eq!(found, t.root, "{target:?}"),
             e => panic!("{target:?}: {e}"),
@@ -231,4 +249,33 @@ fn lock_is_exclusive() {
     assert!(f.try_lock().is_err());
     drop(guard);
     assert!(f.try_lock().is_ok());
+}
+
+/// Every `lock_repo` caller revalidates through this: a lock taken on a
+/// file the path no longer names, unlinked or replaced while waiting, is
+/// not held.
+#[test]
+fn a_lock_counts_only_while_its_path_names_the_locked_file() {
+    let dir = disposable_dir();
+    let path = dir.path().join("zwanenzang.lock");
+    let open = || {
+        fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .unwrap()
+    };
+    assert!(hold_if_current(open(), &path).unwrap().is_some());
+
+    let waiting = open();
+    fs::remove_file(&path).unwrap();
+    assert!(hold_if_current(waiting, &path).unwrap().is_none());
+
+    let waiting = open();
+    let other = dir.path().join("other");
+    fs::write(&other, "").unwrap();
+    fs::rename(&other, &path).unwrap();
+    assert!(hold_if_current(waiting, &path).unwrap().is_none());
+    assert!(hold_if_current(open(), &path).unwrap().is_some());
 }

@@ -51,7 +51,8 @@ Two things used to be one. The **writer** is the per-clone ULID in the
 envelope's `actor`: it names the log, so each log has one writer and
 concurrent appends never meet in one file, and everything causal is per
 writer: the `actor-mismatch` check, the concurrency rule, commit identity
-and numbering. The **identity** in `as` is who the write is for, chosen on
+(unless the clone commits as git's own user, see
+[git and sync](02-git-and-sync.md)) and numbering. The **identity** in `as` is who the write is for, chosen on
 every write (`--actor-name`), the same from every clone: the human's name
 or `agent`. The tracker's `actors` list in `zwanenzang.toml` names the
 identities a write may use, validated like the other vocabularies; a write

@@ -3,6 +3,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -82,6 +83,56 @@ pub(crate) fn enclosing_tracker(dir: &Path) -> Option<PathBuf> {
         };
     }
     find_root(probe).ok()
+}
+
+/// A directory `init` created: its canonical path and the inode it had,
+/// so that only that very directory is removed again.
+struct CreatedDir {
+    path: PathBuf,
+    dev: u64,
+    ino: u64,
+}
+
+/// Creates `dir` and its missing ancestors one component at a time,
+/// recording in `created`, in creation order, each directory this call
+/// made. Following the components as written, `..` included, means what
+/// is recorded is what was created, whatever path names it.
+fn create_dirs(dir: &Path, created: &mut Vec<CreatedDir>) -> Result<()> {
+    let mut path = PathBuf::new();
+    for component in dir.components() {
+        path.push(component);
+        if path.is_dir() {
+            continue;
+        }
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                let canonical = fs::canonicalize(&path).map_err(Error::io(&path))?;
+                let meta = fs::metadata(&canonical).map_err(Error::io(&canonical))?;
+                created.push(CreatedDir {
+                    path: canonical,
+                    dev: meta.dev(),
+                    ino: meta.ino(),
+                });
+            }
+            // Made by someone else meanwhile: not ours.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(Error::io(&path)(e)),
+        }
+    }
+    Ok(())
+}
+
+/// Removes the directories in `created` that are still the ones created
+/// and empty, last created first.
+fn remove_created_dirs(created: &[CreatedDir]) {
+    for d in created.iter().rev() {
+        let same =
+            fs::symlink_metadata(&d.path).is_ok_and(|m| (m.dev(), m.ino()) == (d.dev, d.ino));
+        if same {
+            // Fails, leaving it, when something else put files in it.
+            let _ = fs::remove_dir(&d.path);
+        }
+    }
 }
 
 /// Adds `line` to a text file unless the file already has it.
@@ -165,22 +216,56 @@ fn write_file_synced(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Takes the exclusive lock file in the repository's git directory,
 /// blocking until it is free.
+///
+/// Holding the lock on an open file only serializes writers while that
+/// file is still the one at the path: a refused `init` removes the
+/// repository it created, lock file included, while others may be waiting
+/// on it, and a later `init` may create a new one. So once the lock is
+/// held, the path is checked to still name the same file; if it does not,
+/// the lock is dropped and taken again on what the path names now.
 pub fn lock_repo(repo: &Repo) -> Result<LockGuard> {
     let path = repo.git_dir.join(LOCK_FILE);
+    loop {
+        if let Some(lock) = lock_file(&path)? {
+            return Ok(lock);
+        }
+    }
+}
+
+/// Opens (creating it if missing) and locks the file at `path`, blocking
+/// until it is free. `None` when, once locked, `path` is no longer that
+/// file; see [`lock_repo`].
+fn lock_file(path: &Path) -> Result<Option<LockGuard>> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
-        .open(&path)
-        .map_err(Error::io(&path))?;
-    file.lock().map_err(Error::io(&path))?;
-    Ok(LockGuard { file })
+        .open(path)
+        .map_err(Error::io(path))?;
+    file.lock().map_err(Error::io(path))?;
+    hold_if_current(file, path)
+}
+
+/// The guard for the locked `file`, or `None`, releasing it, when `path`
+/// is missing or names another file by now.
+pub(crate) fn hold_if_current(file: File, path: &Path) -> Result<Option<LockGuard>> {
+    let held = file.metadata().map_err(Error::io(path))?;
+    match fs::metadata(path) {
+        Ok(now) if (now.dev(), now.ino()) == (held.dev(), held.ino()) => {
+            Ok(Some(LockGuard { file }))
+        }
+        Ok(_) => Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::io(path)(e)),
+    }
 }
 
 impl Tracker {
     /// Creates the local half of a tracker in `dir`: the repository on
     /// `branch`, the storage directories, `boilerplate` files (relative
     /// names with their contents), the configuration and the first commit.
+    /// With `use_git_identity` the clone's local configuration turns
+    /// [`git::USE_GIT_IDENTITY_KEY`] on before anything is committed.
     /// Publishing to a remote is [`crate::init`]'s half.
     ///
     /// Refused when `dir` is a tracker or lies inside one: a nested
@@ -188,6 +273,9 @@ impl Tracker {
     /// it. `dir` becomes a git repository unless it already is the top of
     /// one; inside some other work tree it is refused, since a tracker is
     /// always its own repository.
+    // Each argument is a separate choice of `init`'s; a struct holding
+    // them would be built at exactly one call site.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_local(
         dir: &Path,
         name: &str,
@@ -195,34 +283,62 @@ impl Tracker {
         branch: &str,
         boilerplate: &[(&str, String)],
         actor_name: Option<&str>,
+        use_git_identity: bool,
         clock: &mut dyn Clock,
     ) -> Result<Tracker> {
         if let Some(existing) = enclosing_tracker(dir) {
             return Err(Error::AlreadyInitialized(existing));
         }
-        fs::create_dir_all(dir).map_err(Error::io(dir))?;
-        let root = fs::canonicalize(dir).map_err(Error::io(dir))?;
-        let config_path = root.join(CONFIG_FILE);
-        if config_path.exists() {
-            return Err(Error::AlreadyInitialized(root));
-        }
         let config = Config::new_with_actor(next_id(clock, None), name, prefix, actor_name);
-        config.validate().map_err(|message| Error::Config {
-            path: config_path.clone(),
-            message,
-        })?;
+        let mut created_dirs = Vec::new();
         // init is a mutating command and takes the lock like the others.
-        // The checks above only spare a refused init from creating
+        // The checks before it only spare a refused init from creating
         // anything; they are repeated under the lock, so of two concurrent
-        // inits exactly one writes and the other is refused.
-        let repo = match git::toplevel(&root)? {
-            Some(top) if top == root => Repo::open(&root)?,
-            Some(top) => return Err(Error::InsideRepository(root, top)),
-            None => git::init(&root, branch)?,
+        // inits exactly one writes and the other is refused. When the lock
+        // file this init waited on is gone or replaced once held (another
+        // init was refused and removed the repository), everything from
+        // the directory on is done again.
+        let (root, config_path, repo, created_repo, _lock) = loop {
+            create_dirs(dir, &mut created_dirs)?;
+            let root = fs::canonicalize(dir).map_err(Error::io(dir))?;
+            let config_path = root.join(CONFIG_FILE);
+            if config_path.exists() {
+                return Err(Error::AlreadyInitialized(root));
+            }
+            config.validate().map_err(|message| Error::Config {
+                path: config_path.clone(),
+                message,
+            })?;
+            let (repo, created_repo) = match git::toplevel(&root)? {
+                Some(top) if top == root => (Repo::open(&root)?, false),
+                Some(top) => return Err(Error::InsideRepository(root, top)),
+                None => git::init(&root, branch)?,
+            };
+            let lock = match lock_file(&repo.git_dir.join(LOCK_FILE)) {
+                Ok(Some(lock)) => lock,
+                Ok(None) => continue,
+                // Removed before its lock file could even be opened.
+                Err(_) if !repo.git_dir.is_dir() => continue,
+                Err(e) => return Err(e),
+            };
+            if let Some(existing) = enclosing_tracker(&root) {
+                return Err(Error::AlreadyInitialized(existing));
+            }
+            break (root, config_path, repo, created_repo, lock);
         };
-        let _lock = lock_repo(&repo)?;
-        if let Some(existing) = enclosing_tracker(&root) {
-            return Err(Error::AlreadyInitialized(existing));
+        if use_git_identity {
+            repo.config_set(git::USE_GIT_IDENTITY_KEY, "true")?;
+        }
+        // Checked again in the repository itself, whose configuration (an
+        // includeIf matching only the new clone, say) may turn the switch
+        // on. Nothing but the repository exists yet: a refusal removes
+        // what this call created, so a plain retry can succeed.
+        if let Err(e) = repo.require_commit_identity() {
+            if created_repo {
+                let _ = fs::remove_dir_all(&repo.git_dir);
+                remove_created_dirs(&created_dirs);
+            }
+            return Err(e);
         }
         for sub in ["events", "blobs"] {
             ensure_dir(&root.join(sub))?;

@@ -54,6 +54,7 @@ pub fn new_tracker(dir: &tempfile::TempDir) -> Tracker {
         "main",
         &[],
         Some("tester"),
+        false,
         &mut init_clock(),
     )
     .expect("init")

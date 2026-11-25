@@ -73,7 +73,8 @@ impl SyncReport {
 
 /// The commit identity of a writer: `name` (the identity of the write, or
 /// the writer's declared name), else the writer id, and an address made
-/// from the writer id.
+/// from the writer id. Unused by a clone whose commits use git's own
+/// identity ([`crate::git::USE_GIT_IDENTITY_KEY`]).
 pub fn identity(actor: Ulid, name: Option<String>) -> Identity {
     let name = name
         .filter(|n| valid_actor_name(n))
@@ -90,6 +91,9 @@ impl Tracker {
     /// [`Tracker::write`]; a sync with nothing to number needs none.
     pub fn sync(&self, clock: &mut dyn Clock, actor_name: Option<&str>) -> Result<SyncReport> {
         let repo = self.repo()?;
+        // Before the lock, whose file a refused sync must not create
+        // either; checked again under it.
+        repo.require_commit_identity()?;
         let _lock = lock_repo(&repo)?;
         self.sync_locked(&repo, clock, actor_name)
     }
@@ -121,6 +125,8 @@ impl Tracker {
         actor_name: Option<&str>,
         target: &mut Option<String>,
     ) -> Result<SyncReport> {
+        // Committing, rebasing and numbering all make commits.
+        repo.require_commit_identity()?;
         // Lines an interrupted command appended but did not commit.
         let id = self.clone_identity(repo, clock)?;
         repo.commit(

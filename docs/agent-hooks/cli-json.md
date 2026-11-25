@@ -52,6 +52,22 @@ The `git` binary must be on `PATH` (the nix package falls back to its own).
 The clone's writer id is `zwanenzang.actor` in its local git configuration;
 `zwanenzang.defaultActor` there, set by hand, is its default identity.
 
+### Commit identity
+
+Every commit the CLI makes is authored and committed as the write's
+identity (else the writer's display name, else its id) with the address
+`<writer id>@zwanenzang.invalid`, so a clone needs no git identity. With the
+boolean git configuration key `zwanenzang.useGitIdentity` on, read with
+git's normal resolution (local, global, system, `includeIf`), author and
+committer are git's own `user.name` and `user.email` instead, for every
+commit: init's, writes', numbering's, and the committer of commits a sync
+rebase replays. Set it in a clone with `git -C CLONE config
+zwanenzang.useGitIdentity true`, or for a new tracker with `init
+--use-git-identity`. A value git cannot read as a boolean is `config`;
+with the switch on and no identity git can resolve, a write or `sync` is
+`git-identity-missing` and writes nothing. Events, not commits, record
+who wrote what.
+
 ### Identities
 
 An event's `actor` is its writer, the clone's id, which names its log. Its
@@ -135,7 +151,7 @@ them; any change to them fails with `tombstoned`.
 
 | Command | Writes | Output |
 |---|---|---|
-| `init DIRECTORY --remote LOCATOR --prefix P [--name N]` | config (with `actors`), `.gitattributes`, `AGENTS.md`, writer id; a git repository on the published branch; first commit; origin and upstream; initial push | init object |
+| `init DIRECTORY --remote LOCATOR --prefix P [--name N] [--use-git-identity]` | config (with `actors`), `.gitattributes`, `AGENTS.md`, writer id, `zwanenzang.useGitIdentity` with the flag; a git repository on the published branch; first commit; origin and upstream; initial push | init object |
 | `create TITLE [--status S] [--kind K] [--parent T] [--tag X]...` | `create`, then `parent`, `tag` | mutation object |
 | `status T STATUS` | `status` | mutation object |
 | `title T TITLE` | `title` | mutation object |
@@ -426,7 +442,8 @@ needed.
 
 ### Init object
 
-`init DIRECTORY --remote LOCATOR --prefix P [--name N]` creates a tracker in
+`init DIRECTORY --remote LOCATOR --prefix P [--name N] [--use-git-identity]`
+creates a tracker in
 `DIRECTORY`, which must be nonexistent or empty and outside every tracker and
 other work tree. The remote must already exist; no repository is provisioned.
 The tracker starts independent history on a new branch:
@@ -445,6 +462,15 @@ The tracker starts independent history on a new branch:
 - Success is reported only after the initial push succeeded. On failure the
   local checkout and its commit are kept (never rolled back) and the error
   `push-failed` names the exact retry push command.
+- `--use-git-identity` sets `zwanenzang.useGitIdentity` (see Commit
+  identity) in the new clone's local git configuration before its first
+  commit, so even that commit is git's own user's. Whenever the switch is
+  on for the init, by the flag or by configuration outside the clone, a
+  git without an identity is `git-identity-missing` before the destination
+  is created. Configuration that only the new clone sees (an `includeIf
+  gitdir:`) is checked in it before anything is written there; that
+  refusal removes the repository and directories the init created, so the
+  same `init` can be retried.
 
 ```json
 {"tracker": {"root": "/path", "id": "<root ULID>", "name": "...", "prefix": "ZZ",
@@ -819,7 +845,8 @@ Command errors:
 | `already-initialized` | `init` in an existing tracker or anywhere inside one |
 | `branch-exists` | `init` target branch already on the remote, or created while the init ran |
 | `fetch-failed`, `push-failed` | `init` could not read the remote, or its initial push failed; the local tracker is kept and the message names the retry push command |
-| `config` | `zwanenzang.toml` or the writer id in the clone's git configuration is invalid, or `init` got a bad prefix, name or `--actor-name` |
+| `config` | `zwanenzang.toml`, the writer id in the clone's git configuration or `zwanenzang.useGitIdentity` is invalid, or `init` got a bad prefix, name or `--actor-name` |
+| `git-identity-missing` | `zwanenzang.useGitIdentity` is on but git has no identity: set `user.name` and `user.email`, or turn the switch off; nothing was written, and `init` left nothing behind |
 | `actor-required` | a write that changes something names no identity: no `--actor-name` and no `zwanenzang.defaultActor` in the clone; nothing was written |
 | `unknown-actor` | `--actor-name` or `zwanenzang.defaultActor` names an identity the tracker does not accept; nothing was written |
 | `actors-not-configured` | `zwanenzang.toml` has no `actors` list, so no identity but `import` is accepted; add one, such as `actors = ["alice", "agent"]`, and commit it; nothing was written |

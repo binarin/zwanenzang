@@ -9,12 +9,18 @@ use std::process::{Command, Output};
 use crate::error::{Error, Result};
 
 /// The identity commits are made with: the actor, not the user's git
-/// configuration, which an agent's environment may not have.
+/// configuration, which an agent's environment may not have. A clone with
+/// [`USE_GIT_IDENTITY_KEY`] on ignores it and commits as git's own user.
 #[derive(Debug, Clone)]
 pub struct Identity {
     pub name: String,
     pub email: String,
 }
+
+/// The boolean git configuration key that makes every commit the tool
+/// makes use git's own identity (`user.name`, `user.email`) instead of the
+/// actor's. Read with git's normal configuration resolution.
+pub const USE_GIT_IDENTITY_KEY: &str = "zwanenzang.useGitIdentity";
 
 /// What `push` reported.
 #[derive(Debug)]
@@ -154,6 +160,55 @@ pub fn initial_branch() -> Result<String> {
     }
 }
 
+/// Whether [`USE_GIT_IDENTITY_KEY`] is on outside any repository, as it
+/// is for a clone that does not exist yet: from the global, system and
+/// command-scope configuration.
+pub fn use_git_identity_outside() -> Result<bool> {
+    let args = ["config", "--type=bool", "--get", USE_GIT_IDENTITY_KEY];
+    let out = scratch(&args, command(&anchor()).args(args))?;
+    parse_use_git_identity(&out)
+}
+
+/// Refuses unless git resolves a committer identity outside any
+/// repository: the check for a clone that does not exist yet.
+pub fn require_git_identity_outside() -> Result<()> {
+    let args = ["var", "GIT_COMMITTER_IDENT"];
+    let out = scratch(&args, command(&anchor()).args(args))?;
+    git_identity_resolved(&out)
+}
+
+/// A `git config --type=bool --get` result: unset is off, a value git
+/// cannot read as a boolean an error.
+fn parse_use_git_identity(out: &Output) -> Result<bool> {
+    match out.status.code() {
+        Some(0) => Ok(String::from_utf8_lossy(&out.stdout).trim() == "true"),
+        // 1: the setting is not present.
+        Some(1) => Ok(false),
+        _ => Err(Error::Config {
+            path: PathBuf::from(USE_GIT_IDENTITY_KEY),
+            message: format!(
+                "not a boolean: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        }),
+    }
+}
+
+/// A `git var GIT_COMMITTER_IDENT` result: git's own identity resolved,
+/// or the refusal naming what to set.
+fn git_identity_resolved(out: &Output) -> Result<()> {
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(Error::GitIdentityMissing(format!(
+        "{USE_GIT_IDENTITY_KEY} is on, so commits are made as git's own user, but \
+         git has no identity: set user.name and user.email (`git config user.name \
+         NAME`, `git config user.email EMAIL`), or turn {USE_GIT_IDENTITY_KEY} off; \
+         nothing was written; git said: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    )))
+}
+
 /// Whether `name` is a plain branch name a locator may select. Tags, commit
 /// revisions and anything git refuses as a branch name are not.
 pub fn valid_branch_name(name: &str) -> Result<bool> {
@@ -189,8 +244,9 @@ fn scratch(args: &[&str], c: &mut Command) -> Result<Output> {
 /// `git init` in place is not atomic: several at once in one directory
 /// fail on each other's half-written files. The repository is made in a
 /// temporary directory and its `.git` renamed into place, which succeeds
-/// for exactly one of them; the others find a complete repository.
-pub fn init(dir: &Path, branch: &str) -> Result<Repo> {
+/// for exactly one of them; the others find a complete repository. The
+/// flag says whether this call's repository is the one that won.
+pub fn init(dir: &Path, branch: &str) -> Result<(Repo, bool)> {
     let tmp = dir.join(format!(".zwanenzang-init-{}", std::process::id()));
     let made = (|| {
         std::fs::create_dir(&tmp).map_err(Error::io(&tmp))?;
@@ -201,13 +257,11 @@ pub fn init(dir: &Path, branch: &str) -> Result<Repo> {
         }
         Ok(())
     })();
-    if made.is_ok() {
-        // Fails when another init got there first, which is fine.
-        let _ = std::fs::rename(tmp.join(".git"), dir.join(".git"));
-    }
+    // Fails when another init got there first, which is fine.
+    let won = made.is_ok() && std::fs::rename(tmp.join(".git"), dir.join(".git")).is_ok();
     let _ = std::fs::remove_dir_all(&tmp);
     made?;
-    Repo::open(dir)
+    Ok((Repo::open(dir)?, won))
 }
 
 impl Repo {
@@ -233,7 +287,11 @@ impl Repo {
         // No signing prompt. Individual write/update operations disable
         // hooks explicitly as needed.
         c.args(["-c", "commit.gpgsign=false"]).args(args);
-        if let Some(id) = identity {
+        // With the switch on, git's own identity applies: author and
+        // committer are simply left to git.
+        if let Some(id) = identity
+            && !self.use_git_identity()?
+        {
             c.env("GIT_AUTHOR_NAME", &id.name)
                 .env("GIT_AUTHOR_EMAIL", &id.email)
                 .env("GIT_COMMITTER_NAME", &id.name)
@@ -276,6 +334,23 @@ impl Repo {
             return Err(failure(args, &out));
         }
         Ok(())
+    }
+
+    /// Whether [`USE_GIT_IDENTITY_KEY`] is on for this clone, by git's
+    /// normal configuration resolution (local, global, system, includes).
+    pub fn use_git_identity(&self) -> Result<bool> {
+        let args = ["config", "--type=bool", "--get", USE_GIT_IDENTITY_KEY];
+        parse_use_git_identity(&self.run(&args, None)?)
+    }
+
+    /// When this clone commits as git's own user, refuses unless git
+    /// resolves an identity. Run before a command writes anything, so a
+    /// refused command leaves nothing behind.
+    pub fn require_commit_identity(&self) -> Result<()> {
+        if !self.use_git_identity()? {
+            return Ok(());
+        }
+        git_identity_resolved(&self.run(&["var", "GIT_COMMITTER_IDENT"], None)?)
     }
 
     pub fn config_get(&self, key: &str) -> Result<Option<String>> {

@@ -56,6 +56,8 @@ pub enum Error {
     #[error("{0}")]
     ActorsNotConfigured(String),
     #[error("{0}")]
+    GitIdentityMissing(String),
+    #[error("{0}")]
     Git(String),
     #[error("{message}")]
     Sync { code: &'static str, message: String },
@@ -85,6 +87,7 @@ impl Error {
             Error::ActorRequired => "actor-required",
             Error::UnknownActor(_) => "unknown-actor",
             Error::ActorsNotConfigured(_) => "actors-not-configured",
+            Error::GitIdentityMissing(_) => "git-identity-missing",
             Error::Git(_) => "git",
             Error::Sync { code, .. } => code,
         }

@@ -28,13 +28,16 @@ pub struct Started {
 
 /// Creates a tracker in `dir` and publishes it on a new branch of the
 /// locator's remote. Succeeds only after the initial push: a failure
-/// keeps the local checkout and its commit and says how to retry.
+/// keeps the local checkout and its commit and says how to retry. With
+/// `use_git_identity` the new clone commits as git's own user from its
+/// first commit on.
 pub fn run(
     dir: &Path,
     locator: &Locator,
     name: &str,
     prefix: &str,
     actor_name: Option<&str>,
+    use_git_identity: bool,
     clock: &mut dyn Clock,
 ) -> Result<Started> {
     // The configuration is validated first: a bad prefix or name is
@@ -45,6 +48,11 @@ pub fn run(
             path: dir.join(crate::config::CONFIG_FILE),
             message,
         })?;
+    // So is a missing git identity the first commit would need: the clone
+    // does not exist yet, so only configuration outside it can count.
+    if use_git_identity || git::use_git_identity_outside()? {
+        git::require_git_identity_outside()?;
+    }
     check_destination(dir)?;
     let branch = resolve_branch(locator)?;
     let tracker = Tracker::create_local(
@@ -54,6 +62,7 @@ pub fn run(
         &branch,
         &[("AGENTS.md", agents_md(prefix))],
         actor_name,
+        use_git_identity,
         clock,
     )?;
     let repo = tracker.repo()?;

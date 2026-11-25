@@ -150,15 +150,43 @@ pub fn run_as(
     stdin: &str,
     env: &[(&str, &str)],
 ) -> Out {
+    let mut child = spawn_as(dir, actor, args, env);
+    // A command that fails before reading stdin (a usage error) may exit
+    // first; the write then fails with a broken pipe, which is not an error
+    // of the test.
+    if let Err(e) = child.stdin.take().unwrap().write_all(stdin.as_bytes())
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        panic!("writing stdin: {e}");
+    }
+    finish(child)
+}
+
+/// Starts the binary like [`run_as`] without waiting for it; its stdin is
+/// a pipe the caller writes or drops. Collect it with [`finish`].
+pub fn spawn_as(
+    dir: &Path,
+    actor: Option<&str>,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> std::process::Child {
     assert_opens_disposable(dir);
     let mut command = Command::new(env!("CARGO_BIN_EXE_zwanenzang"));
     command.arg("-C").arg(dir);
     if let Some(a) = actor {
         command.args(["--actor-name", a]);
     }
-    let mut child = command
+    clear_inherited_git_config(&mut command);
+    command
         .args(args)
         .current_dir(dir)
+        // Nor the developer's identity overrides, so a commit made as git's
+        // own user takes its identity from the configuration a test sets.
+        .env_remove("GIT_AUTHOR_NAME")
+        .env_remove("GIT_AUTHOR_EMAIL")
+        .env_remove("GIT_COMMITTER_NAME")
+        .env_remove("GIT_COMMITTER_EMAIL")
+        .env_remove("EMAIL")
         .envs(env.iter().copied())
         // The binary's git commands see no user or system configuration,
         // so a developer's hooks, signing or url rewrites play no part.
@@ -170,15 +198,11 @@ pub fn run_as(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn zwanenzang");
-    // A command that fails before reading stdin (a usage error) may exit
-    // first; the write then fails with a broken pipe, which is not an error
-    // of the test.
-    if let Err(e) = child.stdin.take().unwrap().write_all(stdin.as_bytes())
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        panic!("writing stdin: {e}");
-    }
+        .expect("spawn zwanenzang")
+}
+
+/// Waits for a binary started with [`spawn_as`] and parses its output.
+pub fn finish(child: std::process::Child) -> Out {
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     let json = if stdout.trim().is_empty() {
@@ -364,9 +388,27 @@ pub fn git_report(dir: &Path, args: &[&str]) -> String {
     }
 }
 
+/// Removes command-scope git configuration the test process inherited
+/// (`GIT_CONFIG_COUNT` and its keys and values, `GIT_CONFIG_PARAMETERS`), so
+/// only what a test passes explicitly applies.
+fn clear_inherited_git_config(command: &mut Command) {
+    for (key, _) in std::env::vars_os() {
+        let inherited = key.to_str().is_some_and(|k| {
+            k == "GIT_CONFIG_COUNT"
+                || k == "GIT_CONFIG_PARAMETERS"
+                || k.starts_with("GIT_CONFIG_KEY_")
+                || k.starts_with("GIT_CONFIG_VALUE_")
+        });
+        if inherited {
+            command.env_remove(key);
+        }
+    }
+}
+
 fn git_command(dir: &Path) -> Command {
     assert_disposable(dir);
     let mut command = Command::new("git");
+    clear_inherited_git_config(&mut command);
     command
         .arg("-C")
         .arg(dir)

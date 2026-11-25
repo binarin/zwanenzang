@@ -281,7 +281,14 @@ None at present.
   the git directory, held across the write, the commit and the whole sync.
   This answers the lock-scope question: contention is a human and a few
   agents, and a per-log lock would not cover the shared git operations.
-  A mutating command waits for the lock rather than failing.
+  A mutating command waits for the lock rather than failing. A lock held
+  on an open file serializes only while that file is still the one at the
+  path: an `init` refused inside its new clone removes the repository,
+  lock file included, while another may be waiting on it. So once the
+  lock is held, the path is checked to name the same file (device and
+  inode); if it is missing or another file, the lock is dropped and taken
+  again, and a waiting `init` starts over from creating the directory and
+  repository, redoing its checks under the new lock.
 - **What a commit holds.** Exactly the files the command wrote: `events/`,
   `blobs/`, and the supporting files an import copied. Other changes in
   the work tree, staged or not, are left alone; edits to `docs/` and to
@@ -295,6 +302,36 @@ None at present.
   and the clone is the tool's. The message names the main operation and
   ticket, `status ZZ-42`; a ticket committed before it has a number
   appears under its short id.
+- **Committing as git's own user.** Some forges' push rules reject commits
+  whose author or committer email is not a verified address of the pusher,
+  and the `.invalid` address never is. The boolean git configuration key
+  `zwanenzang.useGitIdentity` turns the writer identity off: the tool then
+  sets no `GIT_AUTHOR_*` or `GIT_COMMITTER_*`, and author and committer,
+  name and email, are git's own (`user.name`, `user.email`, resolved as
+  git always does). Unset or false keeps the writer identity. It is read
+  with git's normal resolution, local, global, system and `includeIf`,
+  unlike `zwanenzang.trackerUrl`'s local-only rule: it changes no derived
+  state, only commit metadata. A value `git config --type=bool` cannot
+  read is a `config` error, never silently off. It applies to every commit
+  the tool makes, in one place: `init`'s, each write's, the numbering
+  commits, the leftover-lines commit, and the committer stamped on commits
+  a sync rebase replays (their authors are kept). Events stay the record
+  of authorship; no actor trailer is added to the message, and commits
+  already made are not rewritten. With the switch on and no identity git
+  can resolve (`git var GIT_COMMITTER_IDENT` fails), a mutating command or
+  `sync` refuses with `git-identity-missing` before writing anything,
+  the lock file included: the check runs before the lock is taken, and
+  again under it. `init --use-git-identity` sets the key in the new
+  clone's local configuration before its first commit; its identity
+  check, and the one for a switch already on outside the clone, run
+  before the destination is created, from configuration outside any
+  repository. An `includeIf gitdir:` cannot match a clone that does not
+  exist yet, so the clone's own configuration is checked again before
+  anything is written into it; that refusal removes the repository and
+  the directories this init created (an existing empty destination is
+  left empty), so the same `init` can simply be retried. A durable
+  `--tracker-url` clone has no flag of its own: set the key with `git -C
+  CLONE config zwanenzang.useGitIdentity true`, or through `includeIf`.
 - **Upstream.** Sync uses the current branch's configured upstream
   (`branch.<name>.remote` and `.merge`). A branch without one, or a
   detached head, means the clone is the whole tracker.

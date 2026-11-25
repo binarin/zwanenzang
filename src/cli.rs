@@ -70,6 +70,12 @@ pub enum Command {
         /// Tracker name; defaults to the directory name.
         #[arg(long)]
         name: Option<String>,
+        /// Commit as git's own user (user.name, user.email) instead of the
+        /// writer: sets zwanenzang.useGitIdentity in the new clone's local
+        /// git configuration before its first commit. For remotes that
+        /// only accept commits by a verified address of the pusher.
+        #[arg(long)]
+        use_git_identity: bool,
     },
     /// Create a ticket.
     Create {
@@ -428,6 +434,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
         remote,
         prefix,
         name,
+        use_git_identity,
     } = &cli.command
     {
         if cli.tracker_url.is_some() {
@@ -451,6 +458,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             &name,
             prefix,
             cli.actor_name.as_deref(),
+            *use_git_identity,
             clock,
         )?;
         let t = &started.tracker;
