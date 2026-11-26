@@ -18,3 +18,20 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       # The runner is x86_64: aarch64 outputs are evaluated, not built.
       - run: nix flake check --all-systems --print-build-logs
+  # A pull request that changes the package's sources must bump its version
+  # above the target branch's current one.
+  version-bump:
+    name: version bump
+    if: github.event_name == 'pull_request'
+    runs-on: native
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          nix shell --inputs-from . nixpkgs#python3 --command \
+            python3 -I scripts/check-version-bump.py "origin/$BASE_REF"

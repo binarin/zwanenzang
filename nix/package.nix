@@ -33,6 +33,19 @@
             python3 -I ${../scripts}/test_assign_identities.py ${lib.getExe self'.packages.zwanenzang}
             touch $out
           '';
+      # The pull-request version bump check, and that it names the package's fileset.
+      checks.check-version-bump =
+        pkgs.runCommand "zwanenzang-check-version-bump"
+          {
+            nativeBuildInputs = [
+              pkgs.python3
+              pkgs.git
+            ];
+          }
+          ''
+            python3 -I ${../scripts}/test_check_version_bump.py ${self'.packages.zwanenzang.src}
+            touch $out
+          '';
 
       devShells.default = pkgs.mkShell {
         inputsFrom = [ self'.packages.zwanenzang ];

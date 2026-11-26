@@ -16,6 +16,22 @@ design decisions.
 - Commits are small and explain why. Design changes update the notes under
   `docs/design/` in the same change; open questions are answered there, not
   in chat.
+- Every pull request that changes the package's source fileset (the paths
+  in `nix/_packages/zwanenzang.nix`: `Cargo.toml`, `Cargo.lock`,
+  `build.rs`, `docs/agent-hooks`, `site`, `src`, `tests`) bumps the
+  `[package] version` in `Cargo.toml` by hand, with `Cargo.lock`, in the
+  same pull request. Before 1.0, a breaking change or a new feature bumps
+  the minor version and a fix bumps the patch version. The new version must
+  be above the target branch's current one. CI checks this with
+  `scripts/check-version-bump.py`, but the check is only as current as the
+  target tip it ran against: two pull requests bumping to the same version
+  make identical edits that merge cleanly, and the forge does not re-run
+  the check when the target moves. So a pull request whose target branch
+  moved after its check ran is rebased (and bumps again if needed), or has
+  its check re-run, before it is merged. Branch protection that blocks
+  merging an outdated pull request, with the version-bump job as a
+  required check, makes this automatic. `--version` shows this version
+  with the flake commit and its date.
 
 ## This project's tracker
 
