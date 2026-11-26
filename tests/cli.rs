@@ -1194,3 +1194,85 @@ fn events_without_as_resolve_to_the_writers_declared_name() {
         json!([{"event": next(3), "actor": writer, "as": "stranger", "op": "tag"}])
     );
 }
+
+#[test]
+fn schedule_echoes_shows_lists_reads_and_clears() {
+    let d = tracker();
+    let p = d.path();
+    let t = id(&ok(p, &["create", "Check back later"]));
+    // Several arguments are one value; a delay starting with `-` is a value.
+    let out = ok(
+        p,
+        &["schedule", "ZZ-1", "<2026-12-03", "Thu", "10:00", "-2d>"],
+    );
+    assert_eq!(out["written"], true);
+    assert_eq!(out["message"], "ZZ-1 scheduled 2026-12-03 Thu 10:00 -2d");
+    assert_eq!(out["event"]["op"], "scheduled");
+    assert_eq!(out["event"]["data"], json!({"to": "2026-12-03 10:00 -2d"}));
+    assert_eq!(out["ticket"]["scheduled"], "2026-12-03 10:00 -2d");
+    assert_eq!(ok(p, &["show", &t])["scheduled"], "2026-12-03 10:00 -2d");
+    assert_eq!(
+        ok(p, &["list"])["tickets"][0]["scheduled"],
+        "2026-12-03 10:00 -2d"
+    );
+    let read = ok_stdin(p, &["read"], "{}");
+    assert_eq!(
+        read["tickets"][0]["ticket"]["scheduled"],
+        "2026-12-03 10:00 -2d"
+    );
+    // The same date again writes nothing, and still says what it is.
+    let again = ok(p, &["schedule", &t, "2026-12-03 10:00 -2d"]);
+    assert_eq!(again["written"], false);
+    assert_eq!(again["message"], "ZZ-1 scheduled 2026-12-03 Thu 10:00 -2d");
+    let before = logs(p);
+    let refused = err(p, &["schedule", &t, "2026-02-29"], "invalid-timestamp");
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("2026-02-29"),
+        "{refused}"
+    );
+    err(
+        p,
+        &["schedule", &t, "[2026-12-03 Thu]"],
+        "invalid-timestamp",
+    );
+    assert_eq!(logs(p), before);
+    // Finishing the ticket keeps the date.
+    ok(p, &["status", &t, "done"]);
+    assert_eq!(ok(p, &["show", &t])["scheduled"], "2026-12-03 10:00 -2d");
+    let cleared = ok(p, &["schedule", &t, "--clear"]);
+    assert_eq!(cleared["message"], "ZZ-1 not scheduled");
+    assert_eq!(cleared["ticket"]["scheduled"], Value::Null);
+    let usage = run_in(p, &["schedule", &t], "");
+    assert_eq!(usage.code, 2, "{}", usage.stderr);
+}
+
+#[test]
+fn relative_schedule_uses_the_local_date_of_tz() {
+    use zwanenzang::planning::Date;
+    let d = tracker();
+    let p = d.path();
+    let t = id(&ok(p, &["create", "Relative"]));
+    // Fourteen hours east and twelve west of UTC are always on different
+    // days; each must be that zone's date at the time of the command.
+    for (tz, offset_s) in [("UTC-14", 14 * 3600), ("UTC+12", -12 * 3600)] {
+        let local_date = || {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            Date::from_days((now + offset_s).div_euclid(86_400)).to_string()
+        };
+        let before = local_date();
+        let out = run_in_env(p, &["schedule", &t, "today"], "", &[("TZ", tz)]);
+        let after = local_date();
+        assert_eq!(out.code, 0, "{}", out.json);
+        let got = out.json["ticket"]["scheduled"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(got == before || got == after, "{tz}: {got}, not {before}");
+    }
+}

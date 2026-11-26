@@ -801,3 +801,97 @@ fn without_an_actors_list_only_the_importer_may_write() {
     assert!(t.sync(&mut c, Some("agent")).unwrap().numbered.is_empty());
     assert_eq!(log_snapshot(&t), after);
 }
+
+fn scheduled(to: &str) -> Op {
+    Op::Scheduled(crate::event::ScheduledData {
+        to: Some(to.into()),
+    })
+}
+
+#[test]
+fn live_scheduled_writes_need_a_possible_normalised_value() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let mut c = FixedClock::new(1_000_000);
+    for value in [
+        "2026-02-30",
+        "2026-12-03 24:00",
+        "2026-12-03 Thu",
+        "<2026-12-03>",
+        "2026-12-03 9:00",
+        "tomorrow",
+    ] {
+        let before = log_snapshot(&t);
+        let r = write_one(&t, &mut c, u(T1), scheduled(value));
+        assert_eq!(rejected_code(r), "invalid-timestamp", "{value}");
+        assert_eq!(log_snapshot(&t), before, "{value} wrote something");
+    }
+    let w = write_one(&t, &mut c, u(T1), scheduled("2026-12-03 10:00 +1w -2d")).unwrap();
+    assert!(w.written());
+    assert_eq!(
+        w.replay.state.tickets[&u(T1)].scheduled.as_deref(),
+        Some("2026-12-03 10:00 +1w -2d")
+    );
+    let again = write_one(&t, &mut c, u(T1), scheduled("2026-12-03 10:00 +1w -2d")).unwrap();
+    assert!(!again.written());
+    let cleared = write_one(
+        &t,
+        &mut c,
+        u(T1),
+        Op::Scheduled(crate::event::ScheduledData { to: None }),
+    )
+    .unwrap();
+    assert!(cleared.written());
+    assert_eq!(cleared.replay.state.tickets[&u(T1)].scheduled, None);
+}
+
+/// Runs the command line in this process, with an injected clock.
+fn run_cli(t: &Tracker, clock: &mut FixedClock, args: &[&str]) -> serde_json::Value {
+    use clap::Parser;
+    assert_disposable(&t.root);
+    let root = t.root.to_str().unwrap();
+    let argv = ["zwanenzang", "-C", root, "--actor-name", "tester"]
+        .into_iter()
+        .chain(args.iter().copied());
+    let cli = crate::cli::Cli::try_parse_from(argv).unwrap();
+    let (out, code) = crate::cli::run(cli, clock, &mut std::io::empty());
+    assert_eq!(code, 0, "{out}");
+    out
+}
+
+#[test]
+fn relative_schedule_resolves_against_the_clock_and_its_time_zone() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let id = u(T1).to_string();
+    // 2026-01-31T23:30:00Z: still January 31st in UTC, already February 1st
+    // one hour east.
+    let mut c = FixedClock::new(1_769_902_200_000);
+    let out = run_cli(&t, &mut c, &["schedule", &id, "+1m"]);
+    assert_eq!(out["ticket"]["scheduled"], "2026-02-28");
+    assert_eq!(out["message"], "ZZ-5 scheduled 2026-02-28 Sat");
+    let out = run_cli(&t, &mut c, &["schedule", &id, "today", "9:30"]);
+    assert_eq!(out["ticket"]["scheduled"], "2026-01-31 09:30");
+    c.utc_offset_s = 3600;
+    let out = run_cli(&t, &mut c, &["schedule", &id, "today"]);
+    assert_eq!(out["ticket"]["scheduled"], "2026-02-01");
+    let out = run_cli(&t, &mut c, &["schedule", &id, "+1m"]);
+    assert_eq!(out["ticket"]["scheduled"], "2026-03-01");
+    c.utc_offset_s = -10 * 3600;
+    let out = run_cli(&t, &mut c, &["schedule", &id, "tomorrow"]);
+    assert_eq!(out["ticket"]["scheduled"], "2026-02-01");
+    let out = run_cli(&t, &mut c, &["schedule", &id, "+1y"]);
+    assert_eq!(out["ticket"]["scheduled"], "2027-01-31");
+    // The event holds only the absolute date.
+    assert_eq!(
+        out["event"]["data"],
+        serde_json::json!({"to": "2027-01-31"})
+    );
+    // A batch resolves the same way, when it runs.
+    let request = serde_json::from_value(serde_json::json!({"changes": [
+        {"op": "scheduled", "ticket": id, "data": {"to": "+1w 10:00"}},
+    ]}))
+    .unwrap();
+    let out = crate::batch::apply(&t, &mut c, Some("tester"), request).unwrap();
+    assert_eq!(out["tickets"][0]["scheduled"], "2026-02-07 10:00");
+}

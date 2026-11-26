@@ -72,6 +72,58 @@ fn native_priority_is_nullable_batched_and_range_configurable() {
 }
 
 #[test]
+fn scheduled_is_batched_normalised_nullable_and_validated() {
+    let d = tracker();
+    let p = d.path();
+    let out = apply(
+        p,
+        json!([
+            {"op":"create", "data":{"title":"Synthetic date"}},
+            {"op":"scheduled", "ticket":{"created":0},
+             "data":{"to":"<2026-12-03 Thu 9:00 -2d +1w>"}}
+        ]),
+    );
+    let id = out["created"]["0"].as_str().unwrap();
+    assert_eq!(out["tickets"][0]["scheduled"], "2026-12-03 09:00 +1w -2d");
+    assert_eq!(
+        out["events"].as_array().unwrap().last().unwrap()["data"],
+        json!({"to": "2026-12-03 09:00 +1w -2d"})
+    );
+    // The same value in another spelling is a no-op.
+    let same = apply(
+        p,
+        json!([{"op":"scheduled","ticket":id,"data":{"to":"2026-12-03 09:00 +1w -2d"}}]),
+    );
+    assert_eq!(same["written"], false);
+    for bad in [
+        "2026-02-30",
+        "[2026-12-03 Thu]",
+        "<2026-12-03 Thu>--<2026-12-04 Fri>",
+        "today +1w",
+    ] {
+        refuses(
+            p,
+            json!({"changes":[
+                {"op":"title","ticket":id,"data":{"to":"Must not land"}},
+                {"op":"scheduled","ticket":id,"data":{"to":bad}}
+            ]}),
+            "invalid-timestamp",
+        );
+    }
+    refuses(
+        p,
+        json!({"changes":[{"op":"scheduled","ticket":id,"data":{}}]}),
+        "invalid-argument",
+    );
+    assert_eq!(ok(p, &["show", id])["title"], "Synthetic date");
+    let cleared = apply(
+        p,
+        json!([{"op":"scheduled","ticket":id,"data":{"to":null}}]),
+    );
+    assert_eq!(cleared["tickets"][0]["scheduled"], Value::Null);
+}
+
+#[test]
 fn creations_references_and_results_survive_interleaved_noops() {
     let d = tracker();
     let p = d.path();

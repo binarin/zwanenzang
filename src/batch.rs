@@ -67,6 +67,9 @@ pub fn apply(
 ) -> Result<Value> {
     let mut targets = Vec::new();
     let mut creations = BTreeMap::new();
+    // Relative planning dates resolve against the local date when the
+    // batch runs, as on the command line.
+    let today = crate::clock::local_today(clock);
     let w = tracker.write_with(
         clock,
         WriteOptions {
@@ -81,8 +84,8 @@ pub fn apply(
                 let mut data = change.data;
                 let fields: &[&str] = match change.op.as_str() {
                     "create" => &["title", "status", "kind"],
-                    "title" | "status" | "kind" | "priority" | "parent" | "relate" | "unrelate"
-                    | "depend" | "undepend" => &["to"],
+                    "title" | "status" | "kind" | "priority" | "scheduled" | "parent"
+                    | "relate" | "unrelate" | "depend" | "undepend" => &["to"],
                     "tag" | "untag" => &["tag"],
                     "branch" => &["repo", "name"],
                     "mr" => &["repo", "url"],
@@ -137,6 +140,13 @@ pub fn apply(
                         // ids of earlier creations, before applying the event.
                         object.insert("to".into(), json!(tracker.config.id));
                     }
+                }
+                if change.op == "scheduled"
+                    && let Some(Value::String(input)) = object.get("to")
+                {
+                    let value =
+                        crate::planning::resolve_input(input, today).map_err(Error::Rejected)?;
+                    object.insert("to".into(), json!(value));
                 }
                 if matches!(change.op.as_str(), "doc" | "comment") {
                     let text = object

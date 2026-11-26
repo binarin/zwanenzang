@@ -157,6 +157,7 @@ them; any change to them fails with `tombstoned`.
 | `title T TITLE` | `title` | mutation object |
 | `kind T KIND` / `kind T --clear` | `kind` | mutation object |
 | `priority T VALUE` / `priority T --clear` | `priority` | mutation object |
+| `schedule T VALUE...` / `schedule T --clear` | `scheduled` | mutation object with `message` |
 | `parent T P` / `parent T --clear` | `parent` | mutation object |
 | `relate T OTHER [--remove]` | `relate` / `unrelate` | mutation object |
 | `depend T PREREQUISITE [--remove]` | `depend` / `undepend` | mutation object |
@@ -185,6 +186,39 @@ them; any change to them fails with `tombstoned`.
 Text up to 2048 bytes is stored inline; longer text goes to a blob. Text that
 is empty or only whitespace is refused with `invalid-comment` whichever way it
 would be stored. `doc set` reads the new text from `--file` or stdin.
+
+`schedule` sets or clears the ticket's Org SCHEDULED date. `VALUE` is one
+argument or several, joined by blanks, so `schedule ZZ-42 2026-12-03 10:00
++1w` needs no quotes; values starting with `-` are taken as they are. It is
+one of:
+
+- An absolute date: `YYYY-MM-DD`, then optionally a time `HH:MM` (`H:MM`
+  too) or a time range `HH:MM-HH:MM`, a repeater (`+`, `++` or `.+`, a
+  count and a unit of `h d w m y`, optionally `/` and a second count and
+  unit) and a delay (`-` or `--`, a count and a unit). A pasted Org
+  timestamp such as `<2026-12-03 Thu 10:00>` is accepted: the brackets
+  and the weekday, in any language, are dropped. The weekday is every
+  word after the date before the first one starting with a digit, `+`,
+  `-` or `.` (so `T5` or `Aso Tof` too), and is not checked against the
+  date. Any white space separates words. A word holding `+`, `-` or a
+  time, such as `Thu+1w`, is refused, not dropped.
+- A relative date: `today` or `.`, `tomorrow`, or `+N` with a unit `d`,
+  `w`, `m` or `y`, optionally followed by a time or time range, but no
+  repeater or delay. It is relative only as the first token: `+1w` after
+  a date is a repeater. It is resolved when the command runs, against
+  the local date where the CLI runs (its `TZ`), and only the absolute
+  date is stored. Months and years count calendar months, clamped to the
+  month's end: `+1m` from 01-31 is 02-28 (02-29 in a leap year).
+
+The stored value is normalised: `YYYY-MM-DD[ HH:MM[-HH:MM]][ REPEATER][
+DELAY]`, no brackets and no weekday, two-digit hours, the repeater before
+the delay. An inactive `[...]` timestamp, a range `<a>--<b>`, a diary sexp,
+an impossible date or time (`2026-02-30`, `25:00`) or anything else is
+refused with `invalid-timestamp`. The mutation object's `message` echoes
+the result in words, such as `"ZZ-42 scheduled 2026-12-03 Thu 10:00"`
+(English weekday) or `"ZZ-42 not scheduled"`. The date is tracking data:
+nothing reminds, sorts or filters by it, and `done` or `cncl` does not
+clear it.
 
 `archive` and `unarchive` change only the `archived` flag, never `status`.
 Archiving an archived ticket or unarchiving one that is not archived writes
@@ -311,6 +345,7 @@ Supported operations and their complete input data fields:
 | `title`, `status` | `{to: string}` |
 | `kind` | `{to: string or null}`; required, null clears |
 | `priority` | `{to: integer or null}`; required, null clears explicit priority |
+| `scheduled` | `{to: string or null}`; required, null clears; the string takes the same input as `schedule` (relative dates resolved when the batch runs) and is stored normalised |
 | `parent` | `{to: reference or null}`; required, null clears |
 | `relate`, `unrelate`, `depend`, `undepend` | `{to: reference}` |
 | `tag`, `untag` | `{tag: string}` |
@@ -603,6 +638,8 @@ be serialized with sync.
   `parent` and `tag` events from `--parent` and `--tag`.
 - A command writes all of its events or none: if one is refused, nothing is
   written and the error is returned.
+- `schedule` adds `message`, the resolved value in words (see
+  `schedule`); it is there for no-op writes too.
 - `sync` is the sync object for the sync after the write, or `null` when
   nothing was written. `ticket` is the state after it, so a ticket can
   already carry its number. The `number` events are in `sync.numbered`,
@@ -680,6 +717,7 @@ Operation data:
 | `title`, `status` | `{to}` |
 | `kind` | `{to: name \| null}` |
 | `priority` | `{to: integer \| null}`; native Org value |
+| `scheduled` | `{to: string \| null}`; normalised Org timestamp body |
 | `parent` | `{to: ticket id \| null}` |
 | `relate`, `unrelate` | `{to: ticket id}` |
 | `depend`, `undepend` | `{to: ticket id}`; the prerequisite |
@@ -701,6 +739,7 @@ Operation data:
  "display": "ZZ-42" | "<short_id>",
  "title": "...", "status": "agnt", "kind": "bug" | null,
  "priority": 65 | null,
+ "scheduled": "2026-12-03 10:00 +1w" | null,
  "parent": "<ULID>" | null, "children": ["<ULID>", ...], "related": ["<ULID>", ...],
  "tags": ["..."], "branches": [{"repo": "app", "name": "..."}],
  "mrs": [{"repo": "app", "url": "..."}],
@@ -726,6 +765,10 @@ Operation data:
   range return `invalid-priority`. Replay accepts any native value 0–90,
   so changing settings does not invalidate old events. `read.tracker.priority`
   exposes the three settings. Clearing priority never materializes a default.
+- `scheduled` is the Org SCHEDULED date in its normalised form (see
+  `schedule` above), floating local time, or null. Replay keeps any
+  string a log holds, so a reader should expect a value outside that
+  form from a newer build.
 - `children` and `related` leave out tombstoned tickets. `parent` is the
   field's value even if that ticket is tombstoned.
 - `last_event` is the id of the latest accepted event whose entity is this
@@ -746,7 +789,7 @@ Operation data:
   has one; `blob` is `null` for inline comments.
 
 A summary (in `list`, and in `query --summary`) has the fields `id`, `short_id`, `number`, `display`,
-`title`, `status`, `kind`, `priority`, `parent`, `tags`, `depends_on`, `blocks`, `archived`,
+`title`, `status`, `kind`, `priority`, `scheduled`, `parent`, `tags`, `depends_on`, `blocks`, `archived`,
 `tombstoned`, `last_event`, `activity` and `tag_since`. Full ticket objects include these fields too.
 `depends_on` contains prerequisite ULIDs; `blocks` contains dependent ULIDs,
 computed from forward edges. Both arrays are sorted, include archived and
@@ -809,7 +852,7 @@ described in the design note on the static site, not part of this contract.
   UTF-8, which is skipped as `malformed`). `log` is the log file name without `.jsonl`,
   `line` is 1-based; `id` and `op` are `null` when they could not be read.
 - `concurrent`: two changes by different writers to the same field (`title`,
-  `status`, `kind`, `priority`, `parent`) of one ticket where the later writer had not
+  `status`, `kind`, `priority`, `scheduled`, `parent`) of one ticket where the later writer had not
   seen the earlier change, with different values. The later one won.
   Directed dependency add/remove disagreements on the same edge use field
   `depends_on` and values `{to: <prerequisite ULID>, present: boolean}`.
@@ -884,6 +927,7 @@ Rejections: returned as the error code when a write is refused, and as
 | `status-not-in-vocabulary`, `kind-not-in-vocabulary` | not in the tracker's vocabulary |
 | `retired-status` | `create`, `status` or an `apply` change names a status in `retired_statuses`, even the ticket's current one (write only; replay accepts it) |
 | `invalid-priority` | outside the configured live range or not a native Org priority value |
+| `invalid-timestamp` | a `scheduled` value outside the timestamp form, or an impossible date or time (write only; replay keeps any string) |
 | `unknown-target`, `target-tombstoned` | a parent, relation or dependency target is missing or tombstoned |
 | `parent-cycle`, `self-relation` | the parent chain would loop, or a ticket relates to itself |
 | `dependency-cycle` | a dependency self-edge (write/replay), or an added edge would close a cycle (write only) |

@@ -480,6 +480,7 @@ impl Site {
                 "status": t.status,
                 "kind": t.kind,
                 "priority": t.priority.map(priority_text),
+                "scheduled": t.scheduled.as_deref().map(crate::planning::display),
                 "tags": t.tags,
                 "parent": t.parent.filter(included),
                 "children": children,

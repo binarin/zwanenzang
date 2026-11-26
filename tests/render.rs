@@ -114,6 +114,7 @@ fn fixture() -> Fixture {
     assert_eq!(upstream.code, 0, "{}", upstream.json);
     ok(p, &["comment", &gone, "Linked from a tombstoned ticket"]);
     ok(p, &["depend", &child, &parent]);
+    ok(p, &["schedule", &child, "2026-12-03", "10:00", "+1w"]);
     ok(p, &["status", &archived, "done"]);
     ok(p, &["archive", &archived]);
     ok(p, &["tombstone", &gone]);
@@ -216,6 +217,9 @@ fn writes_the_site_with_tickets_documents_and_comments() {
     assert_eq!(child["parent"], f.parent.as_str());
     assert_eq!(child["depends_on"], serde_json::json!([f.parent]));
     assert_eq!(child["tags"], serde_json::json!(["ui"]));
+    // The date as Org shows it, with an English weekday.
+    assert_eq!(child["scheduled"], "2026-12-03 Thu 10:00 +1w");
+    assert_eq!(parent["scheduled"], Value::Null);
     assert_eq!(ticket(&d, &f.archived)["archived"], true);
     assert_eq!(ticket(&d, &f.archived)["status"], "done");
 

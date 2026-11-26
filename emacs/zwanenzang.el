@@ -30,6 +30,7 @@
 (require 'org-id)
 (require 'org-src)
 (require 'subr-x)
+(require 'time-date)
 
 (defgroup zwanenzang nil
   "Sync Org subtrees with zwanenzang trackers."
@@ -1336,7 +1337,7 @@ removed; when none is left, so is the property.  The next push sends it."
 ;; heading had then (they differ when the parent has no heading in scope).
 ;; "-" is none; a missing key is unknown.
 
-(defconst zwanenzang--sync-keys '(status title priority tags depends parent nest))
+(defconst zwanenzang--sync-keys '(status title priority scheduled tags depends parent nest))
 
 (defun zwanenzang--parse-sync (value)
   "Parse a ZWANENZANG_SYNC VALUE into an alist; \"-\" becomes nil."
@@ -1388,6 +1389,149 @@ nesting changed) or `conflict'."
      ((not local-changed) (if (equal nest expected) 'same 'move))
      ((equal nest expected) 'same)
      (t 'conflict))))
+
+;;;; Planning dates
+
+;; The tracker's `scheduled' field is the heading's SCHEDULED: date.  A
+;; value is the tracker's normalised timestamp body, without brackets or
+;; weekday: "2026-12-03", "2026-12-03 10:00-11:00 +1w -2d".  The same
+;; functions serve any planning keyword, so DEADLINE can follow.
+
+(defconst zwanenzang--planning-blanks
+  "[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+"
+  "Unicode white space, the characters Rust's `split_whitespace' splits at.")
+
+(defun zwanenzang--planning-normalize (body)
+  "BODY, the text of an Org timestamp without its brackets, in tracker form.
+That is the date, then a time or time range with two-digit hours, a
+repeater and a delay.  The weekday, Org's `%a' in any locale, is dropped:
+it is every word after the date up to the first one starting with an
+ASCII digit, `+', `-' or `.', since every locale's weekday words start
+otherwise (`Thu', `T5', `ה\='', `Aso Tof').  A word holding `+', `-' or
+a time, such as `Thu+1w' (which Org reads as a repeater), is never
+weekday, so nothing it holds is dropped: the value is refused.  Words
+split at any Unicode white space, as in the CLI: `lv_LV' ends its
+weekday in a no-break space, and no separator may hide a time inside a
+dropped word.  Return nil
+when BODY is not one the tracker stores: no date first, an impossible
+date or time, two repeaters or delays, or anything else after the date.
+This accepts what the CLI's live writes accept, so a push never sends a
+value the CLI refuses."
+  (let* ((case-fold-search nil)
+         (tokens (split-string body zwanenzang--planning-blanks t))
+         (date (pop tokens))
+         time repeater delay (ok t))
+    (when (and date
+               (string-match "\\`\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)\\'" date)
+               (let ((y (string-to-number (match-string 1 date)))
+                     (m (string-to-number (match-string 2 date)))
+                     (d (string-to-number (match-string 3 date))))
+                 (and (<= 1 m 12) (<= 1 d (date-days-in-month y m)))))
+      (while (and tokens
+                  (string-match-p "\\`[^-+.0-9]" (car tokens))
+                  (not (string-match-p "[][<>+-]\\|[0-9]:[0-9]" (car tokens))))
+        (pop tokens))
+      (when (and tokens
+                 (string-match "\\`\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)\\(?:-\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)\\)?\\'"
+                               (car tokens)))
+        (let* ((token (pop tokens))
+               (clocks (seq-filter
+                        #'identity
+                        (list (cons (match-string 1 token) (match-string 2 token))
+                              (and (match-string 3 token)
+                                   (cons (match-string 3 token) (match-string 4 token)))))))
+          (setq time
+                (mapconcat (lambda (c)
+                             (let ((h (string-to-number (car c)))
+                                   (m (string-to-number (cdr c))))
+                               (if (and (<= h 23) (<= m 59))
+                                   (format "%02d:%02d" h m)
+                                 (setq ok nil)
+                                 "")))
+                           clocks "-"))))
+      (dolist (token tokens)
+        (cond
+         ((and (not repeater)
+               (string-match-p "\\`\\(?:\\.\\+\\|\\+\\+\\|\\+\\)[0-9]+[hdwmy]\\(?:/[0-9]+[hdwmy]\\)?\\'"
+                               token))
+          (setq repeater token))
+         ((and (not delay) (string-match-p "\\`--?[0-9]+[hdwmy]\\'" token))
+          (setq delay token))
+         (t (setq ok nil))))
+      (and ok (string-join (delq nil (list date time repeater delay)) " ")))))
+
+(defun zwanenzang--planning-raw (keyword)
+  "The text KEYWORD has on the planning line of the heading at point, or nil.
+KEYWORD is such as \"SCHEDULED\"; the text runs to the next planning
+keyword or the end of the line."
+  (save-excursion
+    (org-back-to-heading t)
+    (end-of-line)
+    (unless (eobp)
+      (forward-line)
+      (let ((case-fold-search nil)
+            (end (line-end-position)))
+        (when (and (looking-at-p org-planning-line-re)
+                   (re-search-forward (concat "\\<" keyword ":[ \t]*") end t))
+          (let ((start (point)))
+            (string-trim
+             (buffer-substring-no-properties
+              start (if (re-search-forward org-keyword-time-not-clock-regexp end t)
+                        (match-beginning 0)
+                      end)))))))))
+
+(defun zwanenzang--planning-local (keyword)
+  "KEYWORD's date on the heading at point, as the tracker would store it.
+Nil when there is none; otherwise the normalised value, or
+\(:unrepresentable . RAW) for a timestamp the tracker cannot store: a
+range, an inactive or diary sexp timestamp, an impossible date, or other
+text.  RAW is the text as it stands."
+  (let ((raw (zwanenzang--planning-raw keyword)))
+    (cond
+     ((or (null raw) (string-empty-p raw)) nil)
+     ((let ((inner (and (string-match "\\`<\\([^<>\n]*\\)>\\'" raw) (match-string 1 raw))))
+        (and inner (not (string-prefix-p "%%" inner))
+             (zwanenzang--planning-normalize inner))))
+     (t (cons :unrepresentable raw)))))
+
+(defun zwanenzang--planning-key (value)
+  "VALUE, a tracker timestamp or nil, as one token of `ZWANENZANG_SYNC'.
+Blanks become `_', which the form does not use otherwise."
+  (and value (string-replace " " "_" value)))
+
+(defun zwanenzang--planning-base (sync key)
+  "The value last synced for KEY in the sync alist SYNC, or nil for none.
+A heading synced before the field existed has no KEY; that counts as no
+date, so an existing local date is pushed as an ordinary change."
+  (let ((stored (zwanenzang--sync-get sync key)))
+    (and (stringp stored) (string-replace "_" " " stored))))
+
+(defun zwanenzang--set-planning (what value)
+  "Give the heading at point VALUE as its WHAT date, or remove it when nil.
+WHAT is `scheduled'.  Org's planning functions place the date, in
+Org's own position and with the weekday in Org's locale, and leave the
+other planning keywords' values alone; the rest of VALUE (time, repeater,
+delay) follows the date."
+  (let ((keyword (upcase (symbol-name what))))
+    (save-excursion
+      (org-back-to-heading t)
+      (if (null value)
+          (when (zwanenzang--planning-raw keyword)
+            (org-add-planning-info nil nil what))
+        (string-match "\\`\\([0-9]+\\)-\\([0-9]+\\)-\\([0-9]+\\)" value)
+        (let ((rest (substring value (match-end 0))))
+          (org-add-planning-info
+           what (org-encode-time 0 0 0 (string-to-number (match-string 3 value))
+                                 (string-to-number (match-string 2 value))
+                                 (string-to-number (match-string 1 value))))
+          (org-back-to-heading t)
+          (forward-line)
+          (let ((case-fold-search nil))
+            (when (and (not (string-empty-p rest))
+                       (re-search-forward (concat "\\<" keyword ": *<\\([^>]*\\)>")
+                                          (line-end-position) t))
+              (goto-char (match-end 1))
+              (insert-and-inherit rest))))))))
 
 ;;;; Pull
 
@@ -1699,6 +1843,8 @@ Every field then counts as unchanged in Org, so TICKET's values apply."
   `((status . ,(car (rassoc (plist-get heading :keyword) (zwanenzang--pull-map pull))))
     (title . ,(zwanenzang--hash (plist-get heading :title)))
     (priority . ,(number-to-string (or (plist-get heading :priority) -1)))
+    (scheduled . ,(let ((local (zwanenzang--planning-local "SCHEDULED")))
+                    (and (stringp local) (zwanenzang--planning-key local))))
     (tags . ,(zwanenzang--tags-hash (zwanenzang--tracker-tags (plist-get heading :tags))))
     (parent . ,(zwanenzang--null (alist-get 'parent ticket)))
     (nest . ,nest)))
@@ -1756,7 +1902,7 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
          (title (plist-get heading :title))
          (priority (plist-get heading :priority))
          (tags (zwanenzang--tracker-tags (plist-get heading :tags)))
-         conflicts description desc-state)
+         conflicts description desc-state scheduled)
     (cl-flet ((settle (field decision note value key synced)
                 ;; Record DECISION for FIELD; non-nil when the remote value applies.
                 (if (eq decision 'conflict)
@@ -1799,6 +1945,24 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
                         "tracker priority skipped; Org cookie kept" remote-key
                         'priority remote-key)
             (setq priority remote)))
+        (let* ((local (zwanenzang--planning-local "SCHEDULED"))
+               (stored (zwanenzang--null (alist-get 'scheduled ticket)))
+               (remote (and stored (zwanenzang--planning-normalize stored))))
+          ;; What either side cannot express is left alone, with a warning.
+          (cond
+           ((eq (car-safe local) :unrepresentable)
+            (zwanenzang--pull-line
+             pull "%s: SCHEDULED %s not synced: a range, inactive or diary timestamp, or a form the tracker does not store; Org line left as is"
+             (zwanenzang--label ticket) (cdr local)))
+           ((and stored (not remote))
+            (zwanenzang--pull-line
+             pull "%s: tracker scheduled value %S not pulled: not an Org timestamp this client writes; Org line left as is"
+             (zwanenzang--label ticket) stored))
+           ((settle "scheduled"
+                    (zwanenzang--merge local (zwanenzang--planning-base sync 'scheduled) remote)
+                    "tracker scheduled date skipped; Org SCHEDULED kept" (or remote "(none)")
+                    'scheduled (zwanenzang--planning-key remote))
+            (setq scheduled (list remote)))))
         (let ((remote (alist-get 'tags ticket)))
           (when (settle "tags" (zwanenzang--merge (zwanenzang--tags-hash tags)
                                                   (zwanenzang--sync-get sync 'tags)
@@ -1866,6 +2030,8 @@ conflicting fields, or `blocked' when the tracker status has no keyword."
             ("ZWANENZANG_CODE" . ,(zwanenzang--code-content ticket))
             ("ZWANENZANG_CONFLICT" . ,(zwanenzang--conflict-content conflicts)))
           description))
+        (when scheduled
+          (zwanenzang--set-planning 'scheduled (car scheduled)))
         (push (list (alist-get 'id ticket) fresh (zwanenzang--comment-records pull ticket))
               (zwanenzang--pull-comments pull))
         (when (integerp (alist-get 'number ticket))
@@ -1924,6 +2090,7 @@ Sync state and conflict notes are left out."
     (list (plist-get heading :keyword)
           (plist-get heading :title)
           (plist-get heading :priority)
+          (zwanenzang--planning-raw "SCHEDULED")
           (zwanenzang--dependency-refs)
           (zwanenzang--tracker-tags (plist-get heading :tags))
           (zwanenzang--segments-text segments)
@@ -3251,6 +3418,16 @@ summaries for resolving dependency numbers, including absent prerequisites."
       (when (and (not (equal key base))
                  (not (equal priority (zwanenzang--null (alist-get 'priority ticket)))))
         (zwanenzang--plan-add plan "priority" ref `((to . ,(or priority :null))))))
+    (let ((local (zwanenzang--planning-local "SCHEDULED")))
+      (if (eq (car-safe local) :unrepresentable)
+          (zwanenzang--plan-line
+           plan "%s: scheduled not pushed: SCHEDULED %s is a range, inactive or diary timestamp, or a form the tracker does not store"
+           (zwanenzang--heading-label) (cdr local))
+        (let* ((stored (zwanenzang--null (alist-get 'scheduled ticket)))
+               (remote (and stored (or (zwanenzang--planning-normalize stored) stored))))
+          (unless (or (equal local (zwanenzang--planning-base sync 'scheduled))
+                      (equal local remote))
+            (zwanenzang--plan-add plan "scheduled" ref `((to . ,(or local :null))))))))
     (when (zwanenzang--edited-p (zwanenzang--tags-hash tags)
                                 (zwanenzang--sync-get sync 'tags) (null tags))
       (let ((remote (alist-get 'tags ticket)))
@@ -3967,6 +4144,10 @@ Compare with saved sync hashes, without compiling or sending a push."
     (unless (equal (number-to-string (or (plist-get shown :priority) -1))
                    (or (alist-get 'priority sync) "-1"))
       (push "priority" fields))
+    (let ((local (zwanenzang--planning-local "SCHEDULED")))
+      (unless (or (eq (car-safe local) :unrepresentable)
+                  (equal local (zwanenzang--planning-base sync 'scheduled)))
+        (push "scheduled" fields)))
     (let ((base (zwanenzang--sync-get sync 'nest))
           (nest (plist-get heading :nest)))
       (when (if (eq base :unknown) nest (not (equal base nest)))

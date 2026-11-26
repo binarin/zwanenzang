@@ -272,6 +272,7 @@
       el("span", null, "status ", el("b", null, t.status)),
       t.kind ? el("span", null, "kind ", el("b", null, t.kind)) : null,
       t.priority ? el("span", null, "priority ", el("b", null, t.priority)) : null,
+      t.scheduled ? el("span", null, "scheduled ", el("b", null, t.scheduled)) : null,
       t.archived ? el("span", { class: "archived-note" }, "archived") : null,
       el("span", null, "created " + when(t.created)),
       el("span", null, "active " + when(t.activity)));

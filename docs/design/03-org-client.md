@@ -74,6 +74,7 @@ Mapping between heading and ticket:
 | Org | Tracker |
 |-----|---------|
 | TODO keyword | status, via the scope's keyword map |
+| `SCHEDULED:` on the planning line | `scheduled`, see "Scheduled date" below |
 | heading title, after the number prefix | title |
 | nesting under another ticket heading | parent |
 | nesting under a non-ticket heading | nothing |
@@ -222,8 +223,8 @@ happens to it.
 ## Push
 
 For every ticket in scope, compare the heading with its sync state and emit
-events for what differs: keyword to `status`, title, parent from nesting,
-tags, dependencies, description and documents as new versions with the synced version as
+events for what differs: keyword to `status`, title, priority cookie,
+`SCHEDULED:` date, parent from nesting, tags, dependencies, description and documents as new versions with the synced version as
 `base`. Then publish and pull once more so numbers and cursors land.
 
 Push always succeeds for the human. If an agent changed the same field in
@@ -526,7 +527,8 @@ standard Org `ID` is only filled in when missing, as described above.
   form, such as `ZZ-42`), `ZWANENZANG_CURSOR`, `ZWANENZANG_SYNC`, `ZWANENZANG_DESC_VERSION`
   and `ZWANENZANG_DESC_HASH`. `ZWANENZANG_SYNC` is a compact snapshot of
   the last synced fields, for example `status=agnt title=<hash>
-  tags=<hash> depends=<hash> parent=<id> nest=<id>` (exact form under Pull below). It
+  priority=65 scheduled=2026-12-03_10:00 tags=<hash> depends=<hash>
+  parent=<id> nest=<id>` (exact form under Pull below). It
   stores the tracker status, so an `agnt` shown as NEXT stays `agnt`.
 - Inline named document, the old form pull migrates away: a subheading
   with `ZWANENZANG_DOC: <name>`, `ZWANENZANG_VERSION` and
@@ -766,8 +768,8 @@ tracker.
   naming a keyword the buffer does not define, or a status outside the
   vocabulary, is reported and ignored. Without the property, each TODO
   keyword maps the status of the same name, ignoring case.
-- Field by field, for status, title, tags, dependencies, parent and
-  description: the remote value applies when Org still shows the
+- Field by field, for status, title, priority, scheduled date, tags,
+  dependencies, parent and description: the remote value applies when Org still shows the
   value as last synced; Org's value stays when only Org changed; when
   both changed, Org's value stays, the heading gets `zz_conflict` and
   the skipped remote value goes in the conflict drawer. A field with no
@@ -779,8 +781,11 @@ tracker.
 - The conflict drawer and tag are recomputed by every pull: they hold
   what this pull could not apply, and disappear once Org agrees with the
   tracker (by hand, or after a push).
-- `ZWANENZANG_SYNC` is `status=<status> title=<hash> tags=<hash>
-  depends=<hash> parent=<id> nest=<id>`, `-` for none. `nest` is the ticket heading the
+- `ZWANENZANG_SYNC` is `status=<status> title=<hash> priority=<n>
+  scheduled=<value> tags=<hash> depends=<hash> parent=<id> nest=<id>`,
+  `-` for none (priority writes `-1`). `scheduled` is the normalised
+  value with `_` for each blank, so the snapshot stays one token per
+  field; see "Scheduled date". `nest` is the ticket heading the
   heading was nested under at that sync; it differs from `parent` when
   the parent has no heading in scope. Hashes, here and in
   `ZWANENZANG_DESC_HASH` and `ZWANENZANG_HASH`, are the first 16 hex
@@ -1214,7 +1219,9 @@ Pull projects read-only `ZWANENZANG_ACTIVITY` (selected event timestamp),
 `ZWANENZANG_READ_AT` (time this event snapshot was first read, NOT last
 fetch; unchanged cursors keep it so no-op pulls do not dirty the buffer). Incremental reads and
 cursor resets both use the full replay-derived values; ordinary agent
-activity does not reset waiting age. No new timestamp events are introduced.
+activity does not reset waiting age. These projections add no events of
+their own; the one date a ticket carries as an event is its `scheduled`
+field, below, which is not activity.
 
 `M-x zwanenzang-queue` uses org-ql over `zwanenzang-org-files`. Membership is
 an explicit local attention tag (`needs_human` by default, configurable),
@@ -1237,7 +1244,54 @@ stage transitions, approval gates or new completion policies are added.
 org-ql retains query, saved-view and navigation capabilities; this adapter
 adds no query language or generic view framework.
 
+## Scheduled date
+
+Decided 2026-11-26 (ZZ-51). A ticket's `scheduled` field (data model) is
+the heading's Org `SCHEDULED:` date, so dates an agent sets reach the
+human's agenda and dates the human sets reach the tracker. DEADLINE
+follows later on the same paths; CLOSED stays local, since the status
+event's time already records it.
+
+- Reading: the `SCHEDULED:` entry on the heading's planning line, up to
+  the next planning keyword. An active timestamp in the tracker's form
+  reads as its normalised value: the weekday, whatever its locale and
+  however many words (as the data model's grammar reads it), is dropped, `9:00` reads as `09:00`, and a delay before the repeater
+  counts as the same value. Values are compared normalised, never as
+  raw text, so the human's spelling is not an edit.
+- `scheduled=` in `ZWANENZANG_SYNC` holds the value as last synced. Pull
+  and push merge it as the other scalars: the remote value applies when
+  Org still shows the synced one, Org's value stays when only Org
+  changed, and when both changed Org's value stays, the heading gets
+  `zz_conflict` and the skipped value goes in the conflict drawer. A
+  heading without the key, written before this field existed, counts as
+  synced with no date: the first push after the upgrade sends an existing
+  `SCHEDULED:` as an ordinary change, and an empty heading takes a date
+  the tracker has.
+- Pull writes and clears the date with Org's planning functions
+  (`org-add-planning-info`), in Org's place for it, the planning line
+  right below the heading, and touches no `DEADLINE:` or `CLOSED:` on
+  that line. The weekday is Org's own for the reader's locale; time,
+  repeater and delay follow the stored value. Org may reorder the
+  keywords on the line, never their values. Clearing the last keyword
+  removes the line. A pull that only differs in spelling writes nothing.
+- Push sends a changed date as `scheduled` with the normalised value, and
+  a removed one as null. A new heading's date is sent after its create.
+- Unrepresentable values: a time range across days (`<a>--<b>`), an
+  inactive `[...]` timestamp, a diary sexp `<%%(...)>`, an impossible
+  date, a repeater or delay attached to the weekday (`<2026-12-03
+  Thu+1w>`, which Org accepts) or anything else outside the tracker's
+  form. Push leaves the field
+  out and pull does not write it, so the line stays exactly as it is;
+  both put a warning in the report and keep the field's sync state, and
+  the heading's other fields still sync. A tracker value the client
+  cannot write as Org (possible only from a newer build or an
+  out-of-form log line) is reported the same way and leaves Org alone.
+- Nothing is cleared or changed by status: a done ticket keeps its date,
+  as Org does. The client sets no reminders and changes no agenda
+  settings.
+- An archive hook lists an edited date among the fields not pushed.
+
 ## Open questions
 
-Richer dependency editing commands, displays and agenda integration remain
-out of scope until daily use motivates them.
+Richer dependency editing commands, displays and agenda integration beyond
+the `SCHEDULED:` date remain out of scope until daily use motivates them.

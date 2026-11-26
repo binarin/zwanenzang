@@ -775,6 +775,10 @@ impl Clock for Stepping<'_> {
     fn random80(&mut self) -> u128 {
         self.inner.random80()
     }
+
+    fn utc_offset_s(&mut self, ms: u64) -> i64 {
+        self.inner.utc_offset_s(ms)
+    }
 }
 
 #[derive(Debug, Default)]

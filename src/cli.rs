@@ -12,7 +12,7 @@ use crate::clock::{Clock, SystemClock};
 use crate::error::{Error, Result};
 use crate::event::{
     BranchData, CommentData, CreateData, DocData, Empty, KindData, MrData, Op, ParentData,
-    RelateData, TagData, TextTo,
+    RelateData, ScheduledData, TagData, TextTo,
 };
 use crate::lint::lint;
 use crate::replay::Replay;
@@ -108,6 +108,22 @@ pub enum Command {
         #[arg(required_unless_present = "clear")]
         priority: Option<u8>,
         #[arg(long, conflicts_with = "priority")]
+        clear: bool,
+    },
+    /// Set the Org SCHEDULED date, or clear it. VALUE is YYYY-MM-DD with
+    /// an optional HH:MM or HH:MM-HH:MM, repeater (+1w) and delay (-2d),
+    /// or today, tomorrow or +N with d, w, m or y and an optional time.
+    Schedule {
+        ticket: String,
+        /// The date, in one argument or several.
+        #[arg(
+            required_unless_present = "clear",
+            num_args = 1..,
+            allow_hyphen_values = true,
+            value_name = "VALUE"
+        )]
+        value: Vec<String>,
+        #[arg(long, conflicts_with = "value")]
         clear: bool,
     },
     /// Set or clear a ticket's parent.
@@ -574,6 +590,25 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                 Op::Priority(crate::event::PriorityData { to: priority }),
             ))
         }),
+        Command::Schedule { ticket, value, .. } => {
+            let to = if value.is_empty() {
+                None
+            } else {
+                let today = crate::clock::local_today(ctx.clock);
+                Some(
+                    crate::planning::resolve_input(&value.join(" "), today)
+                        .map_err(Error::Rejected)?,
+                )
+            };
+            let op = Op::Scheduled(ScheduledData { to: to.clone() });
+            let (mut out, code) = ctx.mutate(&ticket, |_, id| Ok(one(id, op)))?;
+            let display = out["ticket"]["display"].as_str().unwrap_or_default();
+            out["message"] = json!(match &to {
+                Some(v) => format!("{display} scheduled {}", crate::planning::display(v)),
+                None => format!("{display} not scheduled"),
+            });
+            Ok((out, code))
+        }
         Command::Parent { ticket, parent, .. } => ctx.mutate(&ticket, |view, id| {
             let to = parent.map(|p| view.resolve(&p)).transpose()?;
             Ok(one(id, Op::Parent(ParentData { to })))

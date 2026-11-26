@@ -112,6 +112,61 @@ fn priority_replay_reports_concurrent_changes_and_preserves_native_values() {
 }
 
 #[test]
+fn scheduled_replay_keeps_any_string_and_reports_concurrent_changes() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let scheduled = |to: Option<&str>| {
+        Op::Scheduled(crate::event::ScheduledData {
+            to: to.map(str::to_string),
+        })
+    };
+    append_events(
+        &t,
+        &[
+            ev(
+                u(20),
+                ACTOR_A,
+                Some(u(BASE_LAST)),
+                u(T1),
+                scheduled(Some("2026-12-03")),
+            ),
+            // Impossible, and outside the form: a live write refuses both,
+            // replay keeps what the log holds.
+            ev(
+                u(21),
+                ACTOR_B,
+                Some(u(BASE_LAST)),
+                u(T1),
+                scheduled(Some("2026-02-30 Mon 25:00")),
+            ),
+        ],
+    );
+    let rp = load(&t);
+    assert!(rp.skipped.is_empty(), "{:?}", rp.skipped);
+    assert_eq!(
+        rp.state.tickets[&u(T1)].scheduled.as_deref(),
+        Some("2026-02-30 Mon 25:00")
+    );
+    assert_eq!(rp.state.concurrent.len(), 1);
+    assert_eq!(rp.state.concurrent[0].field, "scheduled");
+    assert_eq!(rp.state.concurrent[0].earlier_value, json!("2026-12-03"));
+    let view = View::new(&t, &rp);
+    assert_eq!(
+        view.ticket(&rp.state.tickets[&u(T1)])["scheduled"],
+        json!("2026-02-30 Mon 25:00")
+    );
+    assert_eq!(
+        view.summary(&rp.state.tickets[&u(T2)])["scheduled"],
+        json!(null)
+    );
+    append_events(
+        &t,
+        &[ev(u(22), ACTOR_A, Some(u(21)), u(T1), scheduled(None))],
+    );
+    assert_eq!(load(&t).state.tickets[&u(T1)].scheduled, None);
+}
+
+#[test]
 fn base_fixture_replays_cleanly() {
     let dir = disposable_dir();
     let t = based(&dir);

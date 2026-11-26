@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::clock::{Clock, format_ts, leaps_too_far, next_id};
 use crate::config::AGENT_IDENTITY;
 use crate::error::{Error, Result};
-use crate::event::{ActorData, CreateData, Event, Op, TextTo};
+use crate::event::{ActorData, CreateData, Event, Op, ScheduledData, TextTo};
 use crate::git::Repo;
 use crate::replay::{Replay, replay};
 use crate::state::{RejectCode, Rejection, apply};
@@ -305,6 +305,9 @@ impl Tracker {
                         self.config.priority.highest, self.config.priority.lowest
                     ),
                 }));
+            }
+            if let Op::Scheduled(ScheduledData { to: Some(value) }) = &ev.op {
+                crate::planning::check_value(value).map_err(Error::Rejected)?;
             }
             let mut trial = state.clone();
             let applied = apply(&mut trial, &ev).map_err(Error::Rejected)?;
