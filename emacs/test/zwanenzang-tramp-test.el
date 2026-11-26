@@ -157,6 +157,139 @@
                     ((symbol-function 'file-directory-p) (lambda (_) nil)))
             (should-error (zwanenzang--scope-directory root) :type 'user-error)))))))
 
+(defmacro zwanenzang-tramp-test--offline (&rest body)
+  "Run BODY failing the test if anything starts a process.
+TRAMP would start one to connect, so this keeps BODY off the network."
+  (declare (indent 0))
+  `(cl-letf (((symbol-function 'make-process)
+              (lambda (&rest _) (ert-fail "Process started: TRAMP connected")))
+             ((symbol-function 'process-file)
+              (lambda (&rest _) (ert-fail "Remote process run"))))
+     ,@body))
+
+(ert-deftest zwanenzang-tramp-scope-location-is-on-the-org-files-machine ()
+  ;; (ORG-FILE LOCATION RESOLVED DIRECTORY): RESOLVED is the scope location
+  ;; as compared, DIRECTORY the expanded tracker directory.
+  (dolist (case `(("/ssh:example.invalid:/home/user/org/tasks.org" "~/tracker"
+                   "/ssh:example.invalid:~/tracker"
+                   "/ssh:example.invalid:/home/operator/tracker")
+                  ("/ssh:example.invalid:/home/user/org/tasks.org" "/srv/tracker"
+                   "/ssh:example.invalid:/srv/tracker"
+                   "/ssh:example.invalid:/srv/tracker")
+                  ("/ssh:example.invalid:/home/user/org/tasks.org" "tracker"
+                   "/ssh:example.invalid:/home/user/org/tracker"
+                   "/ssh:example.invalid:/home/user/org/tracker")
+                  ;; A TRAMP location is used as is, on whichever machine.
+                  ("/ssh:example.invalid:/home/user/org/tasks.org"
+                   "/sudo:root@other.invalid:/srv/tracker"
+                   "/sudo:root@other.invalid:/srv/tracker"
+                   "/sudo:root@other.invalid:/srv/tracker")
+                  ;; Local files are unchanged.
+                  ("/home/user/org/tasks.org" "~/tracker"
+                   ,(expand-file-name "~/tracker") ,(expand-file-name "~/tracker"))
+                  ("/home/user/org/tasks.org" "/srv/tracker"
+                   "/srv/tracker" "/srv/tracker")
+                  ("/home/user/org/tasks.org" "tracker"
+                   "/home/user/org/tracker" "/home/user/org/tracker")))
+    (pcase-let ((`(,org-file ,location ,resolved ,directory) case))
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Scope\n:PROPERTIES:\n:ZWANENZANG: " location "\n:END:\n")
+        (goto-char (point-min))
+        (let ((buffer-file-name org-file)
+              (default-directory (file-name-directory org-file))
+              (root (point-marker))
+              (expand (symbol-function 'expand-file-name))
+              checked)
+          (zwanenzang-tramp-test--offline
+            (cl-letf (((symbol-function 'expand-file-name)
+                       (lambda (name &optional dir)
+                         ;; Simulate TRAMP's remote home expansion without SSH.
+                         (if (equal name "/ssh:example.invalid:~/tracker")
+                             "/ssh:example.invalid:/home/operator/tracker"
+                           (funcall expand name dir))))
+                      ((symbol-function 'file-directory-p)
+                       (lambda (dir) (setq checked dir) t)))
+              (should (equal (zwanenzang--scope-directory root) directory))
+              (should (equal checked directory)))
+            (should (equal (zwanenzang--scope-location location) resolved))))))))
+
+(ert-deftest zwanenzang-tramp-scope-location-keeps-every-hop ()
+  ;; Unless ad-hoc proxies are shown, `file-remote-p' of a multi-hop name
+  ;; gives only its last hop; the prefix a name is given keeps them all.
+  (let* ((tramp-default-proxies-alist tramp-default-proxies-alist)
+         (hops "/ssh:jump.invalid|sudo:root@target.invalid:"))
+    (let ((tramp-show-ad-hoc-proxies nil))
+      (zwanenzang-tramp-test--offline
+        (should (equal (zwanenzang--file-name-on-host "~/tracker" (concat hops "/x/"))
+                       (concat hops "~/tracker")))
+        (should (equal (zwanenzang--file-name-on-host "/srv/tracker" (concat hops "/x/"))
+                       (concat hops "/srv/tracker")))
+        (should (equal (zwanenzang--comment-record
+                        (zwanenzang--pull-create :tracker-dir (concat hops "/trk/"))
+                        '((actor . "A1") (ts . "2026-11-07T10:00:00Z")
+                          (text . "text") (link . "/srv/x.md")))
+                       (concat "[2026-11-07T10:00:00Z] A1:\ntext\n[[file:" hops
+                               "/srv/x.md]]\n")))))
+  ;; Names TRAMP makes, such as a visited file's directory, keep the hops
+  ;; only with ad-hoc proxies shown.
+  (let* ((tramp-show-ad-hoc-proxies t)
+         (org-file (concat hops "/home/user/org/tasks.org")))
+    (dolist (case `(("~/tracker" ,(concat hops "~/tracker") ,(concat hops "/root/tracker"))
+                    ("/srv/tracker" ,(concat hops "/srv/tracker") ,(concat hops "/srv/tracker"))
+                    ("tracker" ,(concat hops "/home/user/org/tracker")
+                     ,(concat hops "/home/user/org/tracker"))))
+      (pcase-let ((`(,location ,resolved ,directory) case))
+        (with-temp-buffer
+          (org-mode)
+          (insert "* Scope\n:PROPERTIES:\n:ZWANENZANG: " location "\n:END:\n")
+          (goto-char (point-min))
+          (let ((buffer-file-name org-file)
+                (default-directory (file-name-directory org-file))
+                (root (point-marker))
+                (expand (symbol-function 'expand-file-name)))
+            (zwanenzang-tramp-test--offline
+              (should (equal (zwanenzang--scope-location location) resolved))
+              (cl-letf (((symbol-function 'expand-file-name)
+                         (lambda (name &optional dir)
+                           ;; Simulate TRAMP's remote home expansion without SSH.
+                           (if (equal name (concat hops "~/tracker"))
+                               (concat hops "/root/tracker")
+                             (funcall expand name dir))))
+                        ((symbol-function 'file-directory-p) (lambda (_) t)))
+                (should (equal (zwanenzang--scope-directory root) directory)))))))))))
+
+(ert-deftest zwanenzang-tramp-comment-links-are-on-the-trackers-machine ()
+  (let ((pull (zwanenzang--pull-create :tracker-dir "/ssh:example.invalid:/trk/")))
+    (zwanenzang-tramp-test--offline
+      (dolist (case '(("docs/x.md" "[[file:/ssh:example.invalid:/trk/docs/x.md]]")
+                      ("/srv/x.md" "[[file:/ssh:example.invalid:/srv/x.md]]")
+                      ("~/x.md" "[[file:/ssh:example.invalid:~/x.md]]")
+                      ("/ssh:other.invalid:/x.md" "[[file:/ssh:other.invalid:/x.md]]")
+                      ("https://example.invalid/mr/1" "[[https://example.invalid/mr/1]]")))
+        (pcase-let ((`(,link ,rendered) case))
+          (should (equal (zwanenzang--comment-record
+                          pull `((actor . "A1") (ts . "2026-11-07T10:00:00Z")
+                                 (text . "text") (link . ,link)))
+                         (concat "[2026-11-07T10:00:00Z] A1:\ntext\n" rendered "\n"))))))))
+
+(ert-deftest zwanenzang-tramp-dependency-snapshot-follows-the-files-machine ()
+  ;; The same location text names another tracker once the buffer visits a
+  ;; file on another machine, so the snapshot no longer applies.
+  (with-temp-buffer
+    (insert "* Scope\n:PROPERTIES:\n:ZWANENZANG: ~/tracker\n:ZWANENZANG_TRACKER: t\n:END:\n")
+    (org-mode)
+    (goto-char (point-min))
+    (let ((root (point-marker)))
+      (let ((buffer-file-name "/home/user/org/tasks.org"))
+        (zwanenzang--remember-dependencies
+         (zwanenzang--pull-create :root root :tracker "t"
+                                  :known (make-hash-table :test #'equal)))
+        (should (zwanenzang--dependency-snapshot root)))
+      (let ((buffer-file-name "/ssh:example.invalid:/home/user/org/tasks.org"))
+        (zwanenzang-tramp-test--offline
+          (should-not (zwanenzang--dependency-snapshot root)))))))
+
 (ert-deftest zwanenzang-tramp-pull-failure-preserves-org ()
   (with-temp-buffer
     (org-mode)

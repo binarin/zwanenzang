@@ -47,6 +47,12 @@ scope, ticket identity, and active-ticket constraints are always added."
        (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T" timestamp)
        (ignore-errors (float-time (date-to-time timestamp)))))
 
+(defun zwanenzang-queue--location ()
+  "The scope location of the heading at point, or nil outside every scope.
+A queue result refiled out of its scope since the view was built has none."
+  (when-let* ((location (org-entry-get nil "ZWANENZANG" t)))
+    (zwanenzang--scope-location location)))
+
 (defun zwanenzang-queue--key (element mode tag)
   "Sort key for org-ql ELEMENT using MODE and TAG.
 Use native Org's configured default for an absent cookie, not org-ql's
@@ -55,7 +61,7 @@ missing-cookie fallback.  All keys come from buffers, never the CLI."
     (list (or (plist-get (zwanenzang--heading) :priority) org-priority-default)
           (zwanenzang-queue--seconds (zwanenzang-queue--timestamp mode tag))
           (org-entry-get nil "ZWANENZANG_ID")
-          (org-entry-get nil "ZWANENZANG" t))))
+          (zwanenzang-queue--location))))
 
 (defun zwanenzang-queue--less-p (mode tag a b)
   "Compare org-ql elements A and B using MODE and TAG."
@@ -80,7 +86,7 @@ missing-cookie fallback.  All keys come from buffers, never the CLI."
   "Identity of the result at point, including its tracker location."
   (when-let* ((marker (get-text-property (line-beginning-position) 'org-hd-marker)))
     (org-with-point-at marker
-      (cons (org-entry-get nil "ZWANENZANG" t)
+      (cons (zwanenzang-queue--location)
             (org-entry-get nil "ZWANENZANG_ID")))))
 
 (defvar-keymap zwanenzang-queue-mode-map
