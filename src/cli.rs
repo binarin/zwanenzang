@@ -28,7 +28,7 @@ pub const INLINE_COMMENT_LIMIT: usize = 2048;
 #[derive(Debug, Parser)]
 #[command(
     name = "zwanenzang",
-    version,
+    version = env!("ZWANENZANG_VERSION"),
     about = "A small, local-first issue tracker"
 )]
 pub struct Cli {

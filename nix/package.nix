@@ -1,4 +1,4 @@
-{ ... }:
+{ self, ... }:
 {
   perSystem =
     {
@@ -8,12 +8,16 @@
       ...
     }:
     {
-      packages.zwanenzang = pkgs.callPackage ./_packages/zwanenzang.nix { };
+      packages.zwanenzang = pkgs.callPackage ./_packages/zwanenzang.nix {
+        rev = self.shortRev or null;
+        lastModifiedDate = self.lastModifiedDate or null;
+      };
       packages.default = self'.packages.zwanenzang;
 
       checks.zwanenzang = self'.packages.zwanenzang;
       checks.installed-command = pkgs.runCommand "zwanenzang-installed-command" { } ''
-        bash ${../tests/installed-command.sh} ${self'.packages.zwanenzang} ${pkgs.git}/bin/git
+        bash ${../tests/installed-command.sh} ${self'.packages.zwanenzang} ${pkgs.git}/bin/git \
+          ${lib.escapeShellArg self'.packages.zwanenzang.versionLine}
         touch $out
       '';
       # The one-off identity migration, against disposable trackers.

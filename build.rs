@@ -2,6 +2,11 @@
 //! document names, so `agent-hooks show-document` needs no files at run time.
 //! A file's name is its path below that directory without `.md`; a
 //! directory's `overview.md` is named after the directory itself.
+//!
+//! It also sets `ZWANENZANG_VERSION`, the text `--version` prints after the
+//! program name: the Cargo version, then the commit and its UTC date when
+//! the build is given them (the flake passes `ZWANENZANG_REV` and
+//! `ZWANENZANG_DATE`), or `(unknown)` otherwise.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,6 +15,7 @@ const SOURCE: &str = "docs/agent-hooks";
 
 fn main() {
     println!("cargo::rerun-if-changed={SOURCE}");
+    println!("cargo::rustc-env=ZWANENZANG_VERSION={}", version());
     let root = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join(SOURCE);
     let mut docs: Vec<(String, PathBuf)> = Vec::new();
     walk(&root, "", &mut docs);
@@ -35,6 +41,19 @@ fn main() {
     out.push_str("];\n");
     let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("agent_hooks.rs");
     fs::write(dest, out).unwrap();
+}
+
+fn version() -> String {
+    let mut source = Vec::new();
+    for name in ["ZWANENZANG_REV", "ZWANENZANG_DATE"] {
+        println!("cargo::rerun-if-env-changed={name}");
+        source.extend(std::env::var(name).ok().filter(|v| !v.is_empty()));
+    }
+    let source = match source.as_slice() {
+        [rev, date] => format!("{rev} {date}"),
+        _ => "unknown".to_string(),
+    };
+    format!("{} ({source})", std::env::var("CARGO_PKG_VERSION").unwrap())
 }
 
 fn walk(dir: &Path, prefix: &str, docs: &mut Vec<(String, PathBuf)>) {

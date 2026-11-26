@@ -3,6 +3,8 @@
 set -euo pipefail
 package=$1
 export REAL_GIT=$2
+# The exact line `--version` must print, e.g. `zwanenzang 0.2.0 (abc1234 2026-11-26)`.
+expected_version=$3
 for command in zz zwanenzang; do
     test -x "$package/bin/$command"
 done
@@ -91,7 +93,9 @@ for command in zz zwanenzang; do
 done
 cmp "$repo/zz.doc" "$repo/zwanenzang.doc"
 cmp "$repo/zz.bootstrap" "$repo/zwanenzang.bootstrap"
-cmp "$repo/zz.version" "$repo/zwanenzang.version"
+for command in zz zwanenzang; do
+    printf '%s\n' "$expected_version" | cmp - "$repo/$command.version"
+done
 
 # A git supplied by the caller must still take precedence over the fallback.
 mkdir "$repo/caller-bin"

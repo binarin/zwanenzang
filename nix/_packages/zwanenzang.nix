@@ -1,19 +1,32 @@
 # The CLI, in callPackage form so the flake's packages and its overlay
-# build it the same way.
+# build it the same way. `rev` and `lastModifiedDate` are the flake's
+# `self.shortRev` and `self.lastModifiedDate` (YYYYMMDDhhmmss, UTC), shown
+# by `--version`; without a rev it says `(unknown)`. `passthru.versionLine`
+# is the line `--version` should print, for the installed-command check.
 {
   lib,
   rustPlatform,
   git,
   makeWrapper,
+  rev ? null,
+  lastModifiedDate ? null,
 }:
 let
   cargoToml = builtins.fromTOML (builtins.readFile ../../Cargo.toml);
+  hasSource = rev != null && lastModifiedDate != null;
+  date = lib.concatStringsSep "-" [
+    (builtins.substring 0 4 lastModifiedDate)
+    (builtins.substring 4 2 lastModifiedDate)
+    (builtins.substring 6 2 lastModifiedDate)
+  ];
 in
 rustPlatform.buildRustPackage {
   pname = "zwanenzang";
   inherit (cargoToml.package) version;
   src = lib.fileset.toSource {
     root = ../..;
+    # scripts/check-version-bump.py lists the same paths: a change to any
+    # of them needs a version bump.
     fileset = lib.fileset.unions [
       ../../Cargo.toml
       ../../Cargo.lock
@@ -27,6 +40,13 @@ rustPlatform.buildRustPackage {
     ];
   };
   cargoLock.lockFile = ../../Cargo.lock;
+  env = lib.optionalAttrs hasSource {
+    ZWANENZANG_REV = rev;
+    ZWANENZANG_DATE = date;
+  };
+  passthru.versionLine = "zwanenzang ${cargoToml.package.version} (${
+    if hasSource then "${rev} ${date}" else "unknown"
+  })";
   # The test suite runs in checkPhase; `nix flake check` builds this.
   doCheck = true;
   # Every write commits and syncs through the git binary, and the
