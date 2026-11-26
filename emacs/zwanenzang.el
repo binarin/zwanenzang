@@ -865,12 +865,33 @@ That is the nearest heading at or above point with a ZWANENZANG property."
          (user-error "zwanenzang: point is not inside a scope (%s)"
                      "no heading above it has a ZWANENZANG property")))))
 
+(defun zwanenzang--file-name-on-host (name directory)
+  "NAME, read from a file in DIRECTORY, as a file name on DIRECTORY's machine.
+A NAME with a TRAMP prefix is returned as it is.  Any other NAME is on
+the machine DIRECTORY is on: an absolute or `~' NAME gets DIRECTORY's
+TRAMP prefix, and a relative NAME is relative to DIRECTORY.  Plain
+`expand-file-name' would put an absolute or `~' NAME on the local
+machine even when DIRECTORY is remote.  The prefix keeps every hop of
+a multi-hop DIRECTORY, which `file-remote-p' alone would drop."
+  (cond ((file-remote-p name) name)
+        ((and (file-remote-p directory) (file-name-absolute-p name))
+         (concat (string-remove-suffix (file-local-name directory) directory)
+                 name))
+        (t (expand-file-name name directory))))
+
+(defun zwanenzang--scope-location (location)
+  "LOCATION, a ZWANENZANG property in the current buffer, as a file name.
+It is on the machine of the buffer's file; see
+`zwanenzang--file-name-on-host'.  Every place that resolves or compares
+a scope location goes through this."
+  (zwanenzang--file-name-on-host location (if buffer-file-name
+                                              (file-name-directory buffer-file-name)
+                                            default-directory)))
+
 (defun zwanenzang--scope-directory (root)
   "The tracker directory the scope root at ROOT names."
   (let* ((location (org-entry-get root "ZWANENZANG"))
-         (dir (expand-file-name location (if buffer-file-name
-                                             (file-name-directory buffer-file-name)
-                                           default-directory))))
+         (dir (expand-file-name (zwanenzang--scope-location location))))
     (unless (file-directory-p dir)
       (user-error "zwanenzang: scope location is not a directory: %s" location))
     dir))
@@ -1047,7 +1068,8 @@ Each plist holds a scope :root marker, :location, :tracker identity,
      (let ((marker (plist-get snapshot :root)))
        (and (eq (marker-buffer marker) (current-buffer))
             (= marker root)
-            (equal (plist-get snapshot :location) (org-entry-get root "ZWANENZANG"))
+            (equal (plist-get snapshot :location)
+                   (zwanenzang--scope-location (org-entry-get root "ZWANENZANG")))
             (equal (plist-get snapshot :tracker) (org-entry-get root "ZWANENZANG_TRACKER")))))
    zwanenzang--dependency-snapshots))
 
@@ -1422,7 +1444,7 @@ Its resolved identity, else its writer's name or short id."
                  (concat (org-link-make-string
                           (if (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" link)
                               link
-                            (concat "file:" (expand-file-name
+                            (concat "file:" (zwanenzang--file-name-on-host
                                              link (zwanenzang--pull-tracker-dir pull)))))
                          "\n")))))
 
@@ -3623,7 +3645,8 @@ to the `*zwanenzang*' buffer."
     (with-current-buffer (marker-buffer root)
       (setq zwanenzang--dependency-snapshots
             (cons (list :root (copy-marker root)
-                        :location (org-entry-get root "ZWANENZANG")
+                        :location (zwanenzang--scope-location
+                                   (org-entry-get root "ZWANENZANG"))
                         :tracker (zwanenzang--pull-tracker pull)
                         :tickets (zwanenzang--pull-known pull)
                         :statuses (zwanenzang--pull-statuses pull)

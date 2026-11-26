@@ -26,6 +26,19 @@ That heading is the scope root. Everything beneath it syncs with that tracker.
   TRAMP handles execution, argument quoting and connections. JSON stdin is
   staged in a local temporary file for `process-file`; client-owned stdin
   and stderr files are removed on success, failure or quit.
+- A location is on the machine of the Org file that holds it. A location
+  with a TRAMP prefix is used as is. Any other location in a file opened
+  over TRAMP names a directory on that file's machine: `~/trackers/t` or
+  `/srv/t` in `/ssh:devbox:~/org/x.org` means `/ssh:devbox:~/trackers/t`
+  or `/ssh:devbox:/srv/t`, and a relative location is relative to the
+  file's directory there. The prefix is the file directory's whole TRAMP
+  prefix, multi-hop routes included. In a local file a location is a
+  local path, as before. Every place that resolves or compares a location
+  follows this rule: the tracker directory, the dependency snapshot's
+  scope check and the queue's ticket identity. A queue result moved out
+  of every scope has no location; refreshing the queue then leaves it
+  out. A comment's link path is on the tracker's machine by the same
+  rule, relative to the tracker directory.
 - A scope may point at the same persistent clone agents use on that execution
   host; see [stable clone placement](02-git-and-sync.md#stable-clone-placement).
   The property stays a path, not an origin URL, and existing locations remain

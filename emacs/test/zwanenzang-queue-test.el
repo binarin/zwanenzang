@@ -158,6 +158,75 @@
       (kill-buffer source)
       (when (get-buffer "*zwanenzang queue*") (kill-buffer "*zwanenzang queue*")))))
 
+(ert-deftest zwanenzang-queue-identity-locates-the-scope-on-the-files-machine ()
+  ;; The same location text in a local and a remote file names two trackers.
+  (let ((local (generate-new-buffer "*zz-queue-local*"))
+        (remote (generate-new-buffer "*zz-queue-remote*")))
+    (unwind-protect
+        (let (identities)
+          (dolist (source (list local remote))
+            (with-current-buffer source
+              (insert "* Scope\n:PROPERTIES:\n:ZWANENZANG: ~/tracker\n:END:\n"
+                      (zwanenzang-queue-test--ticket "a" nil nil nil))
+              (org-mode)
+              (goto-char (point-min))
+              (search-forward ":ZWANENZANG_ID: a")
+              (org-back-to-heading t)
+              (let ((marker (point-marker))
+                    (buffer-file-name (if (eq source remote)
+                                          "/ssh:example.invalid:/home/user/org/tasks.org"
+                                        "/home/user/org/tasks.org")))
+                (with-temp-buffer
+                  (insert (propertize "line\n" 'org-hd-marker marker))
+                  (goto-char (point-min))
+                  (cl-letf (((symbol-function 'make-process)
+                             (lambda (&rest _) (ert-fail "TRAMP connected"))))
+                    (push (zwanenzang-queue--identity) identities))))))
+          (should (equal (nreverse identities)
+                         `((,(expand-file-name "~/tracker") . "a")
+                           ("/ssh:example.invalid:~/tracker" . "a")))))
+      (kill-buffer local)
+      (kill-buffer remote))))
+
+(ert-deftest zwanenzang-queue-refreshes-after-a-result-leaves-its-scope ()
+  ;; The selected result's heading no longer has a ZWANENZANG above it, as
+  ;; after refiling it out of the scope: identity has no location, and g and
+  ;; a still rebuild the view, which then leaves the heading out.
+  (let ((source (generate-new-buffer "*zz-queue-stale*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer source
+            (insert "#+TODO: TODO | DONE\n* Scope\n:PROPERTIES:\n:ZWANENZANG: /synthetic\n:END:\n"
+                    (zwanenzang-queue-test--ticket "a" nil nil nil))
+            (org-mode))
+          (save-window-excursion
+            (zwanenzang-queue--render (list source) 'activity)
+            (should (equal (zwanenzang-queue-test--ids) '("a")))
+            (goto-char (point-min))
+            (while (not (equal (cdr (zwanenzang-queue--identity)) "a")) (forward-line 1))
+            (with-current-buffer source
+              (goto-char (point-min))
+              (re-search-forward "^\\* Scope")
+              (org-entry-delete nil "ZWANENZANG"))
+            (should (equal (zwanenzang-queue--identity) '(nil . "a")))
+            (zwanenzang-queue-refresh)
+            (should-not (zwanenzang-queue-test--ids))
+            (with-current-buffer source
+              (goto-char (point-min))
+              (re-search-forward "^\\* Scope")
+              (org-entry-put nil "ZWANENZANG" "/synthetic"))
+            (zwanenzang-queue--render (list source) 'activity)
+            (goto-char (point-min))
+            (while (not (equal (cdr (zwanenzang-queue--identity)) "a")) (forward-line 1))
+            (with-current-buffer source
+              (goto-char (point-min))
+              (re-search-forward "^\\* Scope")
+              (org-entry-delete nil "ZWANENZANG"))
+            (zwanenzang-queue-select-age 'waiting)
+            (should-not (zwanenzang-queue-test--ids))))
+      (kill-buffer source)
+      (when (get-buffer "*zwanenzang queue*") (kill-buffer "*zwanenzang queue*")))))
+
 (ert-deftest zwanenzang-queue-age-unknown-and-future-are-visible ()
   (should (equal (zwanenzang-queue--age nil) "unknown"))
   (should (equal (zwanenzang-queue--age "invalid") "unknown"))
