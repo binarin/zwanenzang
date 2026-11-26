@@ -89,6 +89,7 @@
               -l zwanenzang-branches-test -l zwanenzang-new-comment-test \
               -l zwanenzang-heading-prefix-test -l zwanenzang-proj-test \
               -l zwanenzang-tramp-test \
+              -l zwanenzang-scheduled-test \
               --eval '(unless (file-name-absolute-p zwanenzang-program) (error "zwanenzang-program not substituted: %s" zwanenzang-program))' \
               -f ert-run-tests-batch-and-exit
             touch $out

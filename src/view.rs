@@ -151,6 +151,7 @@ impl<'a> View<'a> {
             "status": t.status,
             "kind": t.kind,
             "priority": t.priority,
+            "scheduled": t.scheduled,
             "parent": t.parent,
             "tags": t.tags,
             "depends_on": t.depends_on,

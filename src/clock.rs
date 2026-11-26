@@ -1,9 +1,11 @@
-//! The hybrid logical clock behind event ids, and the wall clock used for the
-//! informational `ts` field. The clock is a trait so tests can make the wall
-//! clock lag or stand still.
+//! The hybrid logical clock behind event ids, the wall clock used for the
+//! informational `ts` field, and the local date that relative planning
+//! dates resolve against. The clock is a trait so tests can make the wall
+//! clock lag or stand still, and fix the time zone.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::planning::Date;
 use crate::ulid::{RANDOM_MAX, TIME_MAX, Ulid};
 
 pub trait Clock {
@@ -11,6 +13,16 @@ pub trait Clock {
     fn now_ms(&mut self) -> u64;
     /// 80 fresh random bits.
     fn random80(&mut self) -> u128;
+    /// The local time zone's offset from UTC, in seconds east, at the
+    /// instant `ms` milliseconds after the epoch.
+    fn utc_offset_s(&mut self, ms: u64) -> i64;
+}
+
+/// Today's date in the clock's local time zone.
+pub fn local_today(clock: &mut dyn Clock) -> Date {
+    let ms = clock.now_ms();
+    let local_s = (ms / 1000) as i64 + clock.utc_offset_s(ms);
+    Date::from_days(local_s.div_euclid(86_400))
 }
 
 /// The real clock: system time and the operating system's random source.
@@ -29,6 +41,27 @@ impl Clock for SystemClock {
         let mut buf = [0u8; 16];
         getrandom::fill(&mut buf).expect("operating system random source");
         u128::from_le_bytes(buf) & RANDOM_MAX
+    }
+
+    /// The C library's local time, which follows `TZ` (a zone name or a
+    /// POSIX rule such as `UTC-2`) and otherwise the system's zone.
+    #[cfg(unix)]
+    fn utc_offset_s(&mut self, ms: u64) -> i64 {
+        let t = (ms / 1000) as libc::time_t;
+        // SAFETY: `localtime_r` only writes the `tm` we own, and reads `t`.
+        unsafe {
+            let mut tm: libc::tm = std::mem::zeroed();
+            if libc::localtime_r(&t, &mut tm).is_null() {
+                0
+            } else {
+                tm.tm_gmtoff as i64
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn utc_offset_s(&mut self, _ms: u64) -> i64 {
+        0
     }
 }
 
@@ -76,37 +109,24 @@ pub fn next_id(clock: &mut dyn Clock, highest_seen: Option<Ulid>) -> Ulid {
 /// precision, e.g. `2026-11-07T12:34:56Z`.
 pub fn format_ts(ms: u64) -> String {
     let secs = ms / 1000;
-    let days = (secs / 86_400) as i64;
+    let date = Date::from_days((secs / 86_400) as i64);
     let rem = secs % 86_400;
-    let (y, m, d) = civil_from_days(days);
     format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        "{date}T{:02}:{:02}:{:02}Z",
         rem / 3600,
         (rem / 60) % 60,
         rem % 60
     )
 }
 
-/// Howard Hinnant's days-to-civil algorithm.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-/// A deterministic clock for tests: a settable wall clock and a counter as
-/// the random source.
+/// A deterministic clock for tests: a settable wall clock, a counter as
+/// the random source and a fixed time zone offset.
 #[derive(Debug, Clone)]
 pub struct FixedClock {
     pub now: u64,
     pub next_random: u128,
+    /// Seconds east of UTC; 0 is UTC.
+    pub utc_offset_s: i64,
 }
 
 impl FixedClock {
@@ -114,6 +134,7 @@ impl FixedClock {
         FixedClock {
             now,
             next_random: 1000,
+            utc_offset_s: 0,
         }
     }
 }
@@ -126,6 +147,10 @@ impl Clock for FixedClock {
     fn random80(&mut self) -> u128 {
         self.next_random += 1000;
         self.next_random & RANDOM_MAX
+    }
+
+    fn utc_offset_s(&mut self, _ms: u64) -> i64 {
+        self.utc_offset_s
     }
 }
 
@@ -202,6 +227,20 @@ mod tests {
             assert!(n > prev);
             prev = n;
         }
+    }
+
+    #[test]
+    fn local_today_follows_the_offset() {
+        // 2026-11-26T23:30:00Z.
+        let mut c = FixedClock::new(1_795_735_800_000);
+        assert_eq!(format_ts(c.now), "2026-11-26T23:30:00Z");
+        assert_eq!(local_today(&mut c).to_string(), "2026-11-26");
+        c.utc_offset_s = 3600;
+        assert_eq!(local_today(&mut c).to_string(), "2026-11-27");
+        c.utc_offset_s = -14 * 3600;
+        assert_eq!(local_today(&mut c).to_string(), "2026-11-26");
+        c.now = 1_795_660_200_000; // 2026-11-26T02:30:00Z
+        assert_eq!(local_today(&mut c).to_string(), "2026-11-25");
     }
 
     #[test]

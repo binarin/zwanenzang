@@ -42,6 +42,13 @@ pub struct PriorityData {
     pub to: Option<u8>,
 }
 
+/// `scheduled` data: a normalised Org timestamp body (see
+/// [`crate::planning`]); `to: null` clears the date.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduledData {
+    pub to: Option<String>,
+}
+
 /// `parent` data; `to: null` clears the parent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParentData {
@@ -113,6 +120,7 @@ pub enum Op {
     Status(TextTo),
     Kind(KindData),
     Priority(PriorityData),
+    Scheduled(ScheduledData),
     Parent(ParentData),
     Relate(RelateData),
     Unrelate(RelateData),
@@ -139,6 +147,7 @@ pub const OP_NAMES: &[&str] = &[
     "status",
     "kind",
     "priority",
+    "scheduled",
     "parent",
     "relate",
     "unrelate",
@@ -172,6 +181,7 @@ impl Op {
             Op::Status(_) => "status",
             Op::Kind(_) => "kind",
             Op::Priority(_) => "priority",
+            Op::Scheduled(_) => "scheduled",
             Op::Parent(_) => "parent",
             Op::Relate(_) => "relate",
             Op::Unrelate(_) => "unrelate",
@@ -224,6 +234,10 @@ impl Op {
                 require(&data, "to")?;
                 Op::Priority(p(data)?)
             }
+            "scheduled" => {
+                require(&data, "to")?;
+                Op::Scheduled(p(data)?)
+            }
             "parent" => {
                 require(&data, "to")?;
                 Op::Parent(p(data)?)
@@ -260,6 +274,7 @@ impl Serialize for Op {
             Op::Title(d) | Op::Status(d) => d.serialize(s),
             Op::Kind(d) => d.serialize(s),
             Op::Priority(d) => d.serialize(s),
+            Op::Scheduled(d) => d.serialize(s),
             Op::Parent(d) => d.serialize(s),
             Op::Relate(d) | Op::Unrelate(d) | Op::Depend(d) | Op::Undepend(d) => d.serialize(s),
             Op::Branch(d) => d.serialize(s),
@@ -420,6 +435,10 @@ mod tests {
             Op::Kind(KindData { to: None }),
             Op::Priority(PriorityData { to: Some(10) }),
             Op::Priority(PriorityData { to: None }),
+            Op::Scheduled(ScheduledData {
+                to: Some("2026-12-03 10:00 +1w".into()),
+            }),
+            Op::Scheduled(ScheduledData { to: None }),
             Op::Parent(ParentData { to: Some(u) }),
             Op::Parent(ParentData { to: None }),
             Op::Relate(RelateData { to: u }),
@@ -493,6 +512,14 @@ mod tests {
         );
         assert!(matches!(
             Op::from_parts("parent", serde_json::json!({})),
+            Err(OpError::Invalid(_))
+        ));
+        assert!(matches!(
+            Op::from_parts("scheduled", serde_json::json!({})),
+            Err(OpError::Invalid(_))
+        ));
+        assert!(matches!(
+            Op::from_parts("scheduled", serde_json::json!({"to": 3})),
             Err(OpError::Invalid(_))
         ));
         assert!(matches!(

@@ -66,7 +66,8 @@ The JSON is escaped so that it never contains `<`, U+2028 or U+2029. A
 - `tickets`: every ticket that is not tombstoned, published ones by number
   and then unpublished ones by id. Each has `id`, `display`, `number`,
   `title`, `status`, `kind`, `priority` (the Org cookie text, such as `A`),
-  `tags`, `parent`, `children`, `depends_on`, `blocks`, `related`,
+  `scheduled` (the date as Org shows it, with an English weekday, such as
+  `2026-12-03 Thu 10:00`), `tags`, `parent`, `children`, `depends_on`, `blocks`, `related`,
   `archived`, `created` and `activity` (timestamps), `branches`
   (`{repo, name, repo_url}`), `mrs` (`{repo, url}`), `documents` and
   `comments`. Relations name ticket ids and leave out tombstoned tickets.
@@ -112,7 +113,7 @@ in the CLI.
 - Filter chips: one per status, one per tag (all selected tags required)
   and one for archived tickets, off by default. Sort by number or by last
   activity.
-- The detail pane shows status, kind, priority, tags, timestamps, links to
+- The detail pane shows status, kind, priority, the scheduled date, tags, timestamps, links to
   parent, children, prerequisites, dependents and related tickets, branches
   and merge requests, every current document and the comments with their
   attachments.

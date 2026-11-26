@@ -134,6 +134,33 @@ Ticket lifecycle and metadata:
   `to`. Live range/default settings live in `[priority]` in TOML; replay
   accepts all native values to preserve history when settings change.
   Unset is distinct from the effective default. See the Org client notes.
+- `scheduled` — a scalar field, the ticket's Org SCHEDULED date,
+  `{to: string or null}` with required `to`; null clears it. Decided
+  2026-11-26 (ZZ-51). The value is a normalised Org timestamp body, no
+  brackets and no weekday:
+  `YYYY-MM-DD[ HH:MM[-HH:MM]][ REPEATER][ DELAY]`, such as `2026-12-03`
+  or `2026-12-03 10:00 +1w`. It is always an active timestamp, in
+  floating local time without a time zone. Weekday names are left out
+  because Org writes them in the reader's locale (its `%a`, which may be
+  several words and hold digits or punctuation: `T5`, `ה'`, `Aso Tof`).
+  On input the weekday is every word after the date up to the first one
+  starting with an ASCII digit, `+`, `-` or `.`, which no locale's
+  weekday does and every time, repeater and delay does. Words are split
+  at any Unicode white space (`lv_LV` ends its weekday in a no-break
+  space). A word holding `+`, `-` or a time, such as `Thu+1w`, which Org
+  reads as a weekday with a repeater, is never taken for weekday, so the
+  value is refused rather than losing that part. `REPEATER` is `+`, `++`
+  or `.+`, a count and a unit (`h d w m y`), optionally followed by
+  `/` and a second count and unit as Org habits write it; `DELAY` is `-`
+  or `--`, a count and a unit. Both are kept as written text; the tool
+  never interprets them. Live writes refuse a value that is not in this
+  form, or names an impossible date or time (`2026-02-30`, `24:00`),
+  with `invalid-timestamp`; replay accepts any string already in the
+  log, so a newer build's wider grammar or an older log never loses a
+  ticket's date. Nothing clears it on `done` or `cncl`. Storing the date
+  is tracking: the tool never reminds, warns or reorders by it. The
+  value type and input rules are shared with a later DEADLINE field.
+  See the CLI contract for input and the Org client notes for sync.
 - `parent` — set or clear the parent ticket. Cycles are rejected.
 - `relate` / `unrelate` — undirected relation to another ticket.
 - `depend` / `undepend` — add/remove a same-tracker prerequisite on the
@@ -437,12 +464,14 @@ none changes a decision above.
   `doc set` requires the caller to state the base it read, including
   `null`, so an agent cannot overwrite without naming a version.
 - **Operation data.** `title`, `status`: `{to}`. `kind`: `{to}` where
-  `null` clears the kind. `parent`: `{to}` where `null` clears the parent.
+  `null` clears the kind. `scheduled`: `{to}` where `null` clears the
+  date. `parent`: `{to}` where `null` clears the parent.
   `relate`, `unrelate`: `{to}`. `tag`, `untag`: `{tag}`. `number`:
   `{number}`, at least 1. `archive`, `unarchive`, `tombstone`: `{}`.
   `actor`: `{name}`, the writer's own display name; a later declaration
   renames it.
-  Nullable fields (`kind.to`, `parent.to`, `doc.base`) must be present, so a
+  Nullable fields (`kind.to`, `priority.to`, `scheduled.to`, `parent.to`,
+  `doc.base`) must be present, so a
   writer always states what it means. Unknown fields in `data` and in the
   envelope are ignored at replay, so the format can grow.
 - **Create.** A `create` event's entity must be its own id
@@ -471,7 +500,7 @@ none changes a decision above.
   at all counts as stale. On a live write a stale base is the error
   `stale-doc-base`.
 - **Concurrent field reports.** For each accepted `title`, `status`,
-  `kind`, `priority` or `parent` event, every earlier change to the same field of the
+  `kind`, `priority`, `scheduled` or `parent` event, every earlier change to the same field of the
   same ticket by another writer that its writer had not seen is reported,
   if the values differ. Two writers choosing the same value is not a
   conflict.

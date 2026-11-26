@@ -49,6 +49,9 @@ pub enum RejectCode {
     RetiredStatus,
     KindNotInVocabulary,
     InvalidPriority,
+    /// A planning value outside the timestamp form, or an impossible date
+    /// or time. Only ever a live-write error: replay keeps any string.
+    InvalidTimestamp,
     InvalidTag,
     InvalidName,
     UnknownTarget,
@@ -89,6 +92,7 @@ impl RejectCode {
             RejectCode::RetiredStatus => "retired-status",
             RejectCode::KindNotInVocabulary => "kind-not-in-vocabulary",
             RejectCode::InvalidPriority => "invalid-priority",
+            RejectCode::InvalidTimestamp => "invalid-timestamp",
             RejectCode::InvalidTag => "invalid-tag",
             RejectCode::InvalidName => "invalid-name",
             RejectCode::UnknownTarget => "unknown-target",
@@ -214,6 +218,8 @@ pub struct Ticket {
     pub status: String,
     pub kind: Option<String>,
     pub priority: Option<u8>,
+    /// The Org SCHEDULED date, as stored; see [`crate::planning`].
+    pub scheduled: Option<String>,
     pub parent: Option<Ulid>,
     pub related: BTreeSet<Ulid>,
     pub depends_on: BTreeSet<Ulid>,
@@ -249,6 +255,7 @@ pub enum Field {
     Status,
     Kind,
     Priority,
+    Scheduled,
     Parent,
     Dependency(Ulid),
 }
@@ -260,6 +267,7 @@ impl Field {
             Field::Status => "status",
             Field::Kind => "kind",
             Field::Priority => "priority",
+            Field::Scheduled => "scheduled",
             Field::Parent => "parent",
             Field::Dependency(_) => "depends_on",
         }
@@ -651,6 +659,7 @@ pub fn apply(state: &mut State, ev: &Event) -> Result<Applied, Rejection> {
                 status: d.status.clone(),
                 kind: d.kind.clone(),
                 priority: None,
+                scheduled: None,
                 parent: None,
                 related: BTreeSet::new(),
                 depends_on: BTreeSet::new(),
@@ -807,6 +816,14 @@ fn apply_ticket_op(state: &mut State, ev: &Event) -> Result<(bool, Option<LostDo
             let changed = t.priority != d.to;
             state.tickets.get_mut(&id).unwrap().priority = d.to;
             state.note_field(ev, Field::Priority, json!(d.to));
+            changed
+        }
+        Op::Scheduled(d) => {
+            // Replay keeps any string: a newer build may write a form this
+            // one does not know. Live writes check the form in `write`.
+            let changed = t.scheduled != d.to;
+            state.tickets.get_mut(&id).unwrap().scheduled = d.to.clone();
+            state.note_field(ev, Field::Scheduled, json!(d.to));
             changed
         }
         Op::Parent(d) => {

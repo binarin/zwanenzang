@@ -69,8 +69,10 @@ this repository.
 ## Scope guard
 
 Tracking only. If a change would add process rules, stages, approvals,
-scheduling or reminders to the tool, it does not belong here; the design
-overview lists non-goals. The bundled agent documents may state rules of use
+scheduling of work or reminders to the tool, it does not belong here; the
+design overview lists non-goals. A stored Org planning date on a ticket
+(`scheduled`) is tracking data: the tool stores, shows and syncs it, and
+never reminds, warns, reorders or changes status by it. The bundled agent documents may state rules of use
 (actor names, where prose belongs, ticket links, the default statuses and
 workflow tags), which the tool does not enforce. The Emacs client is developed here, as the `zwanenzang` package
 in `emacs/` (Emacs 31+, built-in libraries plus the specifically accepted

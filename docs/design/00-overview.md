@@ -46,7 +46,11 @@ owners. Process lives elsewhere.
   and `relate` mean, and what the default statuses and the two workflow
   tags mean. These are the same in every tracker that keeps the defaults;
   anything beyond them is the project's.
-- Deadlines, capacity, estimation, boards with WIP limits.
+- Reminders, warnings and ordering by date, capacity, estimation, boards
+  with WIP limits. A ticket may carry an Org planning date (`scheduled`,
+  decided 2026-11-26, ZZ-51): that is tracking data, stored, shown and
+  synced to the human's Org agenda like any other field. The tool never
+  reminds, warns, reorders or changes status by it.
 - Multi-user collaboration with untrusted participants. Actors are one person
   and their agents; signing and abuse resistance are not design drivers.
 - Being a forge. Merge requests, CI and code review stay on the forge and are

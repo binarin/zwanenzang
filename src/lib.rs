@@ -2,6 +2,7 @@
 //!
 //! - [`event`]: the envelope and typed operations, one JSON object per line.
 //! - [`ulid`], [`clock`]: ids and the hybrid logical clock.
+//! - [`planning`]: Org planning timestamps, the `scheduled` field's values.
 //! - [`config`], [`store`]: `zwanenzang.toml`, logs, blobs, actor id, lock.
 //! - [`git`], [`sync`]: commit per write, fetch, rebase, numbering, push.
 //! - [`state`]: derived state and [`state::apply`], the single validation
@@ -27,6 +28,7 @@ pub mod lint;
 mod locator;
 pub mod names;
 pub mod org;
+pub mod planning;
 pub mod read;
 pub mod render;
 pub mod replay;
