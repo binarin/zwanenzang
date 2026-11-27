@@ -24,7 +24,7 @@ fn hooks(cwd: &Path, home: &Path, args: &[&str]) -> Text {
         .env("HOME", home)
         .env("XDG_DATA_HOME", home)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", GIT_CONFIG_GLOBAL)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .args(args)

@@ -27,7 +27,10 @@ while :; do
     test "$parent" != / || break
     parent=$(dirname "$parent")
 done
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+# No user configuration, and no detached automatic maintenance racing the
+# next git command (see tests/fixtures/gitconfig).
+printf '[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n' > "$repo/gitconfig"
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$repo/gitconfig"
 unset GIT_DIR GIT_WORK_TREE
 export HOME="$repo"
 "$REAL_GIT" init --quiet --bare "$repo/remote-test-repo.git"

@@ -43,10 +43,17 @@
   (let ((why (zwanenzang-test-not-disposable path)))
     (when why (error "Refusing to touch %s" why))))
 
+(defconst zwanenzang-test--git-config-global
+  (expand-file-name "gitconfig" (file-name-directory (or load-file-name buffer-file-name)))
+  "`GIT_CONFIG_GLOBAL' for git and the CLI: the gitconfig beside this file.
+It holds no user configuration and turns off automatic maintenance and
+gc, which would otherwise race the next git command.")
+
 (defun zwanenzang-test--git-env ()
   "`process-environment' for git and the CLI: no user or system configuration."
-  (append '("GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=/dev/null"
-            "GIT_DIR" "GIT_WORK_TREE")
+  (append (list "GIT_CONFIG_NOSYSTEM=1"
+                (concat "GIT_CONFIG_GLOBAL=" zwanenzang-test--git-config-global)
+                "GIT_DIR" "GIT_WORK_TREE")
           process-environment))
 
 (defun zwanenzang-test-git (dir &rest args)

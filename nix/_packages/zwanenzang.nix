@@ -52,6 +52,13 @@ rustPlatform.buildRustPackage {
   # Every write commits and syncs through the git binary, and the
   # tests drive real repositories.
   nativeCheckInputs = [ git ];
+  # The unit tests run the library's gits in this environment; give them
+  # the configuration the integration tests pass explicitly, without
+  # automatic maintenance (see the file).
+  preCheck = ''
+    export GIT_CONFIG_GLOBAL=$PWD/tests/fixtures/gitconfig
+    test -f "$GIT_CONFIG_GLOBAL"
+  '';
   nativeBuildInputs = [ makeWrapper ];
   # A git on the caller's PATH is used first; this one is the fallback.
   postInstall = ''

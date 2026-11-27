@@ -16,6 +16,12 @@ use serde_json::Value;
 
 pub const MARKER: &str = "-test-repo";
 
+/// `GIT_CONFIG_GLOBAL` for every git the tests run, the binary's included:
+/// no user configuration, and no automatic maintenance or gc racing the
+/// next command (see the file).
+pub const GIT_CONFIG_GLOBAL: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/gitconfig");
+
 /// Bare remotes backing `tracker()`; held so they outlive the trackers.
 static REMOTES: Mutex<Vec<tempfile::TempDir>> = Mutex::new(Vec::new());
 
@@ -191,7 +197,7 @@ pub fn spawn_as(
         // The binary's git commands see no user or system configuration,
         // so a developer's hooks, signing or url rewrites play no part.
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", GIT_CONFIG_GLOBAL)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .stdin(Stdio::piped())
@@ -423,7 +429,7 @@ fn git_command(dir: &Path) -> Command {
             "commit.gpgsign=false",
         ])
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", GIT_CONFIG_GLOBAL)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE");
     command

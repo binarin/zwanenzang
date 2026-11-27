@@ -35,7 +35,7 @@ fn invoke(
         .env("XDG_DATA_HOME", data)
         .env("HOME", data)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", GIT_CONFIG_GLOBAL)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .args(args)

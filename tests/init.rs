@@ -392,7 +392,7 @@ fn init_refuses_unusable_destinations_and_locators() {
     let usage = Command::new(env!("CARGO_BIN_EXE_zwanenzang"))
         .current_dir(root)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", GIT_CONFIG_GLOBAL)
         .args([
             "--tracker-url",
             &net.locator(Some("main")),
@@ -413,7 +413,7 @@ fn init_refuses_unusable_destinations_and_locators() {
     let usage = Command::new(env!("CARGO_BIN_EXE_zwanenzang"))
         .current_dir(root)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", GIT_CONFIG_GLOBAL)
         .args(["init", root.join("nope-test-repo").to_str().unwrap()])
         .output()
         .unwrap();
@@ -538,7 +538,7 @@ fn invoke(project: &Path, data: &Path, locator: &str, args: &[&str]) -> (i32, Va
         .env("XDG_DATA_HOME", data)
         .env("HOME", data)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", GIT_CONFIG_GLOBAL)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .arg("--tracker-url")
