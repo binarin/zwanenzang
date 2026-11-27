@@ -504,6 +504,32 @@ STATUS with TAGS and pulled; ID and DRAFT are bound around BODY."
         (should (equal "wait" (alist-get 'status shown)))
         (should (equal '("needs_human") (alist-get 'tags shown)))))))
 
+(ert-deftest zwanenzang-comment-with-a-heading-line-is-refused-and-kept ()
+  ;; The CLI refuses heading lines in new comments; the client does not
+  ;; check first, and the refused batch keeps the draft and writes nothing.
+  (zwanenzang-test-with-comment-draft (tracker source id draft "wait" '("needs_human"))
+    (let ((head (zwanenzang-test-head tracker)))
+      (insert "Review: fine\n* Findings")
+      (zwanenzang-comment-hand-to-agent)
+      (should (string-match-p
+               "invalid-comment: comment line 2 is an Org heading"
+               (cadr (should-error (zwanenzang-comment-send) :type 'user-error))))
+      (should (buffer-live-p draft))
+      (should (equal "Review: fine\n* Findings" (with-current-buffer draft (buffer-string))))
+      (should (equal head (zwanenzang-test-head tracker)))
+      (let ((shown (zwanenzang-test-show tracker id)))
+        (should-not (alist-get 'comments shown))
+        (should (equal "wait" (alist-get 'status shown)))
+        (should (equal '("needs_human") (alist-get 'tags shown))))
+      ;; Indented, the same structure is a list and is accepted.
+      (with-current-buffer draft
+        (goto-char (point-max))
+        (beginning-of-line)
+        (insert "  ")
+        (zwanenzang-comment-send))
+      (should-not (buffer-live-p draft))
+      (should (equal "todo" (alist-get 'status (zwanenzang-test-show tracker id)))))))
+
 (ert-deftest zwanenzang-comment-pending-changes-need-a-pushed-heading ()
   (dolist (edit '(keyword tags))
     (ert-info ((format "Unpushed %s" edit))

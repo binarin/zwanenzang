@@ -976,7 +976,7 @@
       (zwanenzang-test-set-doc trk id "description" "Text\n#+begin_src sh\nls\n#+end_src\n* no\n")
       (zwanenzang-test-set-doc trk id "plan" "Plan\n")
       (zwanenzang-test-set-doc trk id "status" "Hidden\n")
-      (zwanenzang-test-cli trk "comment" id "A comment\n* starred\n:END:\n")
+      (zwanenzang-test-legacy-comment trk id "A comment\n* starred\n:END:\n")
       (zwanenzang-test-append "** Group\n*** NEXT New :x:\nNew text\n")
       (zwanenzang-test-at-root #'zwanenzang-sync)
       (let ((before (buffer-string))

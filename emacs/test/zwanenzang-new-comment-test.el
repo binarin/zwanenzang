@@ -46,11 +46,13 @@ text of the comment at point, the line after its header."
     (zwanenzang-test--comment-at-point)))
 
 (defun zwanenzang-test--comment-at-point ()
-  "The first text line of the comment whose header point is on, or nil."
-  (when (looking-at "^\\[[^]\n]+\\] [^\n]*:$")
+  "The first text line of the comment whose header point is on, or nil.
+The line is without the indentation that makes it the item's text."
+  (when (looking-at "^- \\[[^]\n]+\\] [^\n]*:$")
     (save-excursion
       (forward-line 1)
-      (buffer-substring-no-properties (point) (line-end-position)))))
+      (string-remove-prefix
+       "  " (buffer-substring-no-properties (point) (line-end-position))))))
 
 (defun zwanenzang-test--marked-headings ()
   "The ZWANENZANG_IDs of the headings carrying a new-comment fringe mark."
@@ -84,13 +86,13 @@ text of the comment at point, the line after its header."
 
 ;; The newest comment comes first in the drawer, as a pull writes it.
 (defconst zwanenzang-test--quoting-records
-  '(("new" . "[2026-11-13T00:00:01Z] Agent:\nQuoting the old header:\n[2026-11-13T00:00:00Z] Agent:\nquoted prose\n")
-    ("old" . "[2026-11-13T00:00:00Z] Agent:\nActual old comment\n"))
+  '(("new" . "- [2026-11-13T00:00:01Z] Agent:\n  Quoting the old header:\n  - [2026-11-13T00:00:00Z] Agent:\n  quoted prose\n")
+    ("old" . "- [2026-11-13T00:00:00Z] Agent:\n  Actual old comment\n"))
   "Two comment records, the newer quoting the older's header line.")
 
 (defconst zwanenzang-test--same-header-records
-  '(("b" . "[2026-11-13T00:00:00Z] Agent:\nSecond\n[2026-11-13T00:00:00Z] Agent:\nnot a comment\n")
-    ("a" . "[2026-11-13T00:00:00Z] Agent:\nFirst\n"))
+  '(("b" . "- [2026-11-13T00:00:00Z] Agent:\n  Second\n  - [2026-11-13T00:00:00Z] Agent:\n  not a comment\n")
+    ("a" . "- [2026-11-13T00:00:00Z] Agent:\n  First\n"))
   "Two comment records with one header, the newer repeating it in its text.")
 
 (defun zwanenzang-test--record-text (records id &optional edit)
@@ -105,7 +107,8 @@ The drawer holds RECORDS, passed through EDIT when given."
       (when pos
         (goto-char pos)
         (forward-line 1)
-        (buffer-substring-no-properties (point) (line-end-position))))))
+        (string-remove-prefix
+         "  " (buffer-substring-no-properties (point) (line-end-position)))))))
 
 (ert-deftest zwanenzang-new-comment-position-takes-whole-records ()
   (should (equal "Actual old comment"
@@ -131,7 +134,7 @@ The drawer holds RECORDS, passed through EDIT when given."
       (zwanenzang-test-pull)
       (zwanenzang-test-cli trk "comment" id "Quoted one")
       (let* ((old (car (alist-get 'comments (zwanenzang-test-show trk id))))
-             (header (format "[%s] tester:" (alist-get 'ts old))))
+             (header (format "- [%s] tester:" (alist-get 'ts old))))
         (zwanenzang-test-cli trk "comment" id (format "Replying to\n%s\nQuoted one" header))
         (zwanenzang-test-cli trk "comment" id (format "Again\n%s\nQuoted one" header)))
       (zwanenzang-test-pull)

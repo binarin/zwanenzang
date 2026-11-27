@@ -282,20 +282,24 @@ Writing adds one to such a line too, so it survives the round trip.")
    text))
 
 (defun zwanenzang--comment-text (text)
-  "TEXT of a comment as Org text for the comments drawer, ending in a newline.
-Comments are never read back, so only heading lines and what would close
-the drawer are escaped."
-  (let ((s (string-trim-right text))
+  "TEXT of a comment as the continuation of its comments drawer item.
+Every line is indented by two spaces, so lists in TEXT nest under the
+item and a legacy heading line is a sub-item, not a heading.  Leading
+blank lines are dropped and every run of blank lines becomes one empty
+line, since two would end the list.  Comments are never read back, so
+only what would close the drawer is escaped.  The result is empty or
+ends in a newline."
+  (let ((s (string-trim (replace-regexp-in-string "^[ \t]+$" "" text) "\n+" "[ \t\n]+"))
         (case-fold-search t))
     (if (string-empty-p s)
         ""
       (concat (zwanenzang--map-lines
                (lambda (line)
-                 (if (or (string-match-p zwanenzang--heading-line-re line)
-                         (string-match-p zwanenzang--end-line-re line))
-                     (concat "," line)
-                   line))
-               s)
+                 (cond ((string-empty-p line) line)
+                       ((string-match-p zwanenzang--end-line-re line)
+                        (concat "  ," line))
+                       (t (concat "  " line))))
+               (replace-regexp-in-string "\n\n\n+" "\n\n" s))
               "\n"))))
 
 (defun zwanenzang--normalize-text (text)
@@ -1579,13 +1583,16 @@ Its resolved identity, else its writer's name or short id."
       (zwanenzang--actor-name pull (alist-get 'actor record))))
 
 (defun zwanenzang--comment-record (pull comment)
-  "COMMENT as PULL renders it in the comments drawer: a header line, text, link."
+  "COMMENT as PULL renders it in the comments drawer.
+One top-level list item: the header line `- [ts] actor:', then the
+text and the link, indented as the item's continuation."
   (let ((link (zwanenzang--null (alist-get 'link comment))))
-    (concat (format "[%s] %s:\n" (alist-get 'ts comment)
+    (concat (format "- [%s] %s:\n" (alist-get 'ts comment)
                     (zwanenzang--author pull comment))
             (zwanenzang--comment-text (alist-get 'text comment))
             (and link
-                 (concat (org-link-make-string
+                 (concat "  "
+                         (org-link-make-string
                           (if (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" link)
                               link
                             (concat "file:" (zwanenzang--file-name-on-host

@@ -291,10 +291,52 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
   (should (equal (zwanenzang--unescape-text ",#+begin_src\n,,#+x\n") "#+begin_src\n,#+x\n"))
   (should (equal (zwanenzang--escape-text ",#+x\n") ",,#+x\n")))
 
-(ert-deftest zwanenzang-comment-text-escapes-headings-and-drawer-ends ()
+(ert-deftest zwanenzang-comment-text-is-the-indented-item-continuation ()
+  ;; Indented, a legacy heading line is a sub-item; only drawer ends keep
+  ;; the comma.
   (should (equal (zwanenzang--comment-text "one\n* two\n:END:\n  :end:\n#+begin_src\n:x:\n\n")
-                 "one\n,* two\n,:END:\n,  :end:\n#+begin_src\n:x:\n"))
+                 "  one\n  * two\n  ,:END:\n  ,  :end:\n  #+begin_src\n  :x:\n"))
+  ;; Lists in the text nest under the comment's item.
+  (should (equal (zwanenzang--comment-text "Review: fine\n- a\n  - b\n")
+                 "  Review: fine\n  - a\n    - b\n"))
+  ;; Two blank lines would end the list: every run becomes one empty
+  ;; line, and leading blank lines go.
+  (should (equal (zwanenzang--comment-text "\n \none\n\n\t\n  \ntwo\n\nthree\n \n")
+                 "  one\n\n  two\n\n  three\n"))
+  (should (equal (zwanenzang--comment-text " \n\n") ""))
   (should (equal (zwanenzang--comment-text "\n") "")))
+
+(ert-deftest zwanenzang-comments-drawer-is-one-list-with-an-item-per-comment ()
+  (let* ((pull (zwanenzang--pull-create :tracker-dir "/trk/" :actors '((A1 . "Alice"))))
+         (ticket '((comments ((id . "c1") (actor . "A1") (ts . "2026-11-07T10:00:00Z")
+                              (text . "Old\n* Legacy heading\n\n\n- item\n  - nested")
+                              (link . :null))
+                             ((id . "c2") (actor . "A1") (ts . "2026-11-07T11:00:00Z")
+                              (text . "Newer") (link . "https://example.invalid"))))))
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Ticket\n"
+              (zwanenzang--render-drawer "ZWANENZANG_COMMENTS"
+                                         (zwanenzang--comments-content pull ticket)))
+      (goto-char (point-min))
+      ;; Org reads one heading, the drawer, and in it one plain list.
+      (should (= 1 (how-many org-heading-regexp (point-min) (point-max))))
+      (let* ((tree (org-element-parse-buffer))
+             (drawer (car (org-element-map tree 'drawer #'identity)))
+             (lists (org-element-map drawer 'plain-list #'identity nil nil 'plain-list)))
+        (should (equal (org-element-property :drawer-name drawer) "ZWANENZANG_COMMENTS"))
+        (should (= 1 (length (org-element-contents drawer))))
+        (should (= 1 (length lists)))
+        (let ((items (org-element-contents (car lists))))
+          (should (= 2 (length items)))
+          (should (string-prefix-p "[2026-11-07T11:00:00Z] Alice:\n  Newer\n  [[https://"
+                                   (buffer-substring-no-properties
+                                    (org-element-property :contents-begin (nth 0 items))
+                                    (org-element-property :contents-end (nth 0 items)))))
+          ;; The legacy heading and the text's own list nest in the item.
+          (let ((nested (org-element-map (nth 1 items) 'item
+                          (lambda (i) (org-element-property :bullet i)))))
+            (should (equal nested '("- " "* " "- " "- ")))))))))
 
 (ert-deftest zwanenzang-normalize-text-ignores-surrounding-blank-lines ()
   (should (equal (zwanenzang--normalize-text "\n  \nText\n\nmore  \n\n") "Text\n\nmore\n"))
@@ -335,7 +377,7 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
   ;; Planning keywords stay case-sensitive.
   (should (equal (caar (zwanenzang--body-segments "scheduled: soon\n")) 'text))
   ;; Tracker text with such a line cannot close a drawer either.
-  (should (equal (zwanenzang--comment-text ":end:\n") ",:end:\n")))
+  (should (equal (zwanenzang--comment-text ":end:\n") "  ,:end:\n")))
 
 (ert-deftest zwanenzang-body-segments-keep-a-lone-drawer-line-out-of-own-drawers ()
   ;; Text in front of the client's drawers: :lone: must not reach their :END:.
@@ -602,11 +644,11 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
                             ((actor . "A1") (ts . "2026-11-07T12:00:00Z")
                              (text . "third") (link . "https://example.invalid/mr/1")))))
          (before (copy-tree ticket))
-         (expected (concat "[2026-11-07T12:00:00Z] Alice:\nthird\n"
-                           "[[https://example.invalid/mr/1]]\n"
-                           "[2026-11-07T09:00:00Z] 01UNDECLAR:\nsecond\n"
-                           "[[file:/trk/docs/x.md]]\n"
-                           "[2026-11-07T10:00:00Z] Alice:\nfirst\n,* line\n")))
+         (expected (concat "- [2026-11-07T12:00:00Z] Alice:\n  third\n"
+                           "  [[https://example.invalid/mr/1]]\n"
+                           "- [2026-11-07T09:00:00Z] 01UNDECLAR:\n  second\n"
+                           "  [[file:/trk/docs/x.md]]\n"
+                           "- [2026-11-07T10:00:00Z] Alice:\n  first\n  * line\n")))
     (dotimes (_ 2)
       (should (equal (zwanenzang--comments-content pull ticket) expected))
       (should (equal ticket before)))))

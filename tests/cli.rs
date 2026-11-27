@@ -437,6 +437,53 @@ fn comments_inline_and_as_blob() {
 }
 
 #[test]
+fn comments_with_heading_lines_are_refused_every_way_they_are_given() {
+    let d = tracker();
+    let p = d.path();
+    let a = id(&ok(p, &["create", "A"]));
+    let before = logs(p);
+    let blobs_before = std::fs::read_dir(p.join("blobs")).unwrap().count();
+    let e = err(p, &["comment", &a, "* Review: fine"], "invalid-comment");
+    let message = e["error"]["message"].as_str().unwrap();
+    assert!(message.contains("line 1"), "{message}");
+    assert!(message.contains("\"* Review: fine\""), "{message}");
+    let input = disposable_dir();
+    let file = input.path().join("comment.org");
+    std::fs::write(&file, "Review: fine\n\n** Details\n").unwrap();
+    let e = err(
+        p,
+        &["comment", &a, "--file", file.to_str().unwrap()],
+        "invalid-comment",
+    );
+    assert!(e["error"]["message"].as_str().unwrap().contains("line 3"));
+    let o = run_in(p, &["comment", &a], "Plain\n*\n");
+    assert_eq!(o.code, 1, "{}", o.json);
+    assert_eq!(o.json["error"]["code"], "invalid-comment");
+    // Text long enough for a blob is checked the same way.
+    let long = format!("{}\n* Late heading\n", "x".repeat(3000));
+    let o = run_in(p, &["comment", &a], &long);
+    assert_eq!(o.code, 1, "{}", o.json);
+    assert_eq!(o.json["error"]["code"], "invalid-comment");
+    assert_eq!(logs(p), before);
+    assert_eq!(
+        std::fs::read_dir(p.join("blobs")).unwrap().count(),
+        blobs_before
+    );
+    // Indented stars, bold at line start and lists are not headings;
+    // documents may keep their headings.
+    ok_stdin(
+        p,
+        &["comment", &a],
+        "Review: fine\n  * sub-item\n*bold* start\n- item\n",
+    );
+    ok_stdin(
+        p,
+        &["doc", "set", &a, "brief", "--base", "none"],
+        "* Goal\nText\n",
+    );
+}
+
+#[test]
 fn documents_compare_and_set() {
     let d = tracker();
     let p = d.path();

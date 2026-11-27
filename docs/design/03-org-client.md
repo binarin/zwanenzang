@@ -362,7 +362,13 @@ the foreign-id rule above. History does not travel, which is accepted.
 ## Prose in org
 
 Tracker prose (descriptions, named documents, comments) is Org, not Markdown.
-The CLI stays format-blind and nothing converts it.
+The CLI stays format-blind and nothing converts it, with one exception: a
+live write refuses a new comment with a line Org reads as a heading
+(`^\*+([ \t]|$)`), with `invalid-comment` naming the first such line, on
+every path (`comment`, `apply`, blob-backed text, `import`). Replay and
+lint accept older comments with headings, and documents keep theirs. The
+client does not check first: a refused send keeps the draft open, as any
+refusal does.
 
 - The description is the human's. Pull overwrites it only when the local text
   is unchanged since the cursor. Agents cannot write it.
@@ -370,8 +376,8 @@ The CLI stays format-blind and nothing converts it.
   buffers of their own (see "Document buffers"). Saving one writes a new
   version based on the version it was opened with, so an agent's version
   written since is never overwritten unseen.
-- Comments render read-only, newest first, each with a link to any file or URL
-  it names. Removing them from the buffer changes nothing.
+- Comments render read-only, newest first, each a list item with a link to
+  any file or URL it names. Removing them from the buffer changes nothing.
 - Bulky files are links, opened over tramp.
 
 ## Commands
@@ -648,7 +654,7 @@ Positions are never stored. Navigation and the fringe marks find each
 comment again from the buffer: the ticket heading by `ZWANENZANG_ID` in the
 scope, then, in its comments drawer, the comments as the last pull rendered
 them, each matched whole (header line, text and link) and in order after
-the one before. A comment quoting another's `[timestamp] actor:` line, or
+the one before. A comment quoting another's `- [timestamp] actor:` line, or
 sharing it, is therefore not taken for that comment. Body rewrites, parent
 moves and text the human adds do not lose them; a comment the drawer no
 longer holds, and a ticket whose heading left the scope or has a
@@ -698,9 +704,13 @@ never call the CLI or modify the buffer. Setting
 - The description is the body before the first subheading, excluding
   drawers and planning lines.
 - Comments go in a `:ZWANENZANG_COMMENTS:` drawer at the end of the body,
-  below the description, newest first, each `[timestamp] actor:` followed by
-  the text as plain Org, so its links work. The drawer is rewritten from
-  tracker state and never read back.
+  below the description, newest first, as one plain list: each comment is a
+  top-level item `- [timestamp] actor:`, with its text and then its link
+  indented two spaces as the item's continuation. The text is plain Org,
+  so its links work and its own lists nest under the item. Leading blank
+  lines are dropped and every run of blank lines becomes one empty line,
+  since two would end the list. The drawer is rewritten from tracker state
+  and never read back. The header stays plain text, not an Org timestamp.
   Newest means reverse event replay order, not wall-clock timestamp order.
   This applies immediately after an accepted comment send and on every pull,
   including cursor resets; the CLI keeps its ascending replay order.
@@ -821,8 +831,10 @@ tracker.
   which reading strips again. Escaping those only when an `:END:` followed
   in the text was not enough: a human can add a drawer below later, the line
   then read as its opening, and the push truncated the description. The
-  cost is a comma on `:wip:`-shaped lines of prose. In comments, heading
-  lines and `:END:` lines get the comma. Skipped values are fixed-width
+  cost is a comma on `:wip:`-shaped lines of prose. In comments only
+  `:END:` lines get the comma, after the item's indentation: indented, a
+  heading line from a comment written before the CLI refused them is a
+  `*`-bullet sub-item, not a heading, and is left as it stands. Skipped values are fixed-width
   `: ` lines. Drawers end at `:END:` in any case, as in Org. This comma is
   the client's own: descriptions and comments are entry text, not source
   blocks, and Org has no quoting convention there. Inline named documents

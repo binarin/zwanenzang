@@ -196,7 +196,13 @@ them; any change to them fails with `tombstoned`.
 `comment` reads its text from the argument, from `--file`, or from stdin.
 Text up to 2048 bytes is stored inline; longer text goes to a blob. Text that
 is empty or only whitespace is refused with `invalid-comment` whichever way it
-would be stored. `doc set` reads the new text from `--file` or stdin.
+would be stored. So is text with a line Org reads as a heading: one or more
+`*` at the start of the line followed by a blank or the end of the line. The
+message names the first such line. Indented `*` and `*bold*` at the start of
+a line are not headings. The rule holds for `comment`, `apply` and `import`,
+on live writes only: replay and `lint` accept older comments with headings.
+Documents may hold headings. `doc set` reads the new text from `--file` or
+stdin.
 
 `schedule` sets or clears the ticket's Org SCHEDULED date. `VALUE` is one
 argument or several, joined by blanks, so `schedule ZZ-42 2026-12-03 10:00
@@ -942,7 +948,7 @@ Rejections: returned as the error code when a write is refused, and as
 | `entity-exists`, `create-id-mismatch` | a `create` that does not create a new entity named by its own id |
 | `wrong-entity` | a ticket operation on the tracker root, or `actor`/`config` on a ticket |
 | `tombstoned` | the ticket is tombstoned |
-| `invalid-title`, `invalid-tag`, `invalid-name`, `invalid-comment` | a value has the wrong format |
+| `invalid-title`, `invalid-tag`, `invalid-name`, `invalid-comment` | a value has the wrong format; for `invalid-comment` this includes a heading line in a new comment (write only; replay accepts it) |
 | `status-not-in-vocabulary`, `kind-not-in-vocabulary` | not in the tracker's vocabulary |
 | `retired-status` | `create`, `status` or an `apply` change names a status in `retired_statuses`, even the ticket's current one (write only; replay accepts it) |
 | `invalid-priority` | outside the configured live range or not a native Org priority value |

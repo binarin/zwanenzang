@@ -244,6 +244,27 @@ comma-escaped body instead of the `org-src-v1' source block."
   (let ((file (expand-file-name (format "events/%s.jsonl" actor) dir)))
     (write-region (concat line "\n") nil file t 'silent)))
 
+(defun zwanenzang-test-legacy-comment (dir ref text)
+  "Add a comment holding TEXT to ticket REF in the disposable tracker DIR.
+The CLI refuses heading lines in new comments, but replay accepts the
+ones written before that, which this recreates: a raw event of the
+ticket's creator after the tracker's newest event, committed."
+  (let* ((ticket (zwanenzang-test-show dir ref))
+         (created (alist-get 'created ticket))
+         (base (car (sort (mapcar (lambda (tk) (alist-get 'last_event tk))
+                                  (alist-get 'tickets (zwanenzang-test-cli dir "query" "--all")))
+                          #'string>))))
+    (zwanenzang-test-append-raw
+     dir (alist-get 'actor created)
+     (json-serialize `((id . ,(zwanenzang-test-ulid-next base))
+                       (actor . ,(alist-get 'actor created))
+                       (as . ,(alist-get 'identity created))
+                       (parent . ,base) (ts . ,(alist-get 'ts created))
+                       (entity . ,(alist-get 'id ticket))
+                       (op . "comment") (data . ((text . ,text))))))
+    (zwanenzang-test-git dir "add" "events")
+    (zwanenzang-test-git dir "commit" "--quiet" "-m" "A legacy comment")))
+
 (defconst zwanenzang-test--crockford "0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 
 (defun zwanenzang-test-ulid-next (ulid)

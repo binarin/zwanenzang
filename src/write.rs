@@ -95,6 +95,20 @@ impl Written {
     }
 }
 
+/// The first line of a comment's `text` that Org reads as a heading
+/// (`^\*+([ \t]|$)`), with its 1-based number. A live write refuses a
+/// comment with one, since the Org client renders comments as list items;
+/// replay and lint accept older comments that have one.
+pub(crate) fn comment_heading_line(text: &str) -> Option<(usize, &str)> {
+    text.lines()
+        .enumerate()
+        .find(|(_, line)| {
+            let rest = line.trim_start_matches('*');
+            rest.len() < line.len() && (rest.is_empty() || rest.starts_with([' ', '\t']))
+        })
+        .map(|(i, line)| (i + 1, line))
+}
+
 /// The entity a target names, given the tickets created so far.
 fn resolve(target: Target, created: &[Ulid]) -> Result<Ulid> {
     match target {
@@ -254,6 +268,11 @@ impl Tracker {
                 .map(|(i, (e, o))| (e, o, Some(i))),
         );
         let refs: BTreeMap<usize, Target> = plan.refs.into_iter().collect();
+        let plan_blobs: BTreeMap<String, &str> = plan
+            .blobs
+            .iter()
+            .map(|t| (blob_name(t), t.as_str()))
+            .collect();
 
         let mut highest = rp.highest_seen;
         let mut events = Vec::new();
@@ -330,6 +349,30 @@ impl Tracker {
                         self.config.priority.highest, self.config.priority.lowest
                     ),
                 }));
+            }
+            if let Op::Comment(d) = &ev.op {
+                let blob_text;
+                let text = match (&d.text, &d.blob) {
+                    (Some(text), _) => Some(text.as_str()),
+                    (None, Some(blob)) => match plan_blobs.get(blob) {
+                        Some(text) => Some(*text),
+                        None => {
+                            blob_text = self.get_blob(blob).ok();
+                            blob_text.as_deref()
+                        }
+                    },
+                    (None, None) => None,
+                };
+                if let Some((n, line)) = text.and_then(comment_heading_line) {
+                    return Err(Error::Rejected(Rejection {
+                        code: RejectCode::InvalidComment,
+                        message: format!(
+                            "comment line {n} is an Org heading: {line:?}; comments may not \
+                             contain heading lines, so use a plain label line or a list, \
+                             or a named document for structured text"
+                        ),
+                    }));
+                }
             }
             if let Op::Scheduled(ScheduledData { to: Some(value) }) = &ev.op {
                 crate::planning::check_value(value).map_err(Error::Rejected)?;

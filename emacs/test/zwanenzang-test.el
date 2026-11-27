@@ -171,7 +171,7 @@ The script sees the arguments it was given in \"$@\" and its stdin."
                     pull '((actor . "01M7JEQZZZZZZZZZZZZZZZZZZZ") (identity . :null)))
                    "01M7JEQZZZ"))
     (should (string-match-p
-             "\\`\\[2026-11-07T00:00:00Z\\] agent:\n"
+             "\\`- \\[2026-11-07T00:00:00Z\\] agent:\n"
              (zwanenzang--comment-record
               pull '((id . "x") (actor . "01M7JEQCKRH7E5CDSJ25G48SBT") (identity . "agent")
                      (ts . "2026-11-07T00:00:00Z") (text . "hi") (link . :null)))))))

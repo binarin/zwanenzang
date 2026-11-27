@@ -137,7 +137,8 @@
     (let* ((parent (zwanenzang-test-create trk "Parent" "--tag" "alpha"))
            (child (zwanenzang-test-create trk "Child" "--parent" parent "--status" "agnt"))
            (lone (zwanenzang-test-create trk "Lone" "--status" "revw")))
-      (zwanenzang-test-cli trk "comment" parent "first\n* starred\n:END:")
+      ;; Written before the CLI refused heading lines in comments.
+      (zwanenzang-test-legacy-comment trk parent "first\n* starred\n:END:")
       (zwanenzang-test-cli trk "comment" parent "second")
       (zwanenzang-test-set-doc trk parent "description" "Intro\n* not a heading\n")
       (zwanenzang-test-set-doc trk parent "plan" "Plan text\n")
@@ -170,8 +171,8 @@
                  (concat ":END:\n"
                          "Intro\n,\\* not a heading\n"
                          ":ZWANENZANG_COMMENTS:\n"
-                         "\\[[-0-9T:Z]+\\] tester:\nsecond\n"
-                         "\\[[-0-9T:Z]+\\] tester:\nfirst\n,\\* starred\n,:END:\n:END:\n"
+                         "- \\[[-0-9T:Z]+\\] tester:\n  second\n"
+                         "- \\[[-0-9T:Z]+\\] tester:\n  first\n  \\* starred\n  ,:END:\n:END:\n"
                          ":ZWANENZANG_DOCUMENTS:\n"
                          (regexp-quote (format "- [[zwanenzang:%s/plan][plan]] " parent))
                          "[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9] tester\n"
@@ -204,7 +205,7 @@
       (zwanenzang-test-pull)
       (should (string-match-p "\\`\\*\\*\\* DONE \\[ZZ-1\\] New +:b:\\'" (zwanenzang-test-heading id)))
       (should (string-match-p "status=done " (zwanenzang-test-property id "ZWANENZANG_SYNC")))
-      (should (string-match-p (concat "New text\n:ZWANENZANG_COMMENTS:\n.*\nlater\n:END:\n"
+      (should (string-match-p (concat "New text\n:ZWANENZANG_COMMENTS:\n- .*\n  later\n:END:\n"
                                       ":ZWANENZANG_DOCUMENTS:\n- .*/plan\\]\\[plan\\]\\] .*\n:END:\n\\'")
                               (zwanenzang-test-entry id)))
       (save-excursion
@@ -222,7 +223,7 @@
       (let ((entry (zwanenzang-test-entry id)))
         (should (string-match-p (concat (regexp-quote prose) ":ZWANENZANG_COMMENTS:\n") entry))
         (should (string-match-p
-                 "tester:\n\\[\\[https://example.invalid\\]\\[there\\]\\]\n#\\+begin_quote\n"
+                 "tester:\n  \\[\\[https://example.invalid\\]\\[there\\]\\]\n  #\\+begin_quote\n"
                  entry)))
       (let ((before (buffer-string)))
         (zwanenzang-test-pull)
@@ -249,7 +250,7 @@
         (zwanenzang-test-pull)
         (should (equal (zwanenzang-test-property id "ZWANENZANG_DESC_HASH") sync)))
       (let ((entry (zwanenzang-test-entry id)))
-        (should (string-match-p "Text\n,,#\\+begin_src\n:ZWANENZANG_COMMENTS:\n.*tester:\nnote\n:END:\n\\'"
+        (should (string-match-p "Text\n,,#\\+begin_src\n:ZWANENZANG_COMMENTS:\n- .*tester:\n  note\n:END:\n\\'"
                                 entry))
         (with-temp-buffer
           (insert entry)
@@ -633,7 +634,7 @@
       (zwanenzang-test-pull)
       (should (string-match-p
                (concat "\nMain text\n"
-                       ":ZWANENZANG_COMMENTS:\n.*\nA note\n:END:\n"
+                       ":ZWANENZANG_COMMENTS:\n- .*\n  A note\n:END:\n"
                        ":ZWANENZANG_DOCUMENTS:\n.*\n:END:\n"
                        (regexp-quote
                         (concat ":ZWANENZANG_RELATIONS:\n"
@@ -725,7 +726,7 @@
                 (should (string-prefix-p "* ZZ-1 Prerequisite\n- Status :: todo\n- Kind :: bug\n"
                                          text))
                 (should (string-match-p "\n\\*\\* Description\nWhy\n,\\* not a heading\n" text))
-                (should (string-match-p "\n\\*\\* Comments\n\\[.*\\] tester:\nLooked at it\n" text))
+                (should (string-match-p "\n\\*\\* Comments\n- \\[.*\\] tester:\n  Looked at it\n" text))
                 (should (string-match-p
                          (regexp-quote (concat "** References\n- Blocks\n  - [[zwanenzang:"
                                                main "][ZZ-2 TODO Main]]\n"))

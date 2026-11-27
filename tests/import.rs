@@ -534,6 +534,42 @@ fn malformed_sources_refuse_the_import() {
 }
 
 #[test]
+fn a_heading_line_in_the_provenance_comment_refuses_the_import() {
+    let d = target();
+    let p = d.path();
+    let before = logs(p);
+    let src = disposable_dir();
+    copy_tree(&fixture(), src.path());
+    // A frontmatter key with no mapping is kept as text in the
+    // provenance comment, so this line would be a heading there.
+    write_file(
+        src.path(),
+        "tickets/AIWF-0050-x.md",
+        "---\nstatus: draft\n* odd: value\n---\n# T\n",
+    );
+    let e = err(
+        p,
+        &[
+            "import",
+            "ai-workflow",
+            src.path().to_str().unwrap(),
+            "--repo-alias",
+            "docs-site=site",
+        ],
+        "invalid-comment",
+    );
+    assert!(
+        e["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("\"* odd: value\""),
+        "{e}"
+    );
+    assert_eq!(logs(p), before);
+    assert!(std::fs::read_dir(p.join("blobs")).unwrap().next().is_none());
+}
+
+#[test]
 fn the_tickets_directory_works_as_the_source() {
     let d = target();
     let report = import(

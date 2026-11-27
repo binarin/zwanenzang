@@ -389,6 +389,22 @@ fn metadata_comments_and_lifecycle_use_the_shared_rules() {
         json!({"changes":[{"op":"comment","ticket":a,"data":{"text":" ".repeat(3000)}}]}),
         "invalid-comment",
     );
+    // A heading line in a comment refuses the whole batch, inline or as a
+    // blob; a document keeps its headings.
+    refuses(
+        p,
+        json!({"changes":[
+            {"op":"tag","ticket":a,"data":{"tag":"reviewed"}},
+            {"op":"doc","ticket":a,"data":{"name":"notes","base":null,"text":"* Notes\n"}},
+            {"op":"comment","ticket":a,"data":{"text":"Review: fine\n* Findings\n"}}
+        ]}),
+        "invalid-comment",
+    );
+    refuses(
+        p,
+        json!({"changes":[{"op":"comment","ticket":a,"data":{"text":format!("{long}\n** Findings\n")}}]}),
+        "invalid-comment",
+    );
     assert_eq!(run_in(p, &["lint"], "").code, 0);
 }
 

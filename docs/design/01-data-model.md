@@ -235,6 +235,11 @@ Applied on live writes (error) and on replay (skip and report):
 
 - Status in vocabulary. Kind in vocabulary. Tag format. A retired status
   (below) is refused on live writes only; replay accepts it.
+- A new comment holds no line Org reads as a heading (`^\*+([ \t]|$)`),
+  inline or as a blob: the Org client renders each comment as a list
+  item. Refused on live writes only, with `invalid-comment`; replay and
+  lint accept comments written before the rule. Documents may keep their
+  headings.
 - Parent and relation targets exist and are not tombstoned. No parent cycles.
 - `doc.base` is the current version. On replay a stale base is not skipped:
   the version is kept in history as lost and does not become current.
@@ -289,7 +294,9 @@ question; start human-only.
 
 Prose is Org, not Markdown: descriptions, named documents and comments are
 written and read as Org text. The event core and the CLI stay format-blind;
-they store UTF-8 text and never parse or convert it.
+they store UTF-8 text and never parse or convert it. The one exception is
+the live-write refusal of heading lines in comments, under "Validation
+rules".
 
 ## Open questions
 

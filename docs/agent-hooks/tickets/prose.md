@@ -1,7 +1,8 @@
 # Comments and documents
 
-The CLI stores whatever text it is given and checks none of the rules below;
-following them is up to the writer.
+The CLI stores whatever text it is given and checks none of the rules below
+except one: it refuses a comment with a heading line (below). Following the
+rest is up to the writer.
 
 - All prose is Org, not Markdown.
 - The `description` document belongs to the human. Agents read it and do not
@@ -30,8 +31,14 @@ choose the form by these rules.
 - Do not restate in prose what ticket fields already hold: links to other
   tickets, status, tags.
 
-A comment written in a role may start with a heading naming it, such as
-`* Review: ...`, `* Plan: ...` or `* Outcome: ...`.
+A comment written in a role may start with a plain label line naming it,
+such as `Review: ...`, `Plan: ...` or `Outcome: ...`.
+
+Comments hold no Org headings. `zz` refuses a comment with a line that
+starts with one or more `*` followed by a blank or the end of the line,
+with `invalid-comment` naming that line. Use a label line or a list for
+structure, and a named document for anything that needs sub-headings.
+Indented `*` items and `*bold*` at the start of a line are fine.
 
 Use these document names, and avoid inventing others:
 

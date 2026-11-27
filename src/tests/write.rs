@@ -7,7 +7,7 @@ use crate::event::{
 };
 use crate::store::{DEFAULT_ACTOR_KEY, Tracker, blob_name};
 use crate::ulid::Ulid;
-use crate::write::{Plan, Target, WriteOptions, Written};
+use crate::write::{Plan, Target, WriteOptions, Written, comment_heading_line};
 
 fn based(dir: &tempfile::TempDir) -> Tracker {
     let t = new_tracker(dir);
@@ -148,6 +148,70 @@ fn refused_write_stores_no_blob() {
     .unwrap();
     assert!(w.written());
     assert_eq!(t.get_blob(&blob_name(&text)).unwrap(), text);
+}
+
+#[test]
+fn comment_heading_line_matches_what_org_reads_as_a_heading() {
+    assert_eq!(comment_heading_line("* Review"), Some((1, "* Review")));
+    assert_eq!(comment_heading_line("ok\n** Two\n"), Some((2, "** Two")));
+    assert_eq!(comment_heading_line("ok\n*\tTab"), Some((2, "*\tTab")));
+    assert_eq!(comment_heading_line("ok\n\n***\n"), Some((3, "***")));
+    assert_eq!(comment_heading_line("ok\r\n*\r\n"), Some((2, "*")));
+    assert_eq!(
+        comment_heading_line("Review: fine\n  * indented\n*bold* start\n- item\n"),
+        None
+    );
+}
+
+#[test]
+fn comment_heading_lines_are_refused_on_write_only() {
+    let dir = disposable_dir();
+    let t = based(&dir);
+    let before = log_snapshot(&t);
+    let mut c = FixedClock::new(1_000_000);
+    let inline = Op::Comment(CommentData {
+        text: Some("Plain\n* Review: x\n".into()),
+        blob: None,
+        link: None,
+    });
+    let r = write_one(&t, &mut c, u(T1), inline.clone());
+    match r {
+        Err(Error::Rejected(rej)) => {
+            assert_eq!(rej.code.as_str(), "invalid-comment");
+            assert!(rej.message.contains("line 2"), "{}", rej.message);
+            assert!(rej.message.contains("\"* Review: x\""), "{}", rej.message);
+        }
+        _ => panic!("expected a rejection"),
+    }
+    // A blob-backed comment is checked by its text, and refusing it
+    // stores no blob.
+    let text = format!("{}\n** Notes\n", "x".repeat(3000));
+    let blob = Op::Comment(CommentData {
+        text: None,
+        blob: Some(blob_name(&text)),
+        link: None,
+    });
+    let r = write_ops(&t, &mut c, vec![(Target::Entity(u(T1)), blob)], vec![text]);
+    assert_eq!(rejected_code(r), "invalid-comment");
+    assert_eq!(log_snapshot(&t), before);
+    assert!(t.blob_names().unwrap().is_empty());
+    // Replay accepts a comment written before the rule.
+    append_events(
+        &t,
+        &[ev(
+            u(BASE_LAST + 1),
+            ACTOR_A,
+            Some(u(BASE_LAST)),
+            u(T1),
+            inline,
+        )],
+    );
+    let rp = load(&t);
+    assert!(rp.skipped.is_empty());
+    assert_eq!(
+        rp.state.tickets[&u(T1)].comments[0].text.as_deref(),
+        Some("Plain\n* Review: x\n")
+    );
 }
 
 #[test]
