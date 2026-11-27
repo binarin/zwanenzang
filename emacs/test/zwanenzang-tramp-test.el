@@ -229,7 +229,8 @@ TRAMP would start one to connect, so this keeps BODY off the network."
                         (zwanenzang--pull-create :tracker-dir (concat hops "/trk/"))
                         '((actor . "A1") (ts . "2026-11-07T10:00:00Z")
                           (text . "text") (link . "/srv/x.md")))
-                       (concat "- [2026-11-07T10:00:00Z] A1:\n  text\n  [[file:" hops
+                       (concat "- " (zwanenzang--comment-timestamp "2026-11-07T10:00:00Z")
+                               " A1:\n  text\n  [[file:" hops
                                "/srv/x.md]]\n")))))
   ;; Names TRAMP makes, such as a visited file's directory, keep the hops
   ;; only with ad-hoc proxies shown.
@@ -271,7 +272,8 @@ TRAMP would start one to connect, so this keeps BODY off the network."
           (should (equal (zwanenzang--comment-record
                           pull `((actor . "A1") (ts . "2026-11-07T10:00:00Z")
                                  (text . "text") (link . ,link)))
-                         (concat "- [2026-11-07T10:00:00Z] A1:\n  text\n  " rendered "\n"))))))))
+                         (concat "- " (zwanenzang--comment-timestamp "2026-11-07T10:00:00Z")
+                                 " A1:\n  text\n  " rendered "\n"))))))))
 
 (ert-deftest zwanenzang-tramp-dependency-snapshot-follows-the-files-machine ()
   ;; The same location text names another tracker once the buffer visits a

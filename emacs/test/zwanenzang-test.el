@@ -170,11 +170,12 @@ The script sees the arguments it was given in \"$@\" and its stdin."
     (should (equal (zwanenzang--author
                     pull '((actor . "01M7JEQZZZZZZZZZZZZZZZZZZZ") (identity . :null)))
                    "01M7JEQZZZ"))
-    (should (string-match-p
-             "\\`- \\[2026-11-07T00:00:00Z\\] agent:\n"
-             (zwanenzang--comment-record
-              pull '((id . "x") (actor . "01M7JEQCKRH7E5CDSJ25G48SBT") (identity . "agent")
-                     (ts . "2026-11-07T00:00:00Z") (text . "hi") (link . :null)))))))
+    (zwanenzang-test-with-time-zone "UTC0"
+      (should (string-match-p
+               "\\`- \\[2026-11-07 Sat 00:00\\] agent:\n"
+               (zwanenzang--comment-record
+                pull '((id . "x") (actor . "01M7JEQCKRH7E5CDSJ25G48SBT") (identity . "agent")
+                       (ts . "2026-11-07T00:00:00Z") (text . "hi") (link . :null))))))))
 
 (ert-deftest zwanenzang-command-name-skips-global-options ()
   (should (equal (zwanenzang--command-name '("--actor-name" "tester" "sync")) "sync"))

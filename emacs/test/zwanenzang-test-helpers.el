@@ -137,6 +137,18 @@ it lists."
   (zwanenzang-test-assert-disposable dir)
   (delete-directory dir t))
 
+(defmacro zwanenzang-test-with-time-zone (zone &rest body)
+  "Run BODY with the local time zone set to the TZ rule ZONE.
+Weekday names are the C locale's.  Comment headers are Org timestamps
+in local time, so a test that compares them fixes both."
+  (declare (indent 1) (debug (form body)))
+  (let ((old (make-symbol "old")))
+    `(let ((,old (getenv "TZ"))
+           (system-time-locale "C"))
+       (unwind-protect
+           (progn (setenv "TZ" ,zone) ,@body)
+         (setenv "TZ" ,old)))))
+
 (defmacro zwanenzang-test-with-dir (var &rest body)
   "Bind VAR to a fresh disposable directory around BODY, then delete it."
   (declare (indent 1) (debug (symbolp body)))

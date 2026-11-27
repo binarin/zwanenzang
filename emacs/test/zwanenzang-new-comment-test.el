@@ -86,13 +86,13 @@ The line is without the indentation that makes it the item's text."
 
 ;; The newest comment comes first in the drawer, as a pull writes it.
 (defconst zwanenzang-test--quoting-records
-  '(("new" . "- [2026-11-13T00:00:01Z] Agent:\n  Quoting the old header:\n  - [2026-11-13T00:00:00Z] Agent:\n  quoted prose\n")
-    ("old" . "- [2026-11-13T00:00:00Z] Agent:\n  Actual old comment\n"))
+  '(("new" . "- [2026-11-13 Fri 00:01] Agent:\n  Quoting the old header:\n  - [2026-11-13 Fri 00:00] Agent:\n  quoted prose\n")
+    ("old" . "- [2026-11-13 Fri 00:00] Agent:\n  Actual old comment\n"))
   "Two comment records, the newer quoting the older's header line.")
 
 (defconst zwanenzang-test--same-header-records
-  '(("b" . "- [2026-11-13T00:00:00Z] Agent:\n  Second\n  - [2026-11-13T00:00:00Z] Agent:\n  not a comment\n")
-    ("a" . "- [2026-11-13T00:00:00Z] Agent:\n  First\n"))
+  '(("b" . "- [2026-11-13 Fri 00:00] Agent:\n  Second\n  - [2026-11-13 Fri 00:00] Agent:\n  not a comment\n")
+    ("a" . "- [2026-11-13 Fri 00:00] Agent:\n  First\n"))
   "Two comment records with one header, the newer repeating it in its text.")
 
 (defun zwanenzang-test--record-text (records id &optional edit)
@@ -134,7 +134,8 @@ The drawer holds RECORDS, passed through EDIT when given."
       (zwanenzang-test-pull)
       (zwanenzang-test-cli trk "comment" id "Quoted one")
       (let* ((old (car (alist-get 'comments (zwanenzang-test-show trk id))))
-             (header (format "- [%s] tester:" (alist-get 'ts old))))
+             (header (format "- %s tester:"
+                             (zwanenzang--comment-timestamp (alist-get 'ts old)))))
         (zwanenzang-test-cli trk "comment" id (format "Replying to\n%s\nQuoted one" header))
         (zwanenzang-test-cli trk "comment" id (format "Again\n%s\nQuoted one" header)))
       (zwanenzang-test-pull)

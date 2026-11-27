@@ -29,6 +29,7 @@
 (require 'org-fold)
 (require 'org-id)
 (require 'org-src)
+(require 'parse-time)
 (require 'subr-x)
 (require 'time-date)
 
@@ -1582,12 +1583,19 @@ Its resolved identity, else its writer's name or short id."
   (or (zwanenzang--null (alist-get 'identity record))
       (zwanenzang--actor-name pull (alist-get 'actor record))))
 
+(defun zwanenzang--comment-timestamp (ts)
+  "TS, a tracker timestamp in UTC, as an inactive Org timestamp.
+Org timestamps carry no zone, so this is the minute TS falls in, in this
+Emacs session's time zone, written as `org-time-stamp-format' says."
+  (format-time-string (org-time-stamp-format t t) (parse-iso8601-time-string ts)))
+
 (defun zwanenzang--comment-record (pull comment)
   "COMMENT as PULL renders it in the comments drawer.
-One top-level list item: the header line `- [ts] actor:', then the
-text and the link, indented as the item's continuation."
+One top-level list item: the header line `- [timestamp] actor:', its
+timestamp an inactive Org one, then the text and the link, indented as
+the item's continuation."
   (let ((link (zwanenzang--null (alist-get 'link comment))))
-    (concat (format "- [%s] %s:\n" (alist-get 'ts comment)
+    (concat (format "- %s %s:\n" (zwanenzang--comment-timestamp (alist-get 'ts comment))
                     (zwanenzang--author pull comment))
             (zwanenzang--comment-text (alist-get 'text comment))
             (and link

@@ -171,8 +171,8 @@
                  (concat ":END:\n"
                          "Intro\n,\\* not a heading\n"
                          ":ZWANENZANG_COMMENTS:\n"
-                         "- \\[[-0-9T:Z]+\\] tester:\n  second\n"
-                         "- \\[[-0-9T:Z]+\\] tester:\n  first\n  \\* starred\n  ,:END:\n:END:\n"
+                         "- \\[[-0-9]+ [^]\n ]+ [0-9:]+\\] tester:\n  second\n"
+                         "- \\[[-0-9]+ [^]\n ]+ [0-9:]+\\] tester:\n  first\n  \\* starred\n  ,:END:\n:END:\n"
                          ":ZWANENZANG_DOCUMENTS:\n"
                          (regexp-quote (format "- [[zwanenzang:%s/plan][plan]] " parent))
                          "[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9] tester\n"
@@ -256,6 +256,36 @@
           (insert entry)
           (should (= 1 (how-many ":ZWANENZANG_COMMENTS:" (point-min) (point-max))))))
       (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id))))))
+
+(ert-deftest zwanenzang-pull-rewrites-iso-comment-headers-as-org-timestamps ()
+  (zwanenzang-test-with-time-zone "UTC0"
+    (zwanenzang-test-with-scope (trk buf zwanenzang-test--org)
+      (let ((id (zwanenzang-test-create trk "Earlier drawer")))
+        (zwanenzang-test-set-doc trk id "description" "Text\n")
+        (zwanenzang-test-cli trk "comment" id "note")
+        (zwanenzang-test-pull)
+        (let* ((ts (alist-get 'ts (car (alist-get 'comments (zwanenzang-test-show trk id)))))
+               (header (format "- [%s] tester:\n" ts))
+               (drawer (concat ":ZWANENZANG_COMMENTS:\n- "
+                               (zwanenzang--comment-timestamp ts) " tester:\n  note\n:END:\n")))
+          (should (string-match-p
+                   "\\`\\[[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9] [A-Z][a-z][a-z] [0-9][0-9]:[0-9][0-9]\\]\\'"
+                   (zwanenzang--comment-timestamp ts)))
+          ;; The drawer as the previous version wrote it, the ISO time as header.
+          (save-excursion
+            (zwanenzang-test-goto id)
+            (should (search-forward drawer nil t))
+            (replace-match (concat ":ZWANENZANG_COMMENTS:\n" header "  note\n:END:\n") t t))
+          (let ((desc (zwanenzang-test-property id "ZWANENZANG_DESC_HASH")))
+            (zwanenzang-test-pull)
+            (should (equal (zwanenzang-test-property id "ZWANENZANG_DESC_HASH") desc)))
+          (let ((entry (zwanenzang-test-entry id)))
+            (should (string-suffix-p (concat "Text\n" drawer) entry))
+            (should-not (string-search header entry)))
+          (should-not (member zwanenzang-conflict-tag (zwanenzang-test-tags id)))
+          (let ((before (buffer-string)))
+            (zwanenzang-test-pull)
+            (should (equal (buffer-string) before))))))))
 
 (ert-deftest zwanenzang-pull-counts-a-heading-with-two-conflicts-once ()
   ;; Field conflict and a skipped move on one heading.

@@ -710,8 +710,18 @@ never call the CLI or modify the buffer. Setting
   so its links work and its own lists nest under the item. Leading blank
   lines are dropped and every run of blank lines becomes one empty line,
   since two would end the list. The drawer is rewritten from tracker state
-  and never read back. The header stays plain text, not an Org timestamp.
-  Newest means reverse event replay order, not wall-clock timestamp order.
+  and never read back. The header's timestamp is an inactive Org one
+  with the time, such as `- [2026-11-27 Fri 09:58] actor:`, written with
+  `org-time-stamp-format` (since ZZ-57), so Org parses it as a timestamp.
+  Org timestamps carry no zone, so the comment's UTC time is converted to
+  the Emacs session's time zone and shown to the minute; the weekday
+  follows the session's locale, as in Org's own timestamps. A drawer
+  written earlier with the ISO time as header,
+  `- [2026-11-27T08:58:30Z] actor:`, is rewritten like any other generated
+  drawer by the next pull that renders the ticket, which that pull reports
+  as pulled; no description, sync state or conflict changes because of it.
+  The CLI keeps its UTC ISO `ts`. Newest means reverse event replay order,
+  not wall-clock timestamp order.
   This applies immediately after an accepted comment send and on every pull,
   including cursor resets; the CLI keeps its ascending replay order.
 - Skipped remote values go in a `:ZWANENZANG_CONFLICT:` drawer. The

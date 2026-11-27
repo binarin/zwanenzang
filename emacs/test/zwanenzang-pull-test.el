@@ -9,6 +9,7 @@
 
 (require 'ert)
 (require 'zwanenzang)
+(require 'zwanenzang-test-helpers)
 
 (defmacro zwanenzang-test-with-org (text &rest body)
   "Run BODY in an Org buffer holding TEXT, with point at the start."
@@ -307,36 +308,66 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
   (should (equal (zwanenzang--comment-text "\n") "")))
 
 (ert-deftest zwanenzang-comments-drawer-is-one-list-with-an-item-per-comment ()
-  (let* ((pull (zwanenzang--pull-create :tracker-dir "/trk/" :actors '((A1 . "Alice"))))
-         (ticket '((comments ((id . "c1") (actor . "A1") (ts . "2026-11-07T10:00:00Z")
-                              (text . "Old\n* Legacy heading\n\n\n- item\n  - nested")
-                              (link . :null))
-                             ((id . "c2") (actor . "A1") (ts . "2026-11-07T11:00:00Z")
-                              (text . "Newer") (link . "https://example.invalid"))))))
-    (with-temp-buffer
-      (org-mode)
-      (insert "* Ticket\n"
-              (zwanenzang--render-drawer "ZWANENZANG_COMMENTS"
-                                         (zwanenzang--comments-content pull ticket)))
-      (goto-char (point-min))
-      ;; Org reads one heading, the drawer, and in it one plain list.
-      (should (= 1 (how-many org-heading-regexp (point-min) (point-max))))
-      (let* ((tree (org-element-parse-buffer))
-             (drawer (car (org-element-map tree 'drawer #'identity)))
-             (lists (org-element-map drawer 'plain-list #'identity nil nil 'plain-list)))
-        (should (equal (org-element-property :drawer-name drawer) "ZWANENZANG_COMMENTS"))
-        (should (= 1 (length (org-element-contents drawer))))
-        (should (= 1 (length lists)))
-        (let ((items (org-element-contents (car lists))))
-          (should (= 2 (length items)))
-          (should (string-prefix-p "[2026-11-07T11:00:00Z] Alice:\n  Newer\n  [[https://"
-                                   (buffer-substring-no-properties
-                                    (org-element-property :contents-begin (nth 0 items))
-                                    (org-element-property :contents-end (nth 0 items)))))
-          ;; The legacy heading and the text's own list nest in the item.
-          (let ((nested (org-element-map (nth 1 items) 'item
-                          (lambda (i) (org-element-property :bullet i)))))
-            (should (equal nested '("- " "* " "- " "- ")))))))))
+  (zwanenzang-test-with-time-zone "UTC0"
+    (let* ((pull (zwanenzang--pull-create :tracker-dir "/trk/" :actors '((A1 . "Alice"))))
+           (ticket '((comments ((id . "c1") (actor . "A1") (ts . "2026-11-07T10:00:00Z")
+                                (text . "Old\n* Legacy heading\n\n\n- item\n  - nested")
+                                (link . :null))
+                               ((id . "c2") (actor . "A1") (ts . "2026-11-07T11:00:00Z")
+                                (text . "Newer") (link . "https://example.invalid"))))))
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Ticket\n"
+                (zwanenzang--render-drawer "ZWANENZANG_COMMENTS"
+                                           (zwanenzang--comments-content pull ticket)))
+        (goto-char (point-min))
+        ;; Org reads one heading, the drawer, and in it one plain list.
+        (should (= 1 (how-many org-heading-regexp (point-min) (point-max))))
+        (let* ((tree (org-element-parse-buffer))
+               (drawer (car (org-element-map tree 'drawer #'identity)))
+               (lists (org-element-map drawer 'plain-list #'identity nil nil 'plain-list)))
+          (should (equal (org-element-property :drawer-name drawer) "ZWANENZANG_COMMENTS"))
+          (should (= 1 (length (org-element-contents drawer))))
+          (should (= 1 (length lists)))
+          (let ((items (org-element-contents (car lists))))
+            (should (= 2 (length items)))
+            (should (string-prefix-p "[2026-11-07 Sat 11:00] Alice:\n  Newer\n  [[https://"
+                                     (buffer-substring-no-properties
+                                      (org-element-property :contents-begin (nth 0 items))
+                                      (org-element-property :contents-end (nth 0 items)))))
+            ;; The legacy heading and the text's own list nest in the item.
+            (let ((nested (org-element-map (nth 1 items) 'item
+                            (lambda (i) (org-element-property :bullet i)))))
+              (should (equal nested '("- " "* " "- " "- "))))))))))
+
+(ert-deftest zwanenzang-comment-header-is-an-inactive-org-timestamp-in-local-time ()
+  (let ((pull (zwanenzang--pull-create :tracker-dir "/trk/" :actors '((A1 . "Alice"))))
+        (winter '((actor . "A1") (ts . "2026-11-27T08:58:30Z") (text . "hi") (link . :null)))
+        (summer '((actor . "A1") (ts . "2026-07-01T23:30:00Z") (text . "hi") (link . :null))))
+    ;; Org timestamps carry no zone: the tracker's UTC time is shown in the
+    ;; session's zone, here with summer time, which can change the date.
+    (zwanenzang-test-with-time-zone "CET-1CEST,M3.5.0,M10.5.0/3"
+      (should (equal (zwanenzang--comment-record pull winter)
+                     "- [2026-11-27 Fri 09:58] Alice:\n  hi\n"))
+      (should (equal (zwanenzang--comment-record pull summer)
+                     "- [2026-07-02 Thu 01:30] Alice:\n  hi\n"))
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Ticket\n"
+                (zwanenzang--render-drawer "ZWANENZANG_COMMENTS"
+                                           (zwanenzang--comment-record pull winter)))
+        (let ((stamps (org-element-map (org-element-parse-buffer) 'timestamp #'identity)))
+          (should (= 1 (length stamps)))
+          (should (eq (org-element-property :type (car stamps)) 'inactive))
+          (should (equal (mapcar (lambda (p) (org-element-property p (car stamps)))
+                                 '(:year-start :month-start :day-start :hour-start :minute-start))
+                         '(2026 11 27 9 58)))
+          ;; It is in the item's own paragraph, not nested deeper.
+          (should (eq (org-element-type (org-element-parent (org-element-parent (car stamps))))
+                      'item)))))
+    (zwanenzang-test-with-time-zone "UTC0"
+      (should (equal (zwanenzang--comment-record pull winter)
+                     "- [2026-11-27 Fri 08:58] Alice:\n  hi\n")))))
 
 (ert-deftest zwanenzang-normalize-text-ignores-surrounding-blank-lines ()
   (should (equal (zwanenzang--normalize-text "\n  \nText\n\nmore  \n\n") "Text\n\nmore\n"))
@@ -633,25 +664,26 @@ Adjacent same-spec overlays can be skipped by Org's region enumerator."
 ;;;; Rendering tracker state
 
 (ert-deftest zwanenzang-comments-render-newest-first-without-changing-state ()
-  (let* ((pull (zwanenzang--pull-create
-                :tracker-dir "/trk/"
-                :actors '((A1 . "Alice"))))
-         ;; Replay order, not wall-clock timestamps, defines newest.
-         (ticket '((comments ((actor . "A1") (ts . "2026-11-07T10:00:00Z")
-                             (text . "first\n* line") (link . :null))
-                            ((actor . "01UNDECLARED0000000000000") (ts . "2026-11-07T09:00:00Z")
-                             (text . "second") (link . "docs/x.md"))
-                            ((actor . "A1") (ts . "2026-11-07T12:00:00Z")
-                             (text . "third") (link . "https://example.invalid/mr/1")))))
-         (before (copy-tree ticket))
-         (expected (concat "- [2026-11-07T12:00:00Z] Alice:\n  third\n"
-                           "  [[https://example.invalid/mr/1]]\n"
-                           "- [2026-11-07T09:00:00Z] 01UNDECLAR:\n  second\n"
-                           "  [[file:/trk/docs/x.md]]\n"
-                           "- [2026-11-07T10:00:00Z] Alice:\n  first\n  * line\n")))
-    (dotimes (_ 2)
-      (should (equal (zwanenzang--comments-content pull ticket) expected))
-      (should (equal ticket before)))))
+  (zwanenzang-test-with-time-zone "UTC0"
+    (let* ((pull (zwanenzang--pull-create
+                  :tracker-dir "/trk/"
+                  :actors '((A1 . "Alice"))))
+           ;; Replay order, not wall-clock timestamps, defines newest.
+           (ticket '((comments ((actor . "A1") (ts . "2026-11-07T10:00:00Z")
+                               (text . "first\n* line") (link . :null))
+                              ((actor . "01UNDECLARED0000000000000") (ts . "2026-11-07T09:00:00Z")
+                               (text . "second") (link . "docs/x.md"))
+                              ((actor . "A1") (ts . "2026-11-07T12:00:00Z")
+                               (text . "third") (link . "https://example.invalid/mr/1")))))
+           (before (copy-tree ticket))
+           (expected (concat "- [2026-11-07 Sat 12:00] Alice:\n  third\n"
+                             "  [[https://example.invalid/mr/1]]\n"
+                             "- [2026-11-07 Sat 09:00] 01UNDECLAR:\n  second\n"
+                             "  [[file:/trk/docs/x.md]]\n"
+                             "- [2026-11-07 Sat 10:00] Alice:\n  first\n  * line\n")))
+      (dotimes (_ 2)
+        (should (equal (zwanenzang--comments-content pull ticket) expected))
+        (should (equal ticket before))))))
 
 (defun zwanenzang-test--known (&rest summaries)
   "A hash table from id to each of SUMMARIES, as pull's known tickets."
