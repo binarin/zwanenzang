@@ -20,6 +20,7 @@ use crate::state::{RejectCode, Rejection, Ticket};
 use crate::store::{Tracker, blob_name};
 use crate::ulid::Ulid;
 use crate::view::View;
+use crate::workflow::DEFAULT_STATUS;
 use crate::write::{Plan, Target, Written};
 
 /// Comment text longer than this many bytes is stored as a blob.
@@ -80,7 +81,7 @@ pub enum Command {
     /// Create a ticket.
     Create {
         title: String,
-        /// Initial status; defaults to the first status in the vocabulary.
+        /// Initial status; defaults to `todo`.
         #[arg(long)]
         status: Option<String>,
         #[arg(long)]
@@ -243,7 +244,8 @@ pub enum Command {
     /// remote could not be reached or the rebase conflicted.
     Sync,
     /// Report skipped events, concurrent changes, lost document edits,
-    /// dangling repository aliases and unnamed actors. Exits 1 on issues.
+    /// dangling repository aliases, unnamed actors and obsolete
+    /// configuration keys. Exits 1 on issues.
     Lint,
     /// Write a static HTML site of the tracker into DIR, outside the
     /// tracker. Reads the tracker only; replaces only files an earlier
@@ -485,7 +487,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
                     "id": t.config.id,
                     "name": t.config.name,
                     "prefix": t.config.prefix,
-                    "statuses": t.config.statuses,
+                    "statuses": t.config.status_vocabulary(),
                     "retired_statuses": t.config.retired_statuses,
                     "kinds": t.config.kinds,
                 },
@@ -533,7 +535,7 @@ fn dispatch(cli: Cli, clock: &mut dyn Clock, stdin: &mut dyn Read) -> Result<(Va
             let tracker = &ctx.tracker;
             let w = tracker.write(ctx.clock, ctx.actor_name.as_deref(), |rp: &Replay| {
                 let view = View::new(tracker, rp);
-                let status = status.unwrap_or_else(|| rp.state.statuses[0].clone());
+                let status = status.unwrap_or_else(|| DEFAULT_STATUS.to_string());
                 let mut ops = vec![(
                     Target::Created,
                     Op::Create(CreateData {

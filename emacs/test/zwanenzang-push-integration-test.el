@@ -1361,16 +1361,12 @@ Returns (CALL . COUNTER), COUNTER a cons whose car counts the applies."
       (should-not (alist-get 'depends_on (zwanenzang-test-show trk b))))))
 
 (defun zwanenzang-test--retire (trk retired)
-  "Add RETIRED to the statuses of tracker TRK and retire them."
+  "Retire the statuses RETIRED in tracker TRK."
   (zwanenzang-test-assert-disposable trk)
   (let ((file (expand-file-name "zwanenzang.toml" trk)))
     (with-temp-file file
       (insert-file-contents file)
       (goto-char (point-min))
-      (re-search-forward "^statuses = \\[\\(.*\\)\\]$")
-      (replace-match (concat (match-string 1) ", "
-                             (mapconcat (lambda (s) (format "\"%s\"" s)) retired ", "))
-                     t t nil 1)
       (re-search-forward "^retired_statuses = \\[\\(.*\\)\\]$")
       (replace-match (mapconcat (lambda (s) (format "\"%s\"" s)) retired ", ") t t nil 1))))
 

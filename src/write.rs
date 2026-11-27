@@ -15,6 +15,7 @@ use crate::state::{RejectCode, Rejection, apply};
 use crate::store::{DEFAULT_ACTOR_KEY, Tracker, blob_name, lock_repo};
 use crate::sync::SyncReport;
 use crate::ulid::Ulid;
+use crate::workflow::{DEFAULT_STATUS, missing_pairing};
 
 /// The entity a planned event names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +75,12 @@ pub struct Written {
     pub replay: Replay,
     /// What the sync after the write did; `None` when nothing was written.
     pub sync: Option<SyncReport>,
+    /// Tickets whose status or tags the write changed and that it leaves
+    /// without a pairing `tickets/statuses` states, with what is missing.
+    /// Not refused, so a manual edit from Org goes through;
+    /// [`Tracker::write_with`] keeps those still missing it after the sync,
+    /// and not tombstoned, and prints them on stderr.
+    pub pairing_warnings: Vec<(Ulid, String)>,
 }
 
 impl Written {
@@ -167,6 +174,24 @@ impl Tracker {
         let report = self.sync_locked(&repo, clock, identity.as_deref())?;
         w.replay = self.load()?;
         w.sync = Some(report);
+        // The sync may have brought in another clone's change, such as the
+        // missing tag: judge the pairing again on the state after it.
+        let state = &w.replay.state;
+        w.pairing_warnings = w
+            .pairing_warnings
+            .iter()
+            .filter_map(|(id, _)| {
+                let t = state.tickets.get(id).filter(|t| !t.tombstoned)?;
+                missing_pairing(&t.status, &t.tags).map(|m| (*id, m))
+            })
+            .collect();
+        let view = crate::view::View::new(self, &w.replay);
+        for (id, missing) in &w.pairing_warnings {
+            eprintln!(
+                "warning: {}: {missing} (see `zz agent-hooks show-document tickets/statuses`)",
+                view.display(&w.replay.state.tickets[id])
+            );
+        }
         Ok(w)
     }
 
@@ -352,12 +377,25 @@ impl Tracker {
             let from = match rp.state.tickets.get(&t.id) {
                 Some(before) => before.status.as_str(),
                 // A new ticket starts from the default status.
-                None => state.statuses[0].as_str(),
+                None => DEFAULT_STATUS,
             };
             if let Some(r) = state.proj_refusal(t.id, from, display) {
                 return Err(Error::Rejected(r));
             }
         }
+        let pairing_warnings: Vec<(Ulid, String)> = state
+            .tickets
+            .values()
+            .filter(|t| {
+                !t.tombstoned
+                    && rp
+                        .state
+                        .tickets
+                        .get(&t.id)
+                        .is_none_or(|before| before.status != t.status || before.tags != t.tags)
+            })
+            .filter_map(|t| missing_pairing(&t.status, &t.tags).map(|m| (t.id, m)))
+            .collect();
         if planned.is_empty() {
             // Nothing but a possible actor declaration: write nothing.
             let w = Written {
@@ -367,6 +405,7 @@ impl Tracker {
                 outcomes,
                 replay: rp,
                 sync: None,
+                pairing_warnings,
             };
             return Ok((w, Vec::new()));
         }
@@ -381,6 +420,7 @@ impl Tracker {
                 outcomes,
                 replay: rp,
                 sync: None,
+                pairing_warnings,
             };
             return Ok((w, Vec::new()));
         }
@@ -417,6 +457,7 @@ impl Tracker {
             outcomes,
             replay: rp,
             sync: None,
+            pairing_warnings,
         };
         Ok((w, files))
     }

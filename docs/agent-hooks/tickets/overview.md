@@ -22,8 +22,8 @@ are in the clone's `zwanenzang.toml`.
   and which of the two a text belongs in.
 - `zz agent-hooks show-document tickets/brief`: what the `brief` document
   covers.
-- `zz agent-hooks show-document tickets/statuses`: what the default statuses
-  and workflow tags mean, when an agent changes them, and how it advances a
+- `zz agent-hooks show-document tickets/statuses`: what the statuses and
+  workflow tags mean, when an agent changes them, and how it advances a
   ticket.
 - `zz agent-hooks show-document tickets/numbers`: when a ticket gets its
   number.

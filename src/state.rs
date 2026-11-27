@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::event::{Event, Op};
 use crate::names::{valid_actor_name, valid_blob_name, valid_name, valid_tag, valid_title};
 use crate::ulid::Ulid;
+use crate::workflow::PROJ_TAG;
 
 /// Why an event was refused. The string form is a stable machine code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -128,10 +129,6 @@ impl fmt::Display for Rejection {
         f.write_str(&self.message)
     }
 }
-
-/// The tag that makes a ticket a project, whose status follows its
-/// subtree. Hard-coded: see `01-data-model.md`.
-pub const PROJ_TAG: &str = "PROJ";
 
 /// The statuses that count as finished for the `PROJ` rule.
 pub const FINISHED_STATUSES: [&str; 2] = ["done", "cncl"];
@@ -360,7 +357,7 @@ impl State {
     pub fn new(config: &Config, blobs: BTreeSet<String>) -> State {
         State {
             root: config.id,
-            statuses: config.statuses.clone(),
+            statuses: config.status_vocabulary(),
             kinds: config.kinds.clone(),
             tickets: BTreeMap::new(),
             numbers: BTreeMap::new(),

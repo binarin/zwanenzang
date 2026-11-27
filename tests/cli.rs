@@ -884,49 +884,77 @@ fn helper_refuses_an_unmarked_configured_checkout() {
     run_in(source.path(), &["sync"], "");
 }
 
+/// Replaces the line of `zwanenzang.toml` starting with `key = ` by
+/// `key = value`, adding it after `prefix` when absent.
+fn set_config_key(p: &std::path::Path, key: &str, value: &str) {
+    assert_disposable(p);
+    let toml = read(p, "zwanenzang.toml");
+    let start = format!("{key} = ");
+    let new_line = format!("{key} = {value}");
+    let toml = match toml.lines().find(|l| l.starts_with(&start)) {
+        Some(old) => toml.replace(old, &new_line),
+        None => {
+            let prefix = toml.lines().find(|l| l.starts_with("prefix = ")).unwrap();
+            toml.replace(prefix, &format!("{prefix}\n{new_line}"))
+        }
+    };
+    std::fs::write(p.join("zwanenzang.toml"), toml).unwrap();
+}
+
 #[test]
 fn retired_statuses_replay_but_refuse_new_writes() {
     let d = tracker();
     let p = d.path();
-    let set_config = |retired: &str| {
-        assert_disposable(p);
-        let toml = read(p, "zwanenzang.toml");
-        let statuses = toml.lines().find(|l| l.starts_with("statuses = ")).unwrap();
-        let old_retired = toml
-            .lines()
-            .find(|l| l.starts_with("retired_statuses = "))
-            .unwrap();
-        let toml = toml
-            .replace(
-                statuses,
-                "statuses = [\"todo\", \"next\", \"wait\", \"agnt\", \"revw\", \"done\", \
-                 \"cncl\", \"draft\", \"doing\"]",
-            )
-            .replace(old_retired, &format!("retired_statuses = {retired}"));
-        std::fs::write(p.join("zwanenzang.toml"), toml).unwrap();
-    };
-    // Before retirement, old names are ordinary vocabulary.
-    set_config("[]");
-    let a = id(&ok(p, &["create", "Old", "--status", "draft"]));
-    ok(p, &["status", &a, "doing"]);
-    let before = ok(p, &["show", &a]);
-
-    set_config("[\"draft\", \"doing\"]");
+    let fresh = ok(p, &["create", "Fresh"]);
+    let b = id(&fresh);
+    set_config_key(p, "retired_statuses", "[\"draft\", \"doing\"]");
+    // Old events by this clone's writer, from before the names retired;
+    // no new write can use them any more.
+    let actor = actor_of(p);
+    let a = "0GZZZZZZZZZZZZZZZZZZZZZZZ0";
+    let parent = fresh["event"]["id"].as_str().unwrap();
+    append_raw(
+        p,
+        &actor,
+        &[
+            line(
+                a,
+                &actor,
+                parent,
+                a,
+                "create",
+                json!({"title": "Old", "status": "draft"}),
+            ),
+            line(
+                "0GZZZZZZZZZZZZZZZZZZZZZZZ1",
+                &actor,
+                a,
+                a,
+                "status",
+                json!({"to": "doing"}),
+            ),
+        ],
+    );
     // Replay keeps the old events and their meaning, with no new issues.
-    assert_eq!(ok(p, &["show", &a]), before);
-    assert_eq!(before["status"], "doing");
+    assert_eq!(ok(p, &["show", a])["status"], "doing");
     assert_eq!(ok(p, &["lint"])["ok"], true);
     let read = ok_stdin(p, &["read"], "{}");
     assert_eq!(
         read["tracker"]["retired_statuses"],
         json!(["draft", "doing"])
     );
+    assert_eq!(
+        read["tracker"]["statuses"],
+        json!([
+            "todo", "next", "wait", "agnt", "revw", "done", "cncl", "draft", "doing"
+        ])
+    );
 
     let logs_before = logs(p);
-    let e = err(p, &["status", &a, "draft"], "retired-status");
+    let e = err(p, &["status", a, "draft"], "retired-status");
     assert!(e["error"]["message"].as_str().unwrap().contains("todo"));
     // Even naming the current status again is refused.
-    err(p, &["status", &a, "doing"], "retired-status");
+    err(p, &["status", a, "doing"], "retired-status");
     err(p, &["create", "New", "--status", "doing"], "retired-status");
     let o = run_in(
         p,
@@ -940,8 +968,7 @@ fn retired_statuses_replay_but_refuse_new_writes() {
     assert_eq!(o.json["error"]["code"], "retired-status", "{}", o.json);
     assert_eq!(logs(p), logs_before);
 
-    // Every status of the default vocabulary is accepted.
-    let b = id(&ok(p, &["create", "Fresh"]));
+    // Every fixed status is accepted.
     assert_eq!(ok(p, &["show", &b])["status"], "todo");
     for s in ["next", "wait", "agnt", "revw", "done", "cncl", "todo"] {
         assert_eq!(ok(p, &["status", &b, s])["ticket"]["status"], s);
@@ -967,6 +994,133 @@ fn a_new_tracker_has_the_default_vocabulary() {
     assert_eq!(scope["tracker"]["retired_statuses"], json!([]));
     let toml = read(p, "zwanenzang.toml");
     assert!(toml.contains("\nretired_statuses = []\n"), "{toml}");
+    // The statuses are fixed in code, not written to the configuration.
+    assert!(!toml.contains("\nstatuses ="), "{toml}");
+}
+
+#[test]
+fn an_obsolete_statuses_key_is_ignored_and_reported_by_lint() {
+    let d = tracker();
+    let p = d.path();
+    let a = id(&ok(p, &["create", "A"]));
+    set_config_key(p, "retired_statuses", "[\"doing\"]");
+    // As an older `init` wrote it, with a retired name; the order does not
+    // matter any more.
+    set_config_key(
+        p,
+        "statuses",
+        "[\"next\", \"todo\", \"wait\", \"agnt\", \"revw\", \"done\", \"cncl\", \"doing\"]",
+    );
+    assert_eq!(ok(p, &["status", &a, "next"])["ticket"]["status"], "next");
+    assert_eq!(
+        ok(p, &["show", &id(&ok(p, &["create", "B"]))])["status"],
+        "todo"
+    );
+    let lint = run_in(p, &["lint"], "");
+    assert_eq!(lint.code, 1, "{}", lint.json);
+    assert_eq!(lint.json["ok"], false);
+    assert_eq!(lint.json["obsolete_config_keys"], json!(["statuses"]));
+    assert_eq!(lint.json["skipped"], json!([]));
+
+    // Without the key lint is clean again.
+    assert_disposable(p);
+    let toml = read(p, "zwanenzang.toml");
+    let line = toml.lines().find(|l| l.starts_with("statuses = ")).unwrap();
+    std::fs::write(
+        p.join("zwanenzang.toml"),
+        toml.replace(&format!("{line}\n"), ""),
+    )
+    .unwrap();
+    let lint = run_in(p, &["lint"], "");
+    assert_eq!(lint.code, 0, "{}", lint.json);
+    assert_eq!(lint.json["obsolete_config_keys"], json!([]));
+}
+
+#[test]
+fn an_obsolete_statuses_key_with_an_unknown_name_is_a_config_error() {
+    let d = tracker();
+    let p = d.path();
+    set_config_key(p, "retired_statuses", "[\"doing\"]");
+    set_config_key(p, "statuses", "[\"todo\", \"doing\", \"parked\"]");
+    for args in [&["list"][..], &["lint"], &["create", "A"]] {
+        let e = err(p, args, "config");
+        let message = e["error"]["message"].as_str().unwrap();
+        assert!(message.contains("\"parked\""), "{message}");
+        assert!(message.contains("retired_statuses"), "{message}");
+    }
+}
+
+#[test]
+fn a_fixed_status_cannot_be_retired() {
+    let d = tracker();
+    let p = d.path();
+    set_config_key(p, "retired_statuses", "[\"draft\", \"wait\"]");
+    let e = err(p, &["list"], "config");
+    let message = e["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("\"wait\" is one of the fixed statuses"),
+        "{message}"
+    );
+}
+
+#[test]
+fn review_without_needs_human_is_warned_about_but_written() {
+    let d = tracker();
+    let p = d.path();
+    let a = id(&ok(p, &["create", "A"]));
+    let o = run_in(p, &["status", &a, "revw"], "");
+    assert_eq!(o.code, 0, "{}", o.json);
+    assert_eq!(o.json["ticket"]["status"], "revw");
+    assert!(o.json.get("warnings").is_none(), "{}", o.json);
+    assert_eq!(
+        o.stderr,
+        "warning: ZZ-1: status revw without tag needs_human \
+         (see `zz agent-hooks show-document tickets/statuses`)\n"
+    );
+    // A write that leaves the pairing missing warns again; one that does
+    // not touch status or tags does not.
+    let o = run_in(p, &["tag", &a, "ui"], "");
+    assert!(
+        o.stderr
+            .contains("ZZ-1: status revw without tag needs_human"),
+        "{}",
+        o.stderr
+    );
+    let o = run_in(p, &["comment", &a, "Looked at it"], "");
+    assert_eq!(o.stderr, "");
+    let o = run_in(p, &["tag", &a, "needs_human"], "");
+    assert_eq!(o.stderr, "");
+    // Removing the tag from a ticket in review, as an Org edit may.
+    let o = run_in(
+        p,
+        &["apply"],
+        &json!({"changes": [{"op": "untag", "ticket": a, "data": {"tag": "needs_human"}}]})
+            .to_string(),
+    );
+    assert_eq!(o.code, 0, "{}", o.json);
+    assert!(
+        o.stderr
+            .contains("ZZ-1: status revw without tag needs_human"),
+        "{}",
+        o.stderr
+    );
+    // The pairing is judged after the whole write.
+    let o = run_in(
+        p,
+        &["apply"],
+        &json!({"changes": [
+            {"op": "status", "ticket": a, "data": {"to": "agnt"}},
+            {"op": "status", "ticket": a, "data": {"to": "revw"}},
+            {"op": "tag", "ticket": a, "data": {"tag": "needs_human"}},
+        ]})
+        .to_string(),
+    );
+    assert_eq!(o.code, 0, "{}", o.json);
+    assert_eq!(o.stderr, "");
+    // Statuses other than revw pair with nothing.
+    let o = run_in(p, &["create", "B", "--status", "wait"], "");
+    assert_eq!(o.code, 0, "{}", o.json);
+    assert_eq!(o.stderr, "");
 }
 
 fn run_actor(p: &std::path::Path, actor: Option<&str>, args: &[&str]) -> Out {

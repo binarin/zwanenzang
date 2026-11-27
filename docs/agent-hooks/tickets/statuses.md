@@ -1,11 +1,11 @@
 # Statuses and workflow tags
 
-What the default statuses and the two workflow tags mean, and when an agent
-changes them. The CLI enforces none of this: any status may follow any other,
-and dependencies never veto a change. The one exception is a ticket tagged
-`PROJ`, a project: see `zz agent-hooks show-document tickets/writing`. A
-tracker may configure other statuses in its `zwanenzang.toml`; then the
-project's instructions say what they mean.
+What the statuses and the two workflow tags mean, and when an agent
+changes them. They are the same in every tracker, fixed in the CLI rather
+than configured; a tracker's `retired_statuses` are names only old events
+use. The CLI enforces none of this: any status may follow any other, and
+dependencies never veto a change. The one exception is a ticket tagged
+`PROJ`, a project: see `zz agent-hooks show-document tickets/writing`.
 
 ## Statuses
 
@@ -15,6 +15,9 @@ project's instructions say what they mean.
 - `wait`: waiting on something. With `needs_human`, on the human.
 - `agnt`: an agent is doing the work, interactively or autonomously.
 - `revw`: ready for the human's review; always also tagged `needs_human`.
+  A write that leaves a ticket in `revw` without it succeeds with a
+  warning on stderr. Add the tag before setting `revw`, or do both in one
+  `apply`.
 - `done`: finished. Set by the human, or by an agent only after confirming
   the merge request was merged or on the human's explicit instruction.
 - `cncl`: cancelled.

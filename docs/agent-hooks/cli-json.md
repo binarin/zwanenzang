@@ -129,7 +129,18 @@ persistent data, not a cache: do not remove it during workspace cleanup.
 - `sync` prints its sync object and exits 1 when `sync.error` is set; there
   is no top-level `error` then.
 
-Nothing is printed on stderr on success.
+Nothing is printed on stderr on success, apart from warnings: a write
+that changes a ticket's status or tags and leaves it in `revw` without the
+tag `needs_human` still succeeds, and prints one line per such ticket,
+after the write and its sync, such as the line below. The pairing is
+checked again after the sync, so no line is printed for a ticket that is
+paired by then (another clone published the tag) or tombstoned.
+
+```
+warning: ZZ-42: status revw without tag needs_human (see `zz agent-hooks show-document tickets/statuses`)
+```
+
+The JSON output does not carry warnings, and a dry run prints none.
 
 `agent-hooks` is the one exception: it prints plain text, not JSON. See
 [Agent hooks](#agent-hooks).
@@ -341,7 +352,7 @@ Supported operations and their complete input data fields:
 
 | op | data |
 |---|---|
-| `create` | `{title, status?, kind?}`; default status is the first replayed vocabulary entry; kind defaults to null; ticket absent or null |
+| `create` | `{title, status?, kind?}`; default status is `todo`; kind defaults to null; ticket absent or null |
 | `title`, `status` | `{to: string}` |
 | `kind` | `{to: string or null}`; required, null clears |
 | `priority` | `{to: integer or null}`; required, null clears explicit priority |
@@ -450,9 +461,12 @@ needed.
 - Full state and current document text are returned even when no events
   are newer. `documents` maps names to UTF-8 text, with version ids and
   blob names in `ticket.documents`. Missing document blobs fail the call.
-  Vocabularies include accepted `config` events. `retired_statuses` are
-  the configuration's retired names: still in `statuses`, so tickets may
-  carry them, but refused in new writes with `retired-status`. `tracker.actors` maps
+  `statuses` are the seven fixed statuses (`todo next wait agnt revw done
+  cncl`, the same in every tracker), then the configuration's
+  `retired_statuses`, then names added by accepted `config` events; `kinds`
+  include accepted `config` events too. `retired_statuses` are the
+  configuration's retired names: in `statuses`, so tickets may carry
+  them, but refused in new writes with `retired-status`. `tracker.actors` maps
   every writer with an accepted declaration to its display name, which is
   what its events without `as` resolve to; undeclared writers are left
   out. Comments, document versions and events carry their resolved
@@ -844,7 +858,8 @@ described in the design note on the static site, not part of this contract.
  "proj_open_descendants": [{"ticket", "status", "unfinished"}],
  "dangling_repos": [{"event", "entity", "op", "repo"}],
  "unnamed_actors": [{"actor", "events"}],
- "unknown_identities": [{"event", "actor", "as", "op"}]}
+ "unknown_identities": [{"event", "actor", "as", "op"}],
+ "obsolete_config_keys": ["statuses"]}
 ```
 
 - `skipped`: lines replay did not apply, with the reason `code` (see below)
@@ -877,6 +892,10 @@ described in the design note on the static site, not part of this contract.
 - `unknown_identities`: accepted events whose `as` the tracker does not
   accept (not in `actors`, or not in the name format when the key is
   absent). Replay keeps them.
+- `obsolete_config_keys`: keys of `zwanenzang.toml` nothing reads any
+  more. The only one is `statuses`, from before the statuses were fixed;
+  remove it. A name it lists that is neither a fixed status nor in
+  `retired_statuses` is a `config` error for every command instead.
 
 ## Error codes
 
@@ -888,7 +907,7 @@ Command errors:
 | `already-initialized` | `init` in an existing tracker or anywhere inside one |
 | `branch-exists` | `init` target branch already on the remote, or created while the init ran |
 | `fetch-failed`, `push-failed` | `init` could not read the remote, or its initial push failed; the local tracker is kept and the message names the retry push command |
-| `config` | `zwanenzang.toml`, the writer id in the clone's git configuration or `zwanenzang.useGitIdentity` is invalid, or `init` got a bad prefix, name or `--actor-name` |
+| `config` | `zwanenzang.toml`, the writer id in the clone's git configuration or `zwanenzang.useGitIdentity` is invalid, or `init` got a bad prefix, name or `--actor-name`; among them a retired status that is one of the fixed statuses, and a name in the obsolete `statuses` key that is neither fixed nor retired (the message names it: add it to `retired_statuses`) |
 | `git-identity-missing` | `zwanenzang.useGitIdentity` is on but git has no identity: set `user.name` and `user.email`, or turn the switch off; nothing was written, and `init` left nothing behind |
 | `actor-required` | a write that changes something names no identity: no `--actor-name` and no `zwanenzang.defaultActor` in the clone; nothing was written |
 | `unknown-actor` | `--actor-name` or `zwanenzang.defaultActor` names an identity the tracker does not accept; nothing was written |

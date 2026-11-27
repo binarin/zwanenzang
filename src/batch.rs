@@ -13,6 +13,7 @@ use crate::state::{RejectCode, Rejection};
 use crate::store::{Tracker, blob_name};
 use crate::ulid::Ulid;
 use crate::view::View;
+use crate::workflow::DEFAULT_STATUS;
 use crate::write::{Plan, Target, WriteOptions};
 
 #[derive(Debug, Deserialize)]
@@ -111,7 +112,7 @@ pub fn apply(
                     }
                     object
                         .entry("status")
-                        .or_insert_with(|| json!(rp.state.statuses[0]));
+                        .or_insert_with(|| json!(DEFAULT_STATUS));
                     let n = creations.len();
                     creations.insert(i, n);
                     Target::Nth(n)

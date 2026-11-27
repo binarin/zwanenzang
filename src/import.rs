@@ -29,6 +29,7 @@ use crate::names::{valid_name, valid_title};
 use crate::replay::Replay;
 use crate::store::{Tracker, blob_name};
 use crate::ulid::Ulid;
+use crate::workflow::NEEDS_HUMAN_TAG;
 use crate::write::{Plan, Target, WriteOptions};
 
 /// First line of the provenance comment on every imported ticket, followed
@@ -47,12 +48,11 @@ pub const STATUS_MAP: &[(&str, &str, Option<&str>)] = &[
     ("needs-triage", "todo", None),
     ("needs-plan", "todo", None),
     ("ready-for-implementation", "todo", None),
-    ("ready-for-review", "revw", Some(NEEDS_HUMAN)),
-    ("needs-human-input", "wait", Some(NEEDS_HUMAN)),
+    ("ready-for-review", "revw", Some(NEEDS_HUMAN_TAG)),
+    ("needs-human-input", "wait", Some(NEEDS_HUMAN_TAG)),
     ("done", "done", None),
 ];
 const UNKNOWN_STATUS: &str = "todo";
-const NEEDS_HUMAN: &str = "needs_human";
 
 /// Fields with no zwanenzang counterpart that are expected, so kept
 /// verbatim in the provenance comment without a warning. Other unmapped

@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use crate::config::Config;
+use crate::config::{Config, OBSOLETE_STATUSES_KEY};
 use crate::event::Op;
 use crate::replay::Replay;
 
@@ -42,6 +42,13 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
                 .then(|| json!({"event": ev.id, "actor": ev.actor, "as": name, "op": ev.op.name()}))
         })
         .collect();
+    // Keys `zwanenzang.toml` may still carry that nothing reads any more.
+    let obsolete_keys: Vec<&str> = config
+        .obsolete_statuses
+        .is_some()
+        .then_some(OBSOLETE_STATUSES_KEY)
+        .into_iter()
+        .collect();
     let dependency_cycles = rp.state.dependency_cycles();
     let proj_open = rp.state.proj_open_descendants();
     let issues = !dependency_cycles.is_empty()
@@ -51,7 +58,8 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         || !rp.state.lost_docs.is_empty()
         || !dangling.is_empty()
         || !unnamed.is_empty()
-        || !unknown_identities.is_empty();
+        || !unknown_identities.is_empty()
+        || !obsolete_keys.is_empty();
     let report = json!({
         "ok": !issues,
         "events": rp.events.len(),
@@ -63,6 +71,7 @@ pub fn lint(config: &Config, rp: &Replay) -> (Value, bool) {
         "dangling_repos": dangling,
         "unnamed_actors": unnamed,
         "unknown_identities": unknown_identities,
+        "obsolete_config_keys": obsolete_keys,
     });
     (report, issues)
 }

@@ -338,27 +338,37 @@ fn assets_come_from_the_given_directory() {
 fn retired_statuses_get_chips_only_while_tickets_have_them() {
     let d = tracker();
     let p = d.path();
-    let set_retired = |retired: &str| {
-        assert_disposable(p);
-        let toml = read(p, "zwanenzang.toml");
-        let statuses = toml.lines().find(|l| l.starts_with("statuses = ")).unwrap();
-        let old = toml
-            .lines()
-            .find(|l| l.starts_with("retired_statuses = "))
-            .unwrap();
-        let toml = toml
-            .replace(
-                statuses,
-                "statuses = [\"todo\", \"next\", \"wait\", \"agnt\", \"revw\", \"done\", \
-                 \"cncl\", \"draft\", \"doing\", \"cancelled\"]",
-            )
-            .replace(old, &format!("retired_statuses = {retired}"));
-        std::fs::write(p.join("zwanenzang.toml"), toml).unwrap();
-    };
-    set_retired("[]");
-    ok(p, &["create", "Old draft", "--status", "draft"]);
-    ok(p, &["create", "Old cancel", "--status", "cancelled"]);
-    set_retired("[\"draft\", \"doing\", \"cancelled\"]");
+    let first = ok(p, &["create", "Current"]);
+    assert_disposable(p);
+    let toml = read(p, "zwanenzang.toml");
+    let old = toml
+        .lines()
+        .find(|l| l.starts_with("retired_statuses = "))
+        .unwrap();
+    let toml = toml.replace(
+        old,
+        "retired_statuses = [\"draft\", \"doing\", \"cancelled\"]",
+    );
+    std::fs::write(p.join("zwanenzang.toml"), toml).unwrap();
+    // Tickets created with two of the names before they retired, by this
+    // clone's writer.
+    let actor = actor_of(p);
+    let mut parent = first["event"]["id"].as_str().unwrap().to_string();
+    let mut lines = Vec::new();
+    for (id, title, status) in [
+        ("0GZZZZZZZZZZZZZZZZZZZZZZZ0", "Old draft", "draft"),
+        ("0GZZZZZZZZZZZZZZZZZZZZZZZ1", "Old cancel", "cancelled"),
+    ] {
+        lines.push(
+            serde_json::json!({
+                "id": id, "actor": actor, "parent": parent, "ts": "2026-11-07T00:00:00Z",
+                "entity": id, "op": "create", "data": {"title": title, "status": status}
+            })
+            .to_string(),
+        );
+        parent = id.to_string();
+    }
+    append_raw(p, &actor, &lines);
     let out = disposable_dir();
     render(p, out.path(), &[]);
     let d = data(out.path());

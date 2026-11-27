@@ -6,10 +6,12 @@ use serde::Deserialize;
 
 use crate::names::{valid_name, valid_prefix};
 use crate::ulid::Ulid;
+use crate::workflow::STATUSES;
 
 pub const CONFIG_FILE: &str = "zwanenzang.toml";
+/// The key that once listed the statuses, which are now fixed in code.
+pub const OBSOLETE_STATUSES_KEY: &str = "statuses";
 
-pub const DEFAULT_STATUSES: &[&str] = &["todo", "next", "wait", "agnt", "revw", "done", "cncl"];
 pub const DEFAULT_KINDS: &[&str] = &["task", "bug", "feature"];
 /// The identity agents write as, in every list `init` writes.
 pub const AGENT_IDENTITY: &str = "agent";
@@ -53,9 +55,12 @@ pub struct Config {
     pub id: Ulid,
     pub name: String,
     pub prefix: String,
-    pub statuses: Vec<String>,
+    /// The obsolete `statuses` key, read only to check it against the fixed
+    /// [`STATUSES`] and `retired_statuses`, and for lint to report.
+    #[serde(default, rename = "statuses")]
+    pub obsolete_statuses: Option<Vec<String>>,
     /// Statuses kept so old events replay, but refused in new writes.
-    /// Each is also in `statuses`.
+    /// None is one of the fixed [`STATUSES`].
     #[serde(default)]
     pub retired_statuses: Vec<String>,
     #[serde(default)]
@@ -76,7 +81,7 @@ impl Config {
             id,
             name: name.to_string(),
             prefix: prefix.to_string(),
-            statuses: DEFAULT_STATUSES.iter().map(|s| s.to_string()).collect(),
+            obsolete_statuses: None,
             retired_statuses: Vec::new(),
             kinds: DEFAULT_KINDS.iter().map(|s| s.to_string()).collect(),
             actors: Some(vec![AGENT_IDENTITY.to_string()]),
@@ -122,12 +127,8 @@ impl Config {
         if self.name.trim().is_empty() || self.name.contains(['\n', '\r']) {
             return Err("name must be a non-empty single line".into());
         }
-        if self.statuses.is_empty() {
-            return Err("statuses must not be empty".into());
-        }
         let no_actors = Vec::new();
         for (what, list) in [
-            ("status", &self.statuses),
             ("retired status", &self.retired_statuses),
             ("kind", &self.kinds),
             ("actor", self.actors.as_ref().unwrap_or(&no_actors)),
@@ -143,15 +144,22 @@ impl Config {
             }
         }
         for s in &self.retired_statuses {
-            if !self.statuses.contains(s) {
-                return Err(format!("retired status {s:?} is not in statuses"));
+            if STATUSES.contains(&s.as_str()) {
+                return Err(format!(
+                    "retired status {s:?} is one of the fixed statuses {}, which cannot be retired",
+                    STATUSES.join(", ")
+                ));
             }
         }
-        if self.is_retired(&self.statuses[0]) {
-            return Err(format!(
-                "the first status {:?} is the default for new tickets and cannot be retired",
-                self.statuses[0]
-            ));
+        for s in self.obsolete_statuses.iter().flatten() {
+            if !STATUSES.contains(&s.as_str()) && !self.is_retired(s) {
+                return Err(format!(
+                    "the obsolete `{OBSOLETE_STATUSES_KEY}` key lists {s:?}, which is not one \
+                     of the fixed statuses {}: add it to `retired_statuses` so old events \
+                     using it still replay",
+                    STATUSES.join(", ")
+                ));
+            }
         }
         for (alias, repo) in &self.repos {
             if !valid_name(alias) {
@@ -180,6 +188,16 @@ impl Config {
         self.retired_statuses.iter().any(|r| r == s)
     }
 
+    /// The statuses replay accepts before any `config` event: the fixed
+    /// [`STATUSES`], then `retired_statuses`.
+    pub fn status_vocabulary(&self) -> Vec<String> {
+        STATUSES
+            .iter()
+            .map(|s| s.to_string())
+            .chain(self.retired_statuses.iter().cloned())
+            .collect()
+    }
+
     /// Renders the configuration as written by `init`.
     pub fn to_toml(&self) -> String {
         let q = |s: &str| toml::Value::String(s.to_string()).to_string();
@@ -194,15 +212,16 @@ impl Config {
         out.push_str(&format!("name = {}\n", q(&self.name)));
         out.push_str("# Ticket numbers display as <prefix>-N.\n");
         out.push_str(&format!("prefix = {}\n\n", q(&self.prefix)));
-        out.push_str("# Vocabularies may grow; removing a name breaks old events that use it.\n");
-        out.push_str("# The first status is the default for new tickets.\n");
-        out.push_str(&format!("statuses = {}\n", list(&self.statuses)));
-        out.push_str("# Statuses from the list above that old events keep using but new\n");
-        out.push_str("# writes refuse. Retire a name instead of removing it.\n");
+        out.push_str(&format!(
+            "# The statuses are fixed: {}. Names old events keep\n",
+            STATUSES.join(", ")
+        ));
+        out.push_str("# using but new writes refuse are listed here; never remove one.\n");
         out.push_str(&format!(
             "retired_statuses = {}\n",
             list(&self.retired_statuses)
         ));
+        out.push_str("# Kinds may grow; removing a name breaks old events that use it.\n");
         out.push_str(&format!("kinds = {}\n\n", list(&self.kinds)));
         if let Some(actors) = &self.actors {
             out.push_str("# Identities a write may name with --actor-name. Agents write as\n");
@@ -246,12 +265,6 @@ mod tests {
         let mut c = base.clone();
         c.prefix = "zz".into();
         assert!(c.validate().is_err());
-        let mut c = base.clone();
-        c.statuses.clear();
-        assert!(c.validate().is_err());
-        let mut c = base.clone();
-        c.statuses.push("todo".into());
-        assert!(c.validate().is_err());
         let mut c = base;
         c.kinds.push("has space".into());
         assert!(c.validate().is_err());
@@ -262,11 +275,14 @@ mod tests {
     fn default_vocabulary() {
         let c = Config::new(Ulid::from_parts(1, 2), "t", "ZZ");
         assert_eq!(
-            c.statuses,
+            c.status_vocabulary(),
             ["todo", "next", "wait", "agnt", "revw", "done", "cncl"]
         );
         assert!(c.retired_statuses.is_empty());
-        assert!(c.to_toml().contains("\nretired_statuses = []\n"));
+        assert_eq!(c.obsolete_statuses, None);
+        let text = c.to_toml();
+        assert!(text.contains("\nretired_statuses = []\n"));
+        assert!(!text.contains("\nstatuses ="), "{text}");
     }
 
     #[test]
@@ -289,8 +305,7 @@ mod tests {
 
         // An older configuration without the key still parses, but accepts
         // no identity apart from the importer's.
-        let old = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n\
-                   statuses = [\"todo\"]\n";
+        let old = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n";
         let old = Config::parse(old).unwrap();
         assert_eq!(old.actors, None);
         assert!(!old.accepts_identity("tester"));
@@ -302,26 +317,69 @@ mod tests {
     #[test]
     fn retired_statuses() {
         let mut c = Config::new(Ulid::from_parts(1, 2), "t", "ZZ");
-        c.statuses.push("doing".into());
         c.retired_statuses.push("doing".into());
         assert_eq!(c.validate(), Ok(()));
         assert!(c.is_retired("doing"));
         assert!(!c.is_retired("agnt"));
+        assert_eq!(
+            c.status_vocabulary(),
+            [
+                "todo", "next", "wait", "agnt", "revw", "done", "cncl", "doing"
+            ]
+        );
         assert_eq!(Config::parse(&c.to_toml()).unwrap(), c);
 
-        let mut bad = c.clone();
-        bad.retired_statuses.push("parked".into());
-        assert!(bad.validate().unwrap_err().contains("not in statuses"));
         let mut bad = c.clone();
         bad.retired_statuses.push("doing".into());
         assert!(bad.validate().unwrap_err().contains("duplicate"));
         let mut bad = c;
         bad.retired_statuses.push("todo".into());
-        assert!(bad.validate().unwrap_err().contains("cannot be retired"));
+        let err = bad.validate().unwrap_err();
+        assert!(
+            err.contains("\"todo\" is one of the fixed statuses"),
+            "{err}"
+        );
+        assert!(err.contains("cannot be retired"), "{err}");
 
         // An older configuration without the key retires nothing.
-        let old = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n\
-                   statuses = [\"draft\", \"doing\"]\n";
+        let old = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n";
         assert!(Config::parse(old).unwrap().retired_statuses.is_empty());
+    }
+
+    const HEAD: &str = "id = \"01M6Y59XPNBPDNXM61N9YN9G5J\"\nname = \"t\"\nprefix = \"ZZ\"\n";
+
+    #[test]
+    fn obsolete_statuses_key_is_accepted_and_ignored() {
+        // The key as `init` wrote it before the statuses were fixed, with
+        // retired names as this project's own tracker has them.
+        let text = format!(
+            "{HEAD}statuses = [\"todo\", \"next\", \"wait\", \"agnt\", \"revw\", \"done\", \
+             \"cncl\", \"draft\", \"doing\"]\nretired_statuses = [\"draft\", \"doing\"]\n"
+        );
+        let c = Config::parse(&text).unwrap();
+        assert!(c.obsolete_statuses.is_some());
+        assert_eq!(
+            c.status_vocabulary(),
+            [
+                "todo", "next", "wait", "agnt", "revw", "done", "cncl", "draft", "doing"
+            ]
+        );
+        // Its order and omissions mean nothing any more.
+        let c = Config::parse(&format!("{HEAD}statuses = [\"done\"]\n")).unwrap();
+        assert_eq!(c.status_vocabulary()[0], "todo");
+        // `to_toml` drops it.
+        let rewritten = Config::parse(&c.to_toml()).unwrap();
+        assert_eq!(rewritten.obsolete_statuses, None);
+    }
+
+    #[test]
+    fn obsolete_statuses_key_with_an_unknown_name_is_refused() {
+        let text = format!(
+            "{HEAD}statuses = [\"todo\", \"parked\", \"doing\"]\nretired_statuses = [\"doing\"]\n"
+        );
+        let err = Config::parse(&text).unwrap_err();
+        assert!(err.contains("\"parked\""), "{err}");
+        assert!(err.contains("add it to `retired_statuses`"), "{err}");
+        assert!(!err.contains("\"doing\""), "{err}");
     }
 }

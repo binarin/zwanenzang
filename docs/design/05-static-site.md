@@ -58,8 +58,8 @@ window.ZWANENZANG_DATA = {"format": 1, "tracker": {...}, "tickets": [...]};
 The JSON is escaped so that it never contains `<`, U+2028 or U+2029. A
 `<script src>` works from `file://` where loading JSON would not.
 
-- `tracker`: `name`, `prefix`; `statuses`, the configured vocabulary
-  without its retired names, then the retired names some ticket still has,
+- `tracker`: `name`, `prefix`; `statuses`, the vocabulary without its
+  retired names, then the retired names some ticket still has,
   then any other status a ticket still has; `hidden_statuses`, the ones
   whose chips start switched off (`done`, `cncl`, and the milestone 2
   `cancelled`, when listed); `tags`, every tag in use.

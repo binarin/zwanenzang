@@ -129,8 +129,9 @@ The map between TODO keywords and statuses lives in org, on the scope root,
 because the keywords are the human's: `#+TODO` lines and `org-todo-keywords`
 differ between people and files, and the tracker's vocabulary does not.
 
-The default vocabulary (see [01-data-model](01-data-model.md)) is the
-human's global Org keywords lowercased, `todo next wait agnt revw done
+The status vocabulary, fixed in code (see
+[01-data-model](01-data-model.md)), is the human's global Org keywords
+lowercased, `todo next wait agnt revw done
 cncl` for `TODO NEXT WAIT AGNT REVW DONE CNCL`, so the human's scopes need
 no map: the same-name rule below covers every status. AGNT and REVW are
 global keywords in the human's Org configuration, a separate sequence of

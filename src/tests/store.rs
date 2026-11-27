@@ -22,7 +22,7 @@ fn init_writes_layout() {
     let cfg = Config::parse(&fs::read_to_string(root.join(CONFIG_FILE)).unwrap()).unwrap();
     assert_eq!(cfg, t.config);
     assert_eq!(cfg.prefix, "ZZ");
-    assert_eq!(cfg.statuses[0], "todo");
+    assert_eq!(cfg.obsolete_statuses, None);
     let actor = git_out(root, &["config", "--local", "zwanenzang.actor"]);
     assert_eq!(
         actor,

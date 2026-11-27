@@ -379,7 +379,7 @@ fn config_with_only_unknown_fields_is_accepted() {
     let rp = load(&t);
     assert!(rp.skipped.is_empty(), "{:?}", rp.skipped);
     assert_eq!(rp.events.len(), 7);
-    assert_eq!(rp.state.statuses, t.config.statuses);
+    assert_eq!(rp.state.statuses, t.config.status_vocabulary());
     let (_, issues) = lint(&t.config, &rp);
     assert!(!issues);
 }

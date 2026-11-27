@@ -302,7 +302,10 @@ they store UTF-8 text and never parse or convert it.
   **Superseded (ZZ-38):** zwanenzang is the human's personal tracker, so
   the default is the human's Org keywords, lowercased:
   `todo, next, wait, agnt, revw, done, cncl`, with `todo` first and so the
-  default for `create`. With the same names in Org, no keyword map is
+  default for `create`. **Superseded (ZZ-54, owner, 2026-11-27):** these
+  seven are the owner's unified workflow and are fixed in code, not
+  configured; `init` no longer writes a `statuses` key. See "Fixed
+  workflow vocabulary" below. With the same names in Org, no keyword map is
   needed (see [03-org-client](03-org-client.md)). Meanings: `todo` not
   started; `next` the human is on it or can start now (including drafting
   the ticket's prose, or investigating it with an agent); `wait` waiting
@@ -375,25 +378,56 @@ none changes a decision above.
   stores it as `id` in `zwanenzang.toml`. `actor` and `config` events must
   name that entity; ticket operations must not.
 - **Vocabulary growth.** Replay validates status and kind against the
-  configuration file's vocabulary plus every name added by earlier `config`
-  events (`{add_statuses?, add_kinds?}`). Vocabularies are expected only to
-  grow; removing a name from the file makes old events that use it fail
-  replay validation, which lint reports. A `config` event that adds nothing
+  vocabulary before any event (for statuses the fixed seven plus
+  `retired_statuses`, for kinds the configuration's `kinds`) plus every
+  name added by earlier `config` events (`{add_statuses?, add_kinds?}`).
+  Vocabularies are expected only to grow; removing a name from the file
+  makes old events that use it fail replay validation, which lint reports. A `config` event that adds nothing
   this build knows (for instance one carrying only fields a newer build
   added) is accepted as a no-op, not skipped.
 - **Retired statuses.** Because old events keep using a name, a status
   leaves use by retirement: `retired_statuses` in `zwanenzang.toml` lists
-  names that stay in `statuses`. Replay accepts them, so derived state and
-  lint are unchanged, but `create`, `status` and `apply` refuse them with
-  `retired-status` and write nothing, even when the ticket already has
-  that status. Each retired name must be in `statuses`, and the first
-  status, the default for new tickets, cannot be retired. A new tracker
+  names that stay in the replay vocabulary. Replay accepts them, so derived
+  state and lint are unchanged, but `create`, `status` and `apply` refuse
+  them with `retired-status` and write nothing, even when the ticket
+  already has that status. **Changed (ZZ-54):** each retired name was
+  required to be in `statuses` and the first status could not be retired;
+  now no retired name may be one of the seven fixed statuses, which also
+  keeps `todo`, the default for new tickets, current. There is no
+  old-to-new rename map until a real migration needs one. A new tracker
   retires nothing. This tracker retires its milestone 2 names `draft,
   doing, blocked, review, cancelled`; its open tickets move to the new
   names by ordinary status and tag events (`doing` to `agnt`, `draft` to
   `todo`, `blocked` to `wait`, `review` to `revw` plus `needs_human`), so
   no history is rewritten. The list is configuration, not an event, like
   the rest of the vocabulary file.
+- **Fixed workflow vocabulary.** Decided 2026-11-27 (ZZ-54, owner): the
+  workflow vocabulary is the owner's unified workflow and lives in code;
+  `zwanenzang.toml` keeps per-tracker data and what migrations need
+  (`id`, `name`, `prefix`, `actors`, `repos`, `priority`, which maps onto
+  Org's `#+PRIORITIES`, and `retired_statuses`; `kinds` is unchanged
+  until the owner uses kinds). The seven statuses, with `todo` first, and
+  the tags `ready_for_agent`, `needs_human` and `PROJ` are named
+  constants in `src/workflow.rs`.
+  - An existing `statuses` key is obsolete, not an error (human decision,
+    2026-11-27). A name in it that is neither a fixed status nor in
+    `retired_statuses` is a `config` error naming it, telling the human
+    to add it to `retired_statuses`, so no old event silently stops
+    replaying. Otherwise the key is ignored, order and omissions
+    included, and lint reports it in `obsolete_config_keys`, which makes
+    lint exit 1 like every other report, until the key is removed.
+  - Pairings are warned about, never refused, so a manual edit from Org
+    is not blocked. The one stated pairing is `revw` always with
+    `needs_human` (`tickets/statuses`). A write that changes a ticket's
+    status or tags and leaves it in `revw` without `needs_human` prints
+    a warning on stderr, after the write and its sync. It is judged on
+    the state after the whole write, like the `PROJ` rule, and checked
+    again after the sync, so a tag another clone published meanwhile, or
+    a tombstone, silences it; the JSON output is unchanged. `needs_human` outside `wait` and `revw` is not warned
+    about: a handback in two commands passes through either `agnt` with
+    `needs_human` or `revw` without it, so with both rules every such
+    handback would warn; with the one rule, tagging before setting `revw`
+    is quiet.
 - **Projects.** Decided 2026-11-18 (ZZ-48): a ticket tagged `PROJ` groups
   its descendants, and its status follows them. This deliberately lifts
   "no tracker-side status enforcement" for this one rule, for every actor,

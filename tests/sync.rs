@@ -159,6 +159,25 @@ fn concurrent_writes_past_the_proj_rule_are_kept_and_diagnosed() {
 }
 
 #[test]
+fn a_pairing_completed_by_another_clone_is_not_warned_about() {
+    let net = Net::new();
+    let a = net.path("a");
+    let t = id(&ok(&a, &["create", "Ticket"]));
+    let b = net.clone_as("b");
+    // B adds the tag and publishes it; A has not fetched it when it sets
+    // revw, but its sync after the write brings the tag in.
+    let tagged = run_in(&b, &["tag", &t, "needs_human"], "");
+    assert_eq!(tagged.code, 0, "{}", tagged.json);
+    assert_eq!(tagged.json["sync"]["pushed"], true);
+    let o = run_in(&a, &["status", &t, "revw"], "");
+    assert_eq!(o.code, 0, "{}", o.json);
+    assert_eq!(o.json["sync"]["pushed"], true, "{}", o.json);
+    assert_eq!(o.json["ticket"]["status"], "revw");
+    assert_eq!(o.json["ticket"]["tags"], json!(["needs_human"]));
+    assert_eq!(o.stderr, "");
+}
+
+#[test]
 fn clones_share_one_numbering() {
     let net = Net::new();
     let a = net.path("a");

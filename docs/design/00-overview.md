@@ -43,9 +43,10 @@ owners. Process lives elsewhere.
 - Development process: stages, reviews, approvals, merge authority. The
   tool enforces none, apart from the `PROJ` rule above. The bundled agent documents do state rules of use:
   that agents write as the `agent` identity, where prose belongs, what `depend`
-  and `relate` mean, and what the default statuses and the two workflow
-  tags mean. These are the same in every tracker that keeps the defaults;
-  anything beyond them is the project's.
+  and `relate` mean, and what the statuses and the two workflow tags
+  mean. These are the same in every tracker, since the statuses and
+  workflow tags are fixed in code (ZZ-54); anything beyond them is the
+  project's.
 - Reminders, warnings and ordering by date, capacity, estimation, boards
   with WIP limits. A ticket may carry an Org planning date (`scheduled`,
   decided 2026-11-26, ZZ-51): that is tracking data, stored, shown and

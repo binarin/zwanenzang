@@ -2,7 +2,7 @@
 
 For an agent whose project keeps its tickets in a zwanenzang tracker. This
 covers how to use the tool and its rules of use: identifying agent writes,
-where prose belongs, how tickets link, and what the default statuses and
+where prose belongs, how tickets link, and what the statuses and
 workflow tags mean. Project process beyond that, such as what to track and
 when, is up to the project, whose own instructions take precedence.
 

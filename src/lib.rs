@@ -4,6 +4,7 @@
 //! - [`ulid`], [`clock`]: ids and the hybrid logical clock.
 //! - [`planning`]: Org planning timestamps, the `scheduled` field's values.
 //! - [`config`], [`store`]: `zwanenzang.toml`, logs, blobs, actor id, lock.
+//! - [`workflow`]: the fixed statuses and workflow tags.
 //! - [`git`], [`sync`]: commit per write, fetch, rebase, numbering, push.
 //! - [`state`]: derived state and [`state::apply`], the single validation
 //!   and application rule shared by replay and live writes.
@@ -37,6 +38,7 @@ pub mod store;
 pub mod sync;
 pub mod ulid;
 pub mod view;
+pub mod workflow;
 pub mod write;
 
 #[cfg(test)]
