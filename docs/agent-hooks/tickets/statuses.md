@@ -10,9 +10,10 @@ project's instructions say what they mean.
 ## Statuses
 
 - `todo`: not started.
-- `next`: the human is on it, or it can be started now.
+- `next`: the human is on it, alone or investigating it with an agent, or
+  it can be started now.
 - `wait`: waiting on something. With `needs_human`, on the human.
-- `agnt`: an agent is working on it autonomously.
+- `agnt`: an agent is doing the work, interactively or autonomously.
 - `revw`: ready for the human's review; always also tagged `needs_human`.
 - `done`: finished. Set by the human, or by an agent only after confirming
   the merge request was merged or on the human's explicit instruction.
@@ -23,8 +24,8 @@ project's instructions say what they mean.
 Two tags carry workflow; every other tag only classifies.
 
 - `ready_for_agent`: standing permission for an agent to pick the ticket up
-  on its own. Only the human adds or removes it. It stays through `agnt`,
-  `wait` and `revw`.
+  on its own; interactive work needs no tag. Only the human adds or removes
+  it. It stays through `agnt`, `wait` and `revw`.
 - `needs_human`: an agent is waiting on the human, with `wait` or `revw`.
 
 An agent may add or remove classification tags. It adds and removes
@@ -54,30 +55,37 @@ authorize merging, bypassing review, or starting other agents.
 
 ## Interactive and autonomous work
 
-The rules for `agnt` and `ready_for_agent` govern autonomous work only.
+Status shows where the work is, in either mode.
 
 - Interactive: the human is in the conversation and directing it. The agent
-  may read and write any ticket the human points it to, tagged or not. It
-  changes status only when the human asks; it does not set `agnt` and does
-  not hand back with `revw`, since the human is right there.
+  may read and write any ticket the human points it to, tagged or not.
 - Autonomous: the agent carries a ticket without the human in the
   conversation, as in a batch run, or after the human handed the work over
   and left ("implement it, I'll review the merge request"). It works only on
   tickets tagged `ready_for_agent`, or on one the human handed over that way;
   the handover counts as the permission.
 
-In autonomous work:
+In either mode:
 
-1. Whoever starts the work sets `agnt` just before starting it: the agent
-   itself, or an orchestrator for the ticket of each agent it launches.
-   `agnt` records that the work is running. It does not request work; the
-   tag or the handover does.
-2. The agent ends by handing back: `revw` plus `needs_human` when the work
-   is ready for review, with the merge request recorded on the ticket, or
-   `wait` plus `needs_human` when it needs an answer, with the question in a
-   comment.
-3. When the human answers, the agent removes `needs_human` as it resumes,
-   setting `agnt` again if it resumes autonomously.
+1. Investigating or grilling a ticket with the human sets `next`. Writing
+   its brief or notes meanwhile keeps it `next`.
+2. Starting the implementation sets `agnt`: at `swl start`, or at the first
+   code change where there is no workspace. An orchestrator sets it for the
+   ticket of each agent it launches to implement, just before launching it;
+   launching one only to investigate does not set it. `agnt`
+   records that the work is running. It does not request work; the tag or
+   the handover does.
+3. A question asked in the conversation does not change status.
+4. A published merge request waiting on the human is `revw` plus
+   `needs_human`, with the merge request recorded on the ticket.
+5. Resuming from `revw` or `wait` removes `needs_human` and sets `agnt`;
+   after republishing, the ticket goes back to `revw` plus `needs_human`.
+
+An autonomous agent ends by handing back: `revw` plus `needs_human` when the
+work is ready for review, or `wait` plus `needs_human` when it needs an
+answer, with the question in a comment. `wait` plus `needs_human` is only
+for such a question left on the ticket, never for one asked in the
+conversation.
 
 `agnt` is a status, not a lock. Preventing two agents from taking the same
 ticket, and recovering a ticket left in `agnt` by a session that died, are

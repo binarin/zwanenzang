@@ -305,8 +305,9 @@ they store UTF-8 text and never parse or convert it.
   default for `create`. With the same names in Org, no keyword map is
   needed (see [03-org-client](03-org-client.md)). Meanings: `todo` not
   started; `next` the human is on it or can start now (including drafting
-  the ticket's prose); `wait` waiting on something; `agnt` an agent is
-  working on it; `revw` ready for the human's review; `done`; `cncl`
+  the ticket's prose, or investigating it with an agent); `wait` waiting
+  on something; `agnt` an agent is doing the work, interactively or
+  autonomously; `revw` ready for the human's review; `done`; `cncl`
   cancelled. The earlier names are retired, not removed (see "Retired
   statuses" below).
   Status never says who may work on a ticket; two tags do:
@@ -319,11 +320,17 @@ they store UTF-8 text and never parse or convert it.
     agent's question, `wait` without it waits on something else. `revw`
     always also carries `needs_human`, so the attention queue and its
     waiting age need nothing status-specific.
-  `agnt` is set by whoever starts autonomous work, is a status and not a
-  lock, and does not request work. These are conventions for the human and
-  the agents; zwanenzang does not enforce them. Their agent-facing form,
-  the same for every tracker on the default vocabulary, is
-  `tickets/statuses` in the [agent hooks](../agent-hooks/overview.md).
+  `agnt` is set when implementation starts, in either mode, is a status
+  and not a lock, and does not request work. **Superseded (ZZ-53):** it
+  was set only by whoever started autonomous work, and an interactive
+  agent left status alone, so a ticket being implemented with the human
+  stayed `todo` in the Org view. Now status follows the work in either
+  mode; a published merge request waiting on the human is `revw` either
+  way, and only an autonomous agent leaves a question on the ticket with
+  `wait`. These are conventions for the human and the agents; zwanenzang
+  does not enforce them. Their agent-facing form, the same for every
+  tracker on the default vocabulary, is `tickets/statuses` in the
+  [agent hooks](../agent-hooks/overview.md).
   `create` records the initial status in its own data (`{title, status,
   kind?}`, status defaulting to the first vocabulary entry), so derived state
   never depends on the configuration file's current defaults. The default
